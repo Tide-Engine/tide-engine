@@ -188,6 +188,89 @@
             this.selectionKey = key;
             if (this.open.details && !this.details.el.contains(document.activeElement)) this.details.render();
             for (const x of this.myGame.el.querySelectorAll('.tg-mygame-item')) x.classList.toggle('tg-on', ed.picked.has(Number(x.dataset.id)));
+            // My game's Variables are the code in hand's
+            const f = this.variablesFrame();
+            if (f) this.lastFrame = f.item.id;
+            if ((f?.item.id || 0) !== this.myGame.varsOf && this.open.mygame && !this.myGame.el.contains(document.activeElement)) this.myGame.render();
+        }
+
+        // The frame whose variables My game lists: the one the selection is in, or the one picked, or the last of
+        // those, or the file's only one
+        variablesFrame() {
+            const ed = this.editor;
+            const b = this.board;
+            if (!ed || ed.error) return null;
+            if (ed.selection.size && ed.slot?.key === 'body' && b.frames.get(ed.slot.owner)) return b.frames.get(ed.slot.owner);
+            for (const id of ed.picked) if (b.frames.get(id)) return b.frames.get(id);
+            if (this.lastFrame && b.frames.get(this.lastFrame)) return b.frames.get(this.lastFrame);
+            return b.frames.size === 1 ? [...b.frames.values()][0] : null;
+        }
+
+        // Where a variable of My game would go if dropped on `under`: { el } of the input or the frame it goes in
+        variableTarget(v, under) {
+            const f = this.board.frameAt(under);
+            if (!f || f !== v.frame || f.mode !== 'near' || !f.graph) return null;
+            const port = this.board.portAt(f, under);
+            if (port && port.input && !port.exec) return { el: f.ports.get(G.frames.portKey(port))?.row || f.el };
+            return { el: f.el };
+        }
+
+        // A variable of My game dropped: on an input, a Get of it wired there; on its code, "Get <name>" or
+        // "Set <name>" asked (Ctrl: a Get at once; Alt: a Set). A Set is only of what the code can change.
+        dropVariable(v, x, y, { get = false, set = false } = {}) {
+            const f = v.frame;
+            const under = document.elementFromPoint(x, y);
+            if (!this.variableTarget(v, under)) {
+                toast(`Drop ${v.text} inside ${this.editor.doc.titleOf(f.item)}: it's that code's to use.`);
+                return;
+            }
+            const port = this.board.portAt(f, under);
+            const can = f.changeable(v.start);
+            if (port && port.input && !port.exec) {
+                if (f.isPlace(port) && !can.ok) { toast(`That can't go there: ${can.why}.`); return; }
+                f.setInput(port, (d, g, at) => d.makePath(g, v.start, v.members, at));
+                return;
+            }
+            const at = f.toLocal(x, y);
+            const made = id => {
+                if (!id) return;
+                this.editor.selectNodes(f.slot, [id]);
+                this.board.showNode(this.board.frameOf(f.slot), id);
+            };
+            const doGet = () => {
+                let last = 0;
+                this.edit(doc => {
+                    const g = doc.ensureGraph(f.slot);
+                    if (!g) return;
+                    const w = 44 + 7.5 * String(v.members.at(-1) ?? v.text).length + (v.members.length ? 62 : 0);
+                    last = f.makeGets(doc, g, v.start, v.members, f.freeSpot({ x: at.x - w / 2, y: at.y - 14 }, { w, h: 28 }));
+                    f.holdPlace(doc, g);
+                });
+                made(last);
+            };
+            const doSet = () => {
+                if (!can.ok) { toast(`It can't be set here: ${can.why}.`); return; }
+                let node = null;
+                this.edit(doc => {
+                    const g = doc.ensureGraph(f.slot);
+                    if (!g) return;
+                    const before = new Set(Doc.nodes(g).map(n => n.id));
+                    const spot = f.freeSpot({ x: at.x - 60, y: at.y - 20 }, { w: 240, h: 80 });
+                    node = doc.newNode('assign', spot.x, spot.y, { op: '=' });
+                    Doc.nodes(g).push(node);
+                    doc.schema.setWire(node, ['target'], doc.makePath(g, v.start, v.members, spot));
+                    doc.reindex();
+                    f.placeGets(doc, g, new Set(Doc.nodes(g).filter(n => !before.has(n.id)).map(n => n.id)));
+                    f.holdPlace(doc, g);
+                });
+                made(node?.id);
+            };
+            if (get) { doGet(); return; }
+            if (set) { doSet(); return; }
+            menu(x, y, [
+                { label: `Get ${v.text}`, summary: 'Its value, to wire into any number of inputs', name: 'get', hint: 'Ctrl', run: doGet },
+                { label: `Set ${v.text}`, summary: 'Changes it, when the code runs this', name: 'set', hint: 'Alt', run: doSet, disabled: !can.ok, why: can.why },
+            ], { title: v.text, className: 'tg-context' });
         }
 
         zoomChanged() {
@@ -673,7 +756,10 @@
                     // A value dragged out: into the new node's first input
                     const input = s.ports(node).find(p => p.input && !p.exec);
                     if (input) {
-                        const source = frame.sourceNode(doc, from, { x: at.x, y: at.y });
+                        // (a pin of the entry or of a local: a Get of it, left of the new node)
+                        const w = 44 + 7.5 * frame.pinText(from).length;
+                        const spot = frame.freeSpot({ x: Math.round(at.x - w - 46), y: at.y + 30 }, { w, h: 28 }, new Set(), [{ x: at.x, y: at.y, w: 220, h: 96 }]);
+                        const source = frame.sourceNode(doc, from, spot);
                         doc.reindex();
                         say(doc.connect(g, node.id, input.path, source));
                     }

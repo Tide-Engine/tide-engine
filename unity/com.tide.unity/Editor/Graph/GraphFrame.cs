@@ -10,19 +10,25 @@ namespace Tide.Editor
     // frame), with its entry first: what the code takes, each with a pin. It grows around its nodes, and dragging
     // its title moves all of it. A value that's more than a literal has a small frame of its own beside its card.
     //
-    // A simple value one input reads is shown in that input and is no node (the schema's `inline`: a literal, a
-    // name, a local, a path of members from one, a '-' over a number), as tidec's layout gives it no room. A
+    // What never changes, read by one input, is shown in that input and is no node, as a Blueprint pin's default
+    // (the schema's `inline`: a literal, a name in PascalCase or FULL_CASE, a path of members from one, a '-' over a
+    // number, a vector of numbers), as tidec's layout gives it no room. A variable (a parameter, a local, a field of
+    // one) is a Get node, wired to any number of inputs; what a Set changes, read by it alone, is in its title. A
     // statement that's a call is one node. So the frame keeps, for its graph, which nodes are drawn (Views), which
-    // are drawn with another (Absorbed) and which are shown in an input (Hidden).
+    // are drawn with another (Absorbed) and which are shown in an input or a title (Hidden).
     sealed class GraphFrame : GraphItem
     {
         public const int EntryId = -1, ResultId = -2;
+        // `this`, as Blueprint says it
+        internal const string SelfWord = "self";
 
         public readonly GraphSlot Slot;
         internal readonly Dictionary<int, JValue> ById = new Dictionary<int, JValue>();
         internal readonly Dictionary<int, List<(int node, WirePath path)>> Readers = new Dictionary<int, List<(int, WirePath)>>();
         internal readonly Dictionary<int, int> Absorbed = new Dictionary<int, int>(); // A call drawn with its statement: its id, to the statement's
         internal readonly HashSet<int> Hidden = new HashSet<int>();
+        // A Set (or a step) whose title says what it changes: its id, to what it changes (Hidden too)
+        internal readonly Dictionary<int, int> Titles = new Dictionary<int, int>();
         // Every node drawn as a node, whatever the schema's `inline` says: for a picture of a file as it was
         internal static bool DrawEveryNode;
         internal readonly Dictionary<string, GraphDocument.Read> Reads = new Dictionary<string, GraphDocument.Read>();
@@ -104,6 +110,7 @@ namespace Tide.Editor
             Readers.Clear();
             Absorbed.Clear();
             Hidden.Clear();
+            Titles.Clear();
             Reads.Clear();
             readNames.Clear();
             readLocals.Clear();
@@ -139,10 +146,24 @@ namespace Tide.Editor
                 else if (k == "local" && n.Wire("ref") != 0) readLocals.Add(n.Wire("ref"));
             }
             if (DrawEveryNode) return;
-            // Shown in the input that reads it, as tidec's layout folds it (graph_layout_fold): read by one input
-            // of a node, and a literal or a name; a member of what is itself shown there (or of nothing: a
-            // shorthand); a '-' over a number
+            // What a Set or a step changes, a name, a local or a member read by it alone, is in its title: Set score,
+            // Set speed, Set scale (what it's a member of wired into its Target)
             var state = new Dictionary<int, bool>();
+            foreach (var n in list)
+            {
+                var k = n.Str("k");
+                if (!GraphSchema.Titled(k)) continue;
+                var key = GraphSchema.Spec(k)?.Inputs.FirstOrDefault();
+                var target = key != null ? n.Wire(key) : 0;
+                if (target == 0 || Count(target) != 1 || !ById.TryGetValue(target, out var changed)) continue;
+                var tk = changed.Str("k");
+                if (tk != "name" && tk != "local" && tk != "member") continue;
+                state[target] = true;
+                Titles[n.Wire("id")] = target;
+            }
+            // Shown in the input that reads it, as tidec's layout folds it (graph_layout_fold): read by one input
+            // of a node, and a literal; a name in PascalCase or FULL_CASE (a type, a namespace, a constant); a member
+            // of what is itself shown there (or of nothing: a shorthand); a '-' over a number. A variable is a Get.
             bool Folds(JValue n, int depth)
             {
                 var id = n.Wire("id");
@@ -154,6 +175,7 @@ namespace Tide.Editor
                 var of = inputs.Count == 1 && ById.TryGetValue(inputs[0], out var found) ? found : null;
                 bool yes;
                 if (how == GraphSchema.InlineAlways) yes = inputs.Count == 0;
+                else if (how == GraphSchema.InlineNamed) yes = inputs.Count == 0 && GraphSchema.IsNamed(n.Str("name"));
                 else if (how == GraphSchema.InlinePath) yes = inputs.Count == 0 || (of != null && GraphSchema.Inline(of.Str("k")) != GraphSchema.InlineNegative && Folds(of, depth + 1));
                 else if (how == GraphSchema.InlineNegative) yes = n.Str("op") == "-" && of != null && (of.Str("k") == "int" || of.Str("k") == "float") && Folds(of, depth + 1);
                 // float2(16, -14): a vector or a colour whose arguments are all numbers shown there
@@ -195,6 +217,7 @@ namespace Tide.Editor
                 case "name": return n.Str("name") ?? "";
                 case "local": return ById.TryGetValue(n.Wire("ref"), out var d) ? GraphSchema.LocalName(d) : "?";
                 case "member": return "." + n.Str("member");
+                case "this": return SelfWord;
                 case "unary": return n.Str("op") ?? "";
                 case "call": return n.Str("name") + "(" + string.Join(", ", (n.Arr("args")?.Items ?? new List<JValue>()).Select(a => ShownIn(JValue.AsId(a)) is JValue arg ? TextOf(arg) : "")) + ")";
                 case "int":
@@ -256,6 +279,22 @@ namespace Tide.Editor
         }
 
         internal bool Changeable(GraphPort read) => Changeable(read.Local ? null : read.Name, read.Local ? read.Node : 0);
+
+        // What a Get reads at its start, through its fields and reroutes: a name (ball in ball.position), or the
+        // node that declares a local; neither for what's worked out
+        internal (string name, int local) RootOf(int id)
+        {
+            for (var i = 0; i < 64 && ById.TryGetValue(id, out var n); i++)
+            {
+                var k = n.Str("k");
+                if (k == "name") return (n.Str("name"), 0);
+                if (k == "local") return (null, n.Wire("ref"));
+                if (k == "member" && !n.Flag("shorthand")) id = n.Wire("object");
+                else if (k == "reroute") id = n.Wire("value");
+                else break;
+            }
+            return (null, 0);
+        }
 
         // What's wired into an input, and wiring it: a node's input, or a value frame's value (no owner)
         internal int WireAt(JValue owner, WirePath path) => owner != null ? path.Get(owner) : Graph?.Wire("root") ?? 0;
@@ -374,6 +413,7 @@ namespace Tide.Editor
         Vector2 arranged;
 
         internal void MarkWires() => wires?.MarkDirtyRepaint();
+        internal FrameWires Wires => wires;
 
         internal void QueueArrange()
         {
@@ -703,9 +743,9 @@ namespace Tide.Editor
 
         // Where something new of a size goes in the frame, as near a place (in the frame, as a node's is drawn) as
         // there's room: not on a node, not on the entry. Its place as the file has it is this less Origin.
-        internal Vector2 FreePlace(Vector2 near, Vector2 size)
+        internal Vector2 FreePlace(Vector2 near, Vector2 size, IEnumerable<Rect> also = null)
         {
-            var taken = new List<Rect>();
+            var taken = new List<Rect>(also ?? Enumerable.Empty<Rect>());
             foreach (var v in Views.Values) taken.Add(new Rect(v.Shown, v.SizeNow));
             foreach (var n in Notes.Values) taken.Add(new Rect(n.Shown, n.Extent));
             if (Result != null) taken.Add(new Rect(Result.Shown, Result.SizeNow));
@@ -782,6 +822,13 @@ namespace Tide.Editor
                 if (id == 0) return null;
                 if (types != null && types.TryGetValue(id, out var t)) return t;
                 if (!ById.TryGetValue(id, out var n)) return null;
+                // A reroute passes on what's wired into it
+                for (var i = 0; i < 64 && n.Str("k") == "reroute"; i++)
+                {
+                    id = n.Wire("value");
+                    if (id == 0 || !ById.TryGetValue(id, out n)) return null;
+                    if (types != null && types.TryGetValue(id, out t)) return t;
+                }
                 if (n.Str("k") == "eval" && types != null && types.TryGetValue(n.Wire("value"), out t)) return t;
                 if (n.Str("k") == "name" && Reads.TryGetValue(n.Str("name") ?? "", out var read)) return read.Type;
                 if (n.Str("k") == "local" && ById.TryGetValue(n.Wire("ref"), out var d)) return d.Str("type");
@@ -818,6 +865,12 @@ namespace Tide.Editor
             var types = Window.Checked?.Types;
             if (types != null && types.TryGetValue(id, out var t)) return t;
             if (!ById.TryGetValue(id, out var n)) return null;
+            for (var i = 0; i < 64 && n.Str("k") == "reroute"; i++)
+            {
+                id = n.Wire("value");
+                if (id == 0 || !ById.TryGetValue(id, out n)) return null;
+                if (types != null && types.TryGetValue(id, out t)) return t;
+            }
             if (n.Str("k") == "name" && Reads.TryGetValue(n.Str("name") ?? "", out var read)) return read.Type;
             if (n.Str("k") == "local" && ById.TryGetValue(n.Wire("ref"), out var d) && !string.IsNullOrEmpty(d.Str("type"))) return d.Str("type");
             if (n.Str("k") == "int" || n.Str("k") == "float" || n.Str("k") == "bool" || n.Str("k") == "string" || n.Str("k") == "char") return n.Str("k");
@@ -888,6 +941,58 @@ namespace Tide.Editor
             return view != null && view.Node != null ? PlaceOfShown(FreePlace(view.Shown + new Vector2(0, view.SizeNow.y + 30), new Vector2(200, 60))) : GraphDocument.PlaceOf(owner);
         }
 
+        // Where the nodes just made for an input go (in an edit, once they're wired): what's shown in an input or a
+        // title where its reader is, as tidec's layout has it; the Gets left of the node whose input it is, at the
+        // input's row, one after another (Get ball, then position, then x), in free space
+        internal void PlaceMade(JValue owner, WirePath path, IList<int> made)
+        {
+            var g = Graph;
+            if (g == null || made.Count == 0) return;
+            Classify();
+            var drawn = made.Where(id => !Hidden.Contains(id) && ById.ContainsKey(id)).ToList();
+            foreach (var id in made.Where(id => Hidden.Contains(id) && ById.ContainsKey(id)))
+            {
+                var reader = ReaderOf(id)?.Node ?? owner;
+                if (reader != null) SetPlace(ById[id], GraphDocument.PlaceOf(reader));
+            }
+            if (drawn.Count == 0) return;
+            var sizes = drawn.Select(id => GraphNodeView.EstimateOf(ById[id], null, this)).ToList();
+            const float gap = 28;
+            var width = sizes.Sum(s => s.x) + gap * (sizes.Count - 1);
+            var height = sizes.Max(s => s.y);
+            var extra = new List<Rect>();
+            Vector2 near;
+            var view = owner != null ? ReaderOf(owner.Wire("id")) ?? ViewOf(owner.Wire("id")) : Result;
+            if (view != null && view.Node != null || view == Result && view != null)
+            {
+                // The input's row, where it's drawn; under the title until it is
+                var row = path != null ? view.Q("in:" + path) : null;
+                var rowY = row != null && !float.IsNaN(row.layout.height) && row.layout.height > 0 ? row.ChangeCoordinatesTo(view, Vector2.zero).y : 26;
+                near = view.Shown + new Vector2(-width - 56, rowY - 2);
+            }
+            else if (owner != null)
+            {
+                // Its node isn't drawn yet (just made): left of where it's going
+                var at = origin + GraphDocument.PlaceOf(owner);
+                var size = GraphNodeView.EstimateOf(owner, null, this);
+                extra.Add(new Rect(at, size));
+                near = at + new Vector2(-width - 56, 26);
+            }
+            else near = origin;
+            var spot = FreePlace(near, new Vector2(width, height), extra);
+            foreach (var (id, size) in drawn.Zip(sizes, (id, size) => (id, size)))
+            {
+                SetPlace(ById[id], PlaceOfShown(spot));
+                spot.x += size.x + gap;
+            }
+        }
+
+        static void SetPlace(JValue n, Vector2 at)
+        {
+            n.Set("x", JValue.Of(Mathf.Round(at.x)));
+            n.Set("y", JValue.Of(Mathf.Round(at.y)));
+        }
+
         // Wires two pins, whichever way round they were dragged: false, with why, when they can't be
         internal bool Join(GraphPort a, GraphPort b, out string why)
         {
@@ -916,12 +1021,23 @@ namespace Tide.Editor
                 return GraphDocument.Connect(g, output.Node, output.Path, input.Node, out why);
             }
             var reader = input.Node == ResultId ? null : GraphDocument.NodeIn(g, input.Node);
+            // What a Set changes must be something that can be changed
+            if (reader?.Str("k") == "assign" && input.Path.Parts.Length == 1 && input.Path.Key == "target")
+            {
+                var (name, local) = output.IsRead ? (output.Local ? ((string)null, output.Node) : (output.Name, 0)) : RootOf(output.Node);
+                if ((name != null || local != 0) && !Changeable(name, local))
+                {
+                    var part = local != 0 ? new Part { Kind = "local", Ref = local, Name = ById.TryGetValue(local, out var d) ? GraphSchema.LocalName(d) : "it" } : new Part { Kind = "name", Name = name };
+                    why = WhyNotChangeable(new[] { part });
+                    return false;
+                }
+            }
             var was = input.Node == ResultId ? g.Wire("root") : reader != null ? input.Path.Get(reader) : 0;
             int from;
             JValue made = null;
             if (output.IsRead)
             {
-                // Reading a parameter or a local is a node of its own in the file, shown in the input it's read by
+                // Reading a parameter or a local is a Get: a node of its own, beside the input it's read by
                 var at = PlaceFor(reader);
                 made = Doc.AddNode(g, output.Local ? "local" : "name", at.x, at.y);
                 if (output.Local) made.Set("ref", JValue.Of(output.Node), GraphSchema.NodeOrder("local"));
@@ -936,6 +1052,7 @@ namespace Tide.Editor
                 return false;
             }
             DropUnread(g, was, from);
+            if (made != null) PlaceMade(reader, input.Path, new[] { from });
             return true;
         }
 
@@ -1046,6 +1163,7 @@ namespace Tide.Editor
                 Classify();
                 var made = MakePath(g, parts, PlaceFor(owner));
                 if (!SetWire(owner, path, made[made.Count - 1], out why)) Doc.DeleteNodes(g, made);
+                else PlaceMade(owner, path, made);
             });
             if (why != null) Window.Say(GraphLook.UpperFirst(why), true);
         }
@@ -1265,6 +1383,248 @@ namespace Tide.Editor
                     else call.Set("argNames", JValue.Strings(typed), GraphSchema.NodeOrder(call.Str("k")));
                 });
             }), view, true);
+        }
+
+        // ---------------------------------------------------------------------------------------------------------
+        // Gets, Sets, reroutes and locals, Blueprint's ways (notes/visual-scripting.md, "Round four")
+
+        // A variable, or a field of one, as the parts that read it: wobble, then .phase
+        internal static string PathText(IList<Part> parts) => string.Join("", parts.Select((p, i) => i == 0 && p.Kind != "shorthand" ? p.Name : "." + p.Name));
+
+        // Whether a Set can change what parts read: what they start from can be changed
+        internal bool Changeable(IList<Part> parts) => parts.Count > 0 && Changeable(parts[0].Kind == "local" ? null : parts[0].Name, parts[0].Kind == "local" ? parts[0].Ref : 0);
+
+        // Why a Set can't change what parts read, in words that say how it could
+        internal string WhyNotChangeable(IList<Part> parts)
+        {
+            if (parts.Count == 0) return null;
+            if (parts[0].Kind == "local") return $"{parts[0].Name} can't be changed: tick \"{GraphSchema.FlagInfo("mut").Label}\" in its Details to change it.";
+            return $"{parts[0].Name} is taken to be read: to change it, make its row in the entry \"{GraphSchema.ParamModeInfo("mut").Label}\".";
+        }
+
+        // A Get of a variable or of a field of one, at a place in the frame (as its nodes are drawn): the nodes it's
+        // made of left to right from there, the last one's id
+        internal int MakeGet(IList<Part> parts, Vector2 shown)
+        {
+            var g = Graph;
+            if (g == null || parts.Count == 0) return 0;
+            var made = 0;
+            Edit("Get " + PathText(parts), () =>
+            {
+                var ids = MakePath(g, parts, Vector2.zero);
+                Classify();
+                var sizes = ids.Select(id => GraphNodeView.EstimateOf(ById[id], null, this)).ToList();
+                var spot = FreePlace(shown, new Vector2(sizes.Sum(s => s.x) + 28 * (sizes.Count - 1), sizes.Max(s => s.y)));
+                for (var i = 0; i < ids.Count; i++)
+                {
+                    SetPlace(ById[ids[i]], PlaceOfShown(spot));
+                    spot.x += sizes[i].x + 28;
+                }
+                made = ids[ids.Count - 1];
+            });
+            if (made != 0) Board.SelectNode(this, made, false);
+            return made;
+        }
+
+        // A Set of a variable or of a field of one, at a place in the frame: titled by what it changes, what that's a
+        // field of a Get wired into its Target. Its flow is wired in by hand. Its id.
+        internal int MakeSet(IList<Part> parts, Vector2 shown)
+        {
+            var g = Graph;
+            if (g == null || parts.Count == 0 || !Slot.IsBody) return 0;
+            if (!Changeable(parts))
+            {
+                Window.Say(WhyNotChangeable(parts), true);
+                return 0;
+            }
+            var made = 0;
+            Edit("Set " + PathText(parts), () =>
+            {
+                var at = PlaceOfShown(FreePlace(shown, new Vector2(220, 90)));
+                var set = Doc.AddNode(g, "assign", at.x, at.y);
+                var ids = MakePath(g, parts, at);
+                new WirePath("target").Set(set, ids[ids.Count - 1]);
+                made = set.Wire("id");
+                PlaceMade(set, new WirePath("target"), ids);
+            });
+            if (made != 0) Board.SelectNode(this, made, false);
+            return made;
+        }
+
+        // Puts a reroute on a data wire at a place of the frame (as its nodes are drawn): the knot is wired from what
+        // the wire came from and into what it went to, one edit
+        internal int AddReroute(int from, JValue reader, WirePath path, Vector2 shown)
+        {
+            var g = Graph;
+            if (g == null || from == 0) return 0;
+            var made = 0;
+            Edit("Add a reroute", () =>
+            {
+                var at = PlaceOfShown(shown - GraphNodeView.KnotSize / 2);
+                var knot = Doc.AddNode(g, "reroute", at.x, at.y);
+                new WirePath("value").Set(knot, from);
+                if (reader == null) g.Set("root", JValue.Of(knot.Wire("id")), GraphSchema.ValueOrder);
+                else path.Set(reader, knot.Wire("id"));
+                made = knot.Wire("id");
+            });
+            return made;
+        }
+
+        // Before reroutes are deleted: what each one passed on goes straight to what read it, through any other
+        // knots being deleted, so deleting a knot never breaks the wire it was on
+        internal static void JoinAroundKnots(JValue g, ICollection<int> deleted)
+        {
+            int Through(int id)
+            {
+                for (var i = 0; i < 64 && id != 0 && deleted.Contains(id); i++)
+                {
+                    var knot = GraphDocument.NodeIn(g, id);
+                    if (knot == null || knot.Str("k") != "reroute") return id;
+                    id = knot.Wire("value");
+                }
+                return id;
+            }
+            var knots = deleted.Where(id => GraphDocument.NodeIn(g, id)?.Str("k") == "reroute").ToList();
+            if (knots.Count == 0) return;
+            foreach (var n in GraphDocument.Nodes(g).Items)
+            {
+                if (deleted.Contains(n.Wire("id"))) continue;
+                foreach (var p in GraphPorts.Of(n))
+                {
+                    if (!p.Input || p.Exec || p.Path == null) continue;
+                    var w = p.Path.Get(n);
+                    if (w == 0 || !knots.Contains(w)) continue;
+                    var to = Through(w);
+                    p.Path.Set(n, deleted.Contains(to) ? 0 : to);
+                }
+            }
+            var root = g.Wire("root");
+            if (root != 0 && knots.Contains(root))
+            {
+                var to = Through(root);
+                g.Set("root", to != 0 && !deleted.Contains(to) ? JValue.Of(to) : JValue.Null());
+            }
+        }
+
+        // A node's value can be kept as a local (Blueprint's Promote to Variable): something worked out that's read,
+        // in code with statements
+        internal bool CanKeepAsLocal(int node)
+        {
+            if (!Slot.IsBody || Graph == null || !ById.TryGetValue(node, out var n) || Hidden.Contains(node) || Absorbed.ContainsKey(node)) return false;
+            var k = n.Str("k");
+            var spec = GraphSchema.Spec(k);
+            if (spec == null || !spec.Value || spec.Exec) return false;
+            if (k == "name" || k == "local" || k == "member" || k == "reroute" || k == "this" || k == "default" || k == "null" || IsLiteral(k) || k == "outVar" || k == "lambda") return false;
+            return Readers.TryGetValue(node, out var readers) && readers.Count > 0 && StatementsReading(node).Count > 0;
+        }
+
+        // The statements whose code reads a node, through whatever reads it
+        List<int> StatementsReading(int node)
+        {
+            var found = new List<int>();
+            var seen = new HashSet<int>();
+            void Up(int id)
+            {
+                if (!seen.Add(id) || !Readers.TryGetValue(id, out var readers)) return;
+                foreach (var (reader, _) in readers)
+                {
+                    if (reader <= 0 || !ById.TryGetValue(reader, out var r)) continue;
+                    if (GraphSchema.IsExec(r.Str("k"))) { if (!found.Contains(reader)) found.Add(reader); }
+                    else if (r.Str("k") != "lambda") Up(reader);
+                }
+            }
+            Up(node);
+            return found;
+        }
+
+        // Where a statement is: the scopes it's in from the body's own (each the statement there that holds it, and
+        // its place among that scope's statements), outermost first
+        List<(string scope, int statement, int place)> ScopesOf(JValue g, int statement)
+        {
+            var chain = new List<(string, int, int)>();
+            var at = statement;
+            for (var guard = 0; guard < 4096 && at != 0; guard++)
+            {
+                // Back along next to the scope's first statement, counting
+                var first = at;
+                var place = 0;
+                (int node, WirePath path) source;
+                for (var steps = 0; ; steps++)
+                {
+                    source = GraphDocument.ExecSourceOf(g, first);
+                    if (source.node == 0 || source.path.Key != "next" || steps > 4096) break;
+                    first = source.node;
+                    place++;
+                }
+                if (source.node == 0)
+                {
+                    chain.Insert(0, ("entry", at, place));
+                    break;
+                }
+                chain.Insert(0, ($"{source.node}:{source.path}", at, place));
+                at = source.node;
+            }
+            return chain;
+        }
+
+        // Keeps a node's value as a local, as one edit: a Local declared just before the statement that first reads
+        // it (in the scope every reader is in), its value the node, and Gets of the local where the node's wires went,
+        // so it's worked out once. The new local's id.
+        internal int KeepAsLocal(int node)
+        {
+            var g = Graph;
+            if (g == null) return 0;
+            Classify();
+            if (!CanKeepAsLocal(node)) return 0;
+            var statements = StatementsReading(node);
+            var chains = statements.Select(s => ScopesOf(g, s)).ToList();
+            // The deepest scope all of them are in, and the first statement of it that holds one
+            var depth = 0;
+            while (chains.All(c => c.Count > depth) && chains.Select(c => c[depth].scope).Distinct().Count() == 1 && chains.Select(c => c[depth].statement).Distinct().Count() == 1) depth++;
+            if (chains.Any(c => c.Count <= depth) && depth > 0) depth--;
+            if (chains.Any(c => c.Count <= depth)) return 0;
+            var before = chains.Select(c => c[depth]).OrderBy(c => c.place).First().statement;
+            var n = ById[node];
+            var type = TypeAt(node);
+            var k = n.Str("k");
+            var wanted = (k == "call" || k == "method") && !string.IsNullOrEmpty(n.Str("name")) ? GraphLook.LowerFirst(n.Str("name")) : NameFor(type);
+            var taken = new HashSet<string>(Reads.Keys.Concat(GraphDocument.Locals(g).Select(GraphSchema.LocalName)));
+            var name = wanted;
+            for (var i = 2; taken.Contains(name); i++) name = wanted + i;
+            var readers = Readers[node].Where(r => r.node > 0).ToList();
+            var made = 0;
+            Edit("Keep it as a local", () =>
+            {
+                var next = ById[before];
+                var at = PlaceOfShown(FreePlace(origin + GraphDocument.PlaceOf(next) + new Vector2(-280, 0), new Vector2(240, 90)));
+                var local = Doc.AddNode(g, "var", at.x, at.y);
+                var order = GraphSchema.NodeOrder("var");
+                local.Set("name", JValue.Of(name), order);
+                local.Set("value", JValue.Of(node), order);
+                // In the flow just before the statement
+                var (from, path) = GraphDocument.ExecSourceOf(g, before);
+                if (g.Wire("entry") == before) g.Set("entry", JValue.Of(local.Wire("id")), GraphSchema.BodyOrder);
+                else if (from != 0) path.Set(GraphDocument.NodeIn(g, from), local.Wire("id"));
+                new WirePath("next").Set(local, before);
+                made = local.Wire("id");
+                // Gets of it where the node's value went
+                foreach (var (reader, input) in readers)
+                {
+                    var r = GraphDocument.NodeIn(g, reader);
+                    if (r == null) continue;
+                    var get = Doc.AddNode(g, "local", at.x, at.y);
+                    get.Set("ref", JValue.Of(made), GraphSchema.NodeOrder("local"));
+                    input.Set(r, get.Wire("id"));
+                    PlaceMade(r, input, new[] { get.Wire("id") });
+                }
+            });
+            if (made != 0)
+            {
+                Board.SelectNode(this, made, false);
+                // A new thing starts with its name being typed
+                schedule.Execute(() => Board.RenameNode(this, made));
+            }
+            return made;
         }
 
         internal void OpenNodeMenu(GraphNodeView view, VisualElement from)
@@ -1496,10 +1856,24 @@ namespace Tide.Editor
     }
 
     // A frame's wires: from each value's pin to the inputs that read it, and from each step's arrow to the next.
-    // Drawn as curves in the colour of the value's type, fainter where what they join is left out.
+    // Drawn as curves in the colour of the value's type, fainter where what they join is left out. A data wire can
+    // be hit (WireAt): the one under the pointer is drawn thicker, a double click on it puts a reroute there, and a
+    // right click opens its menu.
     sealed class FrameWires : VisualElement
     {
         readonly GraphFrame frame;
+
+        // A data wire as drawn: what it comes from, the input it goes to (its node, ResultId for a value's own) and
+        // the points along it, in the frame
+        internal sealed class Wire
+        {
+            public int From, Reader;
+            public WirePath Path;
+            public Vector2[] Points;
+        }
+
+        readonly List<Wire> drawn = new List<Wire>();
+        Wire hot;
 
         public FrameWires(GraphFrame frame)
         {
@@ -1509,8 +1883,60 @@ namespace Tide.Editor
             generateVisualContent += Draw;
         }
 
+        internal IReadOnlyList<Wire> Drawn => drawn;
+
+        // The data wire nearest a place of the frame, within `radius`; null when none is
+        internal Wire WireAt(Vector2 at, float radius)
+        {
+            Wire best = null;
+            var bestD = radius * radius;
+            foreach (var w in drawn)
+                for (var i = 1; i < w.Points.Length; i++)
+                {
+                    var d = DistanceSquared(at, w.Points[i - 1], w.Points[i]);
+                    if (d >= bestD) continue;
+                    bestD = d;
+                    best = w;
+                }
+            return best;
+        }
+
+        // The wire under the pointer, drawn thicker; null for none
+        internal Wire Hot
+        {
+            get => hot;
+            set
+            {
+                if (hot == value || hot != null && value != null && hot.From == value.From && hot.Reader == value.Reader && hot.Path.Equals(value.Path)) return;
+                hot = value;
+                MarkDirtyRepaint();
+            }
+        }
+
+        static float DistanceSquared(Vector2 p, Vector2 a, Vector2 b)
+        {
+            var ab = b - a;
+            var t = ab.sqrMagnitude > 0 ? Mathf.Clamp01(Vector2.Dot(p - a, ab) / ab.sqrMagnitude) : 0;
+            return (a + ab * t - p).sqrMagnitude;
+        }
+
+        static Vector2[] Sample(Vector2 a, Vector2 b)
+        {
+            var dx = Mathf.Max(30, Mathf.Abs(b.x - a.x) * 0.5f);
+            Vector2 c1 = a + new Vector2(dx, 0), c2 = b - new Vector2(dx, 0);
+            var points = new Vector2[25];
+            for (var i = 0; i < points.Length; i++)
+            {
+                var t = i / (float)(points.Length - 1);
+                var u = 1 - t;
+                points[i] = u * u * u * a + 3 * u * u * t * c1 + 3 * u * t * t * c2 + t * t * t * b;
+            }
+            return points;
+        }
+
         void Draw(MeshGenerationContext ctx)
         {
+            drawn.Clear();
             var g = frame.Graph;
             if (g == null) return;
             var p = ctx.painter2D;
@@ -1537,7 +1963,12 @@ namespace Tide.Editor
                         if (from == null || from.View == view && !from.Port.IsRead) continue;
                         var c = TideGraphTypes.ColorOf(pin.Type ?? from.Type, board.Light);
                         c.a = faint ? 0.35f : 0.92f;
-                        Curve(p, from.Anchor(this), pin.Anchor(this), c, 2);
+                        var a = from.Anchor(this);
+                        var b = pin.Anchor(this);
+                        var wire = new Wire { From = wired, Reader = port.Node, Path = port.Path, Points = Sample(a, b) };
+                        drawn.Add(wire);
+                        var lit = hot != null && hot.From == wire.From && hot.Reader == wire.Reader && hot.Path.Equals(wire.Path);
+                        Curve(p, a, b, c, lit ? 4 : 2);
                     }
                     else if (!port.Input && port.Exec)
                     {

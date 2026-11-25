@@ -949,6 +949,17 @@ namespace Tide.Editor
             var frame = item as GraphFrame;
             rightDown = null;
             var rowId = RowAt(target, item);
+            // A data wire under the pointer, in a frame's empty inside: a double click puts a reroute on it, a right
+            // click opens its menu
+            var wire = frame != null && view == null && note == null && rowId == 0 ? WireUnder(frame, mouse) : null;
+            if (wire != null && (e.button == 1 || e.button == 0 && e.clickCount >= 2))
+            {
+                var at = FrameLocal(frame, mouse);
+                if (e.button == 1) GraphMenu.Open(Window, GraphMenu.ForWire(frame, wire, at), null, e.position);
+                else AddReroute(frame, wire, at);
+                e.StopPropagation();
+                return;
+            }
             if (e.button == 1)
             {
                 // One menu, the same for every kind of thing (GraphMenu): a row's, a node's, a card's or a frame's
@@ -1039,6 +1050,17 @@ namespace Tide.Editor
             mouse = this.WorldToLocal(e.position);
             switch (drag)
             {
+                case Drag.None:
+                {
+                    // The data wire under the pointer is lit: it can be hit
+                    var target = e.target as VisualElement;
+                    var over = GraphLook.Up<GraphNodeView>(target) == null && !GraphLook.TakesClicks(target, this) ? GraphLook.Up<GraphFrame>(target) : null;
+                    var wire = over != null ? WireUnder(over, mouse) : null;
+                    if (hotFrame != null && (hotFrame != over || wire == null) && hotFrame.Wires != null) hotFrame.Wires.Hot = null;
+                    hotFrame = wire != null ? over : null;
+                    if (wire != null) over.Wires.Hot = wire;
+                    break;
+                }
                 case Drag.Pan:
                     pan = panStart + (mouse - dragStart);
                     ApplyTransform();
@@ -1353,8 +1375,13 @@ namespace Tide.Editor
             if (owner == null && input.Port.Node != GraphFrame.ResultId) return false;
             // A Set's "what" takes only what can be changed: a parameter taken as "changes", a local that can be
             var k = owner?.Str("k");
-            if (k == "assign" && input.Port.Path.Parts.Length == 1 && input.Port.Path.Key == "target" && output.Port.IsRead)
-                return frame.Changeable(output.Port);
+            if (k == "assign" && input.Port.Path.Parts.Length == 1 && input.Port.Path.Key == "target")
+            {
+                if (output.Port.IsRead) return frame.Changeable(output.Port);
+                // A Get of what's only read, or of a field of it, can't be changed either
+                var (name, local) = frame.RootOf(output.Port.Node);
+                if (name != null || local != 0) return frame.Changeable(name, local);
+            }
             var wanted = frame.Wanted(owner, input.Port.Path);
             return GraphValues.Fits(output.Type, wanted);
         }
@@ -1449,6 +1476,25 @@ namespace Tide.Editor
             OpenSearch(frame, local, from.Port);
         }
 
+        GraphFrame hotFrame; // The frame whose wire is lit under the pointer
+
+        // The data wire of a frame near a point of the board, as it's drawn: within a few pixels on screen
+        internal FrameWires.Wire WireUnder(GraphFrame frame, Vector2 boardPoint)
+        {
+            if (frame == null || frame.Level != GraphLevel.Near || frame.Wires == null || frame.Graph == null) return null;
+            return frame.Wires.WireAt(FrameLocal(frame, boardPoint), 7 / zoom);
+        }
+
+        // A reroute put on a wire at a place of its frame
+        internal int AddReroute(GraphFrame frame, FrameWires.Wire wire, Vector2 frameLocal)
+        {
+            var reader = wire.Reader == GraphFrame.ResultId ? null : frame.ById.TryGetValue(wire.Reader, out var n) ? n : null;
+            if (reader == null && wire.Reader != GraphFrame.ResultId) return 0;
+            var knot = frame.AddReroute(wire.From, reader, wire.Path, frameLocal);
+            if (knot != 0) SelectNode(frame, knot, false);
+            return knot;
+        }
+
         // Wires two pins as a drag from one to the other does: false, with why, when they can't be
         internal bool Connect(PortView a, PortView b, out string why)
         {
@@ -1502,7 +1548,8 @@ namespace Tide.Editor
             var view = owner != null ? frame.ReaderOf(owner.Wire("id")) ?? frame.ViewOf(owner.Wire("id")) : frame.Result;
             // Below and left of it, off the line its flow runs along, where nothing is
             var at = frame.FreePlace(view != null ? view.Shown + new Vector2(-240, view.SizeNow.y + 30) : frame.Origin, new Vector2(220, 90));
-            var context = new GraphSearchContext { Doc = Doc, Graph = graph, Slot = frame.Slot, Window = Window, Pending = port, Frame = frame };
+            // What's in the input now is the new node's first input: wobble.frequency, worked out, is "wobble.frequency * …"
+            var context = new GraphSearchContext { Doc = Doc, Graph = graph, Slot = frame.Slot, Window = Window, Pending = port, Frame = frame, Wrap = frame.WireAt(owner, path) };
             var popup = new GraphSearchPopup(this, frame, context, at);
             if (from != null && from.panel != null) Window.Open(popup, from);
             else Window.Open(popup, new Rect(frame.LocalToWorld(at), Vector2.zero));
@@ -1531,7 +1578,7 @@ namespace Tide.Editor
         }
 
         // Makes what a search entry makes at a place of a frame, wired to the pin a wire was dropped from
-        public JValue Insert(GraphFrame frame, GraphSearchEntry entry, Vector2 frameLocal, GraphPort pending)
+        public JValue Insert(GraphFrame frame, GraphSearchEntry entry, Vector2 frameLocal, GraphPort pending, int wrap = 0)
         {
             var graph = frame.Graph;
             // Where it was asked for, or as near as there's room: never on a node that's there. A node for an input
@@ -1541,12 +1588,50 @@ namespace Tide.Editor
             Window.Edit("Add " + entry.Title, () =>
             {
                 made = entry.Make(Doc, graph, at);
+                // What was in the input goes in the new node's first input, before the node takes its place
+                var wrapped = made != null && wrap != 0 && pending != null && pending.Input && !pending.Exec ? GraphDocument.NodeIn(graph, wrap) : null;
+                var first = wrapped != null ? GraphPorts.Of(made).FirstOrDefault(p => p.Input && !p.Exec && p.Path != null && p.Path.Get(made) == 0) : null;
+                if (first == null || !GraphDocument.Connect(graph, made.Wire("id"), first.Path, wrap, out _)) wrapped = null;
                 if (made != null && pending != null) WireNew(frame, graph, made, pending);
+                // Where what it wraps was drawn, which moves left to make room, with the Gets it alone reads
+                if (wrapped != null && frame.ViewOf(wrap) != null && !frame.Hidden.Contains(wrap))
+                {
+                    var room = GraphNodeView.EstimateOf(made, null, frame).x + 40;
+                    var place = GraphDocument.PlaceOf(wrapped);
+                    foreach (var id in UpstreamOf(graph, wrap))
+                    {
+                        var n = GraphDocument.NodeIn(graph, id);
+                        n.Set("x", JValue.Of(Mathf.Round(GraphDocument.PlaceOf(n).x - room)));
+                    }
+                    made.Set("x", JValue.Of(Mathf.Round(place.x)));
+                    made.Set("y", JValue.Of(Mathf.Round(place.y)));
+                }
             }, frame.Id);
             // What works out a Set's value: its operator is looked at once it's checked
             if (made != null && pending != null && pending.Input && !pending.Exec && frame.ById.TryGetValue(pending.Node, out var reader)) WatchOperator(reader, pending.Path);
             if (made != null && made.Has("k")) SelectNode(frame, made.Wire("id"), false);
             return made;
+        }
+
+        // A node and what's read by it alone, all the way up: what moves with it to make room for a node before it
+        static HashSet<int> UpstreamOf(JValue graph, int node)
+        {
+            var chain = new HashSet<int> { node };
+            var nodes = GraphDocument.Nodes(graph).Items;
+            for (var grew = true; grew;)
+            {
+                grew = false;
+                foreach (var n in nodes.Where(n => chain.Contains(n.Wire("id"))).ToList())
+                    foreach (var w in GraphPorts.DataWires(n))
+                    {
+                        if (chain.Contains(w)) continue;
+                        var readers = nodes.Where(r => GraphPorts.DataWires(r).Contains(w)).Select(r => r.Wire("id"));
+                        if (graph.Wire("root") == w || !readers.All(chain.Contains)) continue;
+                        chain.Add(w);
+                        grew = true;
+                    }
+            }
+            return chain;
         }
 
         // A new node wired to where its wire came from: its first input that suits, or its output, or its flow
@@ -1809,7 +1894,12 @@ namespace Tide.Editor
                 var ids = frame.With(Nodes);
                 ids.UnionWith(Nodes);
                 Nodes.Clear();
-                Window.Edit("Delete", () => Doc.DeleteNodes(graph, ids), frame.Id);
+                Window.Edit("Delete", () =>
+                {
+                    // A reroute deleted joins what it passed on to what read it
+                    GraphFrame.JoinAroundKnots(graph, ids);
+                    Doc.DeleteNodes(graph, ids);
+                }, frame.Id);
                 return;
             }
             if (Chosen.Count == 0) return;
@@ -2216,6 +2306,79 @@ namespace Tide.Editor
                     Window.Say("Components and singletons go on a frame's entry, functions into a frame, constants onto an input.");
                     return;
             }
+        }
+
+        // The code whose variables My game lists: the frame what's selected is in
+        internal GraphFrame CodeInFocus => Active != null && !Active.IsValue && Active.Graph != null && Active.parent != null ? Active : null;
+
+        // What My game says of a variable dragged out: Get or Set it, Blueprint's way
+        internal const string GetWord = "Get", SetWord = "Set";
+
+        // A variable of a frame's code, or a field of one, dragged out of My game and dropped: on an input of that
+        // code, a Get of it wired in; elsewhere in that code, "Get <name>" or "Set <name>" asked (only a Get when
+        // it can't be changed), or a Get at once with Ctrl and a Set with Alt
+        public GraphOptionList DropVariable(GraphFrame frame, List<GraphFrame.Part> parts, Vector2 panelPosition, bool get, bool set)
+        {
+            if (frame == null || frame.Graph == null || parts.Count == 0) return null;
+            var text = GraphFrame.PathText(parts);
+            var picked = panel?.Pick(panelPosition);
+            PortView input = null;
+            for (var e = picked; e != null && input == null; e = e.parent)
+            {
+                if (e is PortView pin && pin.Port.Input && !pin.Port.Exec && pin.Port.Path != null) input = pin;
+                else if (e.ClassListContains("tg-port-row") && e.Q<PortView>() is PortView row && row.Port.Input && !row.Port.Exec && row.Port.Path != null) input = row;
+            }
+            if (input != null)
+            {
+                if (input.Frame != frame)
+                {
+                    Window.Say($"{text} is what {frame.Title}'s code has: it can only go in an input there.", true);
+                    return null;
+                }
+                var owner = input.Port.Node == GraphFrame.ResultId ? null : frame.ById.TryGetValue(input.Port.Node, out var n) ? n : null;
+                if (owner == null && input.Port.Node != GraphFrame.ResultId) return null;
+                if (owner?.Str("k") == "assign" && input.Port.Path.Parts.Length == 1 && input.Port.Path.Key == "target" && !frame.Changeable(parts))
+                {
+                    Window.Say(frame.WhyNotChangeable(parts), true);
+                    return null;
+                }
+                frame.PutPath(owner, input.Port.Path, parts, GraphNodeView.LabelOf(Window.Checked, owner, input.Port.Path, input.Port.Label));
+                return null;
+            }
+            var boardPoint = this.WorldToLocal(panelPosition);
+            if (FrameAt(boardPoint) != frame || frame.Level != GraphLevel.Near)
+            {
+                Window.Say($"{text} is what {frame.Title}'s code has: drop it in that frame.", true);
+                return null;
+            }
+            return GetOrSet(frame, parts, FrameLocal(frame, boardPoint), get, set, panelPosition);
+        }
+
+        // A variable dropped in its code at a place (as its nodes are drawn): a Get with `get`, a Set with `set`, else
+        // the menu that asks which, opened where it was dropped
+        internal GraphOptionList GetOrSet(GraphFrame frame, List<GraphFrame.Part> parts, Vector2 at, bool get, bool set, Vector2? menuAt = null)
+        {
+            var text = GraphFrame.PathText(parts);
+            if (get)
+            {
+                frame.MakeGet(parts, at);
+                return null;
+            }
+            if (set)
+            {
+                frame.MakeSet(parts, at);
+                return null;
+            }
+            var changeable = frame.Changeable(parts) && frame.Slot.IsBody;
+            var options = new List<GraphOption>
+            {
+                new GraphOption { Title = $"{GetWord} {text}", Detail = "Ctrl", Help = "Its value, to wire into any number of inputs", Pick = () => frame.MakeGet(parts, at) },
+                new GraphOption { Title = $"{SetWord} {text}", Detail = "Alt", Off = !changeable, Help = changeable ? "A step that changes it" : frame.WhyNotChangeable(parts), Pick = () => frame.MakeSet(parts, at) },
+            };
+            // Where it was dropped (not laid out, the board's corner)
+            var where = menuAt ?? frame.LocalToWorld(at);
+            if (float.IsNaN(where.x) || float.IsNaN(where.y)) where = Vector2.zero;
+            return GraphMenu.Open(Window, options, null, where);
         }
 
         // A Set whose value was just picked (notes/visual-scripting.md, "Round three": only what's valid in a Set):

@@ -156,6 +156,11 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .tg-mygame-item .tg-renaming { flex: 1; font-weight: 600; }
 .tg-mygame-kind { color: var(--tg-muted); font-size: 0.88em; margin-left: auto; }
 .tg-mygame-none { color: var(--tg-muted); padding: 2px 14px 4px; font-size: 0.92em; }
+/* The code in hand's Variables: each dragged onto it to Get or Set it, opening to its fields */
+.tg-mygame-of { text-transform: none; letter-spacing: 0; font-weight: 600; color: var(--tg-fg); overflow: hidden; text-overflow: ellipsis; max-width: 120px; }
+.tg-mygame-var { gap: 6px; cursor: grab; }
+.tg-var-toggle { width: 16px; flex: none; padding: 0; text-align: center; color: var(--tg-muted); }
+.tg-mygame-var .tg-mygame-name { font-weight: 600; }
 .tg-drag-ghost { position: fixed; z-index: 60; pointer-events: none; background: var(--tg-panel); border: 1px dashed var(--tg-muted); border-radius: 8px; padding: 3px 10px; font-weight: 600; box-shadow: 0 6px 20px var(--tg-shadow); }
 .tg-drag-ghost-ok { border: 1px solid var(--tg-accent); color: var(--tg-accent); }
 .tg-drop-ok { outline: 2px dashed var(--tg-accent) !important; outline-offset: 2px; }
@@ -465,6 +470,44 @@ span.tg-node-input { overflow: hidden; text-overflow: ellipsis; white-space: now
 .tg-chipnode { min-width: 0; border-radius: 999px; border-left: 3px solid var(--tg-cat, #5c6170); }
 .tg-chip-row { padding: 2px 8px 2px 8px; min-height: 24px; margin-right: -6px !important; cursor: grab; color: var(--tg-fg); gap: 4px; }
 .tg-chip-row .tg-dot { cursor: crosshair; }
+
+/* A Get (Blueprint's variable node): no title bar, the variable's name and its value pin, in its type's colour; a
+   field of something has its Target pin on the left */
+.tg-node.tg-get { min-width: 0; border-radius: 999px; border: 1px solid color-mix(in srgb, var(--tg-type) 55%, var(--tg-node-border));
+  background: color-mix(in srgb, var(--tg-type) 14%, var(--tg-node-bg)); }
+.tg-get-row { display: flex; align-items: center; gap: 6px; min-height: 26px; padding: 0 0 0 12px; white-space: nowrap; }
+.tg-get-member .tg-get-row { padding-left: 0; }
+.tg-get-name { font-weight: 650; color: var(--tg-fg); }
+.tg-get-row > .tg-port.tg-in { margin-left: -6px; padding-right: 0; }
+.tg-get-row > .tg-port.tg-in .tg-port-label { font-size: 0.86em; }
+.tg-get-out { padding: 0 8px 0 2px; min-height: 26px; }
+.tg-get .tg-get-out .tg-dot { background: var(--tg-type); box-shadow: 0 0 0 1px var(--tg-type); }
+.tg-node.tg-get.tg-lit { box-shadow: 0 0 0 2px var(--tg-accent), 0 1px 5px var(--tg-shadow); }
+.tg-set-target.tg-lit { box-shadow: 0 0 0 2px var(--tg-accent); }
+
+/* A reroute: a knot on a wire, its input and output pins either side of a dot that drags it */
+.tg-node.tg-knot { min-width: 0; display: flex; align-items: center; gap: 0; padding: 0; background: none; border: none; box-shadow: none; height: 18px; }
+.tg-knot .tg-port { padding: 0; margin: 0 !important; min-height: 18px; }
+.tg-knot .tg-dot { width: 8px; height: 8px; border-width: 1px; }
+.tg-knot-body { width: 14px; height: 14px; border-radius: 50%; background: var(--tg-type); box-shadow: 0 0 0 2px var(--tg-node-bg), 0 1px 4px var(--tg-shadow); cursor: grab; margin: 0 1px; }
+.tg-node.tg-knot.tg-selected { outline: none; }
+.tg-node.tg-knot.tg-selected .tg-knot-body { box-shadow: 0 0 0 2px var(--tg-accent); }
+
+/* What a Set changes, in its title: "Set score" */
+.tg-set-target { font: inherit; font-weight: 650; color: var(--tg-fg); background: none; border: 1px solid transparent; border-radius: 5px; padding: 0 4px; margin-left: -2px; height: 22px; cursor: pointer;
+  text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--tg-type, var(--tg-muted)) 80%, transparent); text-decoration-thickness: 2px; text-underline-offset: 3px; }
+.tg-set-target:hover, .tg-set-target:focus-visible { border-color: var(--tg-input-border); background: var(--tg-input-bg); outline: none; }
+/* What a call is called on when it's a type or a namespace: "Math" beneath "Clamp" (Blueprint's Target is Math) */
+.tg-node-sub { min-height: 18px; padding: 0 8px 2px 11px; margin: 0 !important; font-size: 0.86em; }
+.tg-node-sub .tg-sub-dot { width: 0; height: 0; border: 0; box-shadow: none !important; visibility: hidden; margin-right: -5px; }
+.tg-node-sub .tg-path { background: none; border-color: transparent; padding: 0; line-height: 16px; }
+.tg-node-sub .tg-path-dot { display: none; }
+.tg-node-sub .tg-path-part { font-weight: 500; color: var(--tg-muted); }
+
+/* A data wire is easy to hit: a double click puts a knot on it, a right click its menu */
+.tg-wires .tg-wire-hit { stroke: transparent; stroke-width: 12px; pointer-events: stroke; cursor: pointer; }
+.tg-wires .tg-wire-hit:hover { stroke: color-mix(in srgb, var(--tg-accent) 22%, transparent); }
+.tg-wiring .tg-wires .tg-wire-hit { pointer-events: none; }
 
 /* The entry of a frame: what its code takes, each with a pin to wire from, and the arrow it starts from */
 .tg-node.tg-entry { border-radius: 10px; border-color: color-mix(in srgb, var(--tg-behaviour) 55%, var(--tg-node-border)); cursor: grab; }

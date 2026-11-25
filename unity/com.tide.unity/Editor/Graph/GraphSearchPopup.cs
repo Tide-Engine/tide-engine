@@ -37,6 +37,17 @@ namespace Tide.Editor
             entries = context.Retarget != 0 ? new List<GraphSearchEntry>() : Commands().Concat(TideGraphServices.Searches.SelectMany(s => s.Entries(context))).ToList();
             // A wire from something the code takes: another read of it isn't what it's for
             if (pending != null && pending.IsRead) entries.RemoveAll(e => e.Reads);
+            // A wire from an input: the variables of the type it takes first, then the other variables
+            if (pending != null && pending.Input && !pending.Exec && pending.Path != null)
+            {
+                var owner = pending.Node == GraphFrame.ResultId ? null : frame.ById.TryGetValue(pending.Node, out var n) ? n : null;
+                var wanted = frame.Wanted(owner, pending.Path);
+                var gets = entries.Where(e => e.Reads).ToList();
+                var fitting = gets.Where(e => wanted != null && GraphValues.Fits(e.Type, wanted)).ToList();
+                foreach (var e in fitting) e.Priority = 3;
+                entries.RemoveAll(e => e.Reads);
+                entries.InsertRange(0, fitting.Concat(gets.Where(e => !fitting.Contains(e))));
+            }
             Fill();
             AskLive();
             AskOperators();
@@ -124,7 +135,7 @@ namespace Tide.Editor
         {
             if (found == null) return;
             var taken = new HashSet<string>(entries.Select(e => e.Group + "\n" + e.Title));
-            var names = new HashSet<string>(entries.Where(e => e.Reads).Select(e => e.Title));
+            var names = new HashSet<string>(entries.Where(e => e.Reads).Select(e => e.Variable ?? e.Title));
             var first = new List<GraphSearchEntry>();
             var later = new List<GraphSearchEntry>();
             foreach (var e in found)
@@ -206,7 +217,7 @@ namespace Tide.Editor
                 e.Command();
                 return;
             }
-            board.Insert(frame, e, at, pending);
+            board.Insert(frame, e, at, pending, context.Wrap);
         }
     }
 }

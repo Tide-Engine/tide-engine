@@ -42,6 +42,8 @@
         if (!target?.closest) return null;
         const frame = b.frameAt(target);
         if (frame && frame.mode === 'near') {
+            const wire = target.closest('.tg-wire-hit');
+            if (wire) return { kind: 'wire', frame, wire: JSON.parse(wire.dataset.wire) };
             const port = b.portAt(frame, target);
             if (port && (target.closest('.tg-dot') || !port.input || port.exec || frame.hasNodeWire(port) || port.pin !== undefined)) return { kind: 'pin', frame, port };
             const noteEl = target.closest('.tg-note');
@@ -193,6 +195,11 @@
                 add('Empty it', () => f.emptyInput(p), { name: 'empty', hint: KEY.delete, disabled: !f.wireOf(p), why: 'Nothing is in it' });
             } else if (!p.input && !p.exec) {
                 add('Use it in a new node…', () => G.pickers.nodeSearch(app, f, x, y, { from: p }), { name: 'use' });
+                // A worked-out value, kept as a local (Blueprint's Promote to Variable)
+                if (p.node > 0 && p.local === undefined && !f.keepable(p.node)) {
+                    const read = app.editor.doc.statementsReading(f.graph, p.node).length > 0;
+                    add('Keep it as a local', () => f.keepAsLocal(p.node), { name: 'keep-local', summary: 'Worked out once, before the code that reads it', disabled: !read, why: 'Nothing reads it yet' });
+                }
             } else if (!p.input && p.exec) {
                 add('Add what happens next…', () => G.pickers.nodeSearch(app, f, x, y, { from: p }), { name: 'next' });
             } else if (p.node > 0) {
@@ -206,6 +213,13 @@
     function contextMenu(app, t, x, y, { anchor = null } = {}) {
         const ed = app.editor;
         if (!t || !ed || ed.error) return null;
+        if (t.kind === 'wire') {
+            // A data wire: a knot on it, or the wire taken away (what it came from stays)
+            return menu(x, y, [
+                { label: 'Add a reroute', hint: 'Double-click', section: 1, name: 'reroute', summary: 'A knot to route the wire by', run: () => t.frame.addReroute(t.wire, x, y) },
+                { label: 'Break this link', section: 3, name: 'unlink', run: () => t.frame.breakWire(t.wire) },
+            ], { title: 'Wire', className: 'tg-context' });
+        }
         if (t.kind !== 'pin') select(app, t);
         const items = adds(app, t, x, y);
         const fk = nameOf(app, t);
@@ -256,6 +270,7 @@
             case 'node': {
                 const a = t.frame.analysis;
                 const shown = a.merged.has(t.node.id) ? a.byId.get(a.merged.get(t.node.id)) : t.node;
+                if (ed.doc.isGet(shown) || shown.k === 'name') return `Get ${shown.k === 'member' ? shown.member ?? '' : ed.doc.valueText(t.frame.graph, shown.id)}`;
                 return s.title(shown.k);
             }
             case 'note': return 'Note box';

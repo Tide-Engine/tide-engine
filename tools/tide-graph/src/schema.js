@@ -51,13 +51,16 @@
             this.portInfo = json.portInfo || {};
             this.accessorInfo = json.accessorInfo || {};
             // Which kinds of value are shown in the input that reads them (1 always, 2 as a path, 3 a minus over a
-            // number, 4 a vector or a colour made of numbers: a call named one of `numbersOf`), as tidec's layout
-            // takes them (graph_schema_inline, graph_schema_numbers)
+            // number, 4 a vector or a colour made of numbers: a call named one of `numbersOf`, 5 a name that starts
+            // with a capital: a type, a namespace, an enum, a constant), as tidec's layout takes them
+            // (graph_schema_inline, graph_schema_numbers); and the kinds whose first input, a name or a member read by
+            // them alone, is in their title (`titled`: Set score, graph_schema_titled)
             this.inlineKinds = new Map();
-            ['always', 'path', 'negative', 'numbers'].forEach((list, i) => {
+            ['always', 'path', 'negative', 'numbers', 'named'].forEach((list, i) => {
                 for (const k of json.inline?.[list] || []) this.inlineKinds.set(k, i + 1);
             });
             this.numbersOf = new Set(json.inline?.numbersOf || []);
+            this.titledKinds = new Set(json.inline?.titled || []);
             // Which control edits a type's value
             this.controlOf = new Map();
             for (const c of json.valueControls || []) for (const t of c.types || []) this.controlOf.set(t, c.control);
@@ -69,8 +72,11 @@
         flagHelp(key) { return this.flagInfo[key]?.help || ''; }
         flagAdvanced(key) { return !!this.flagInfo[key]?.advanced; }
         portLabel(key) { return this.portInfo[key]?.label || key; }
-        // 1, 2 or 3 for a kind of value shown in the input that reads it, 0 for a node of its own
+        // 1 to 5 for a kind of value shown in the input that reads it (as the schema's lists are numbered above), 0
+        // for a node of its own
         inlineKind(k) { return this.inlineKinds.get(k) || 0; }
+        // Whether what a node of this kind changes is drawn in its title
+        titled(k) { return this.titledKinds.has(k); }
         // The control that edits a type's value ('whole', 'decimal', 'tick', 'text', 'char', 'vector', 'colour'), or
         // undefined for a type with none of its own (an enum's is `enumControl`, by what the game declares)
         control(type) { return this.controlOf.get(String(type || '').replace(/\?$/, '')); }

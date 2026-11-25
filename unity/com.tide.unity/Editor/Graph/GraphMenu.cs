@@ -243,9 +243,33 @@ namespace Tide.Editor
                     b.Put(Pin, Word("emptyIt", "Empty it"), Keys("emptyIt", "Del"), () => frame.Empty(owner, p.Path, label), frame.WireAt(owner, p.Path) == 0);
                 }
             }
-            else if (!p.Input && !p.Exec) b.Put(Pin, Word("useIt", "Use it in a new node…"), null, () => board.OpenSearch(frame, Near(), p));
+            else if (!p.Input && !p.Exec)
+            {
+                b.Put(Pin, Word("useIt", "Use it in a new node…"), null, () => board.OpenSearch(frame, Near(), p));
+                // Blueprint's Promote to Variable: worked out once, read where it was wired
+                if (!p.IsRead && frame.CanKeepAsLocal(p.Node))
+                    b.Put(Pin, Word("keepLocal", KeepLocalWord), null, () => frame.KeepAsLocal(p.Node), false, "A local is declared before the first step that reads this, with this as its value, and what this was wired to reads the local");
+            }
             else if (!p.Input && p.Exec) b.Put(Pin, Word("addNext", "Add what happens next…"), null, () => board.OpenSearch(frame, Near(), p));
             else if (p.Node > 0) b.Put(Pin, Word("addBefore", "Add what happens before…"), null, () => board.OpenSearch(frame, Near(), p));
+            return b.Done();
+        }
+
+        public const string KeepLocalWord = "Keep it as a local", RerouteWord = "Add a reroute";
+
+        // ---------------------------------------------------------------------------------------------------------
+        // A data wire: a reroute on it where it was clicked, or the wire taken away
+
+        public static List<GraphOption> ForWire(GraphFrame frame, FrameWires.Wire wire, Vector2 at)
+        {
+            var b = new Builder();
+            var board = frame.Board;
+            b.Put(Add, Word("addReroute", RerouteWord), Keys("addReroute", "Double-click"), () => board.AddReroute(frame, wire, at), false, "A knot on the wire, to route it tidily: its value goes to any number of inputs");
+            b.Put(Pin, Word("breakLink", "Break this link"), null, () =>
+            {
+                var reader = wire.Reader == GraphFrame.ResultId ? null : frame.ById.TryGetValue(wire.Reader, out var n) ? n : null;
+                if (reader != null || wire.Reader == GraphFrame.ResultId) frame.Empty(reader, wire.Path, GraphNodeView.LabelOf(board.Window.Checked, reader, wire.Path, null));
+            });
             return b.Done();
         }
 

@@ -1043,6 +1043,10 @@ static jv *finish_pool(cv *c, const int first_pool, const int root, const bool b
             else if (str_eq_c(n->obj->keys.items[k], "op")) p->op = v->text;
             else if (str_eq_c(n->obj->keys.items[k], "name")) p->name = v->text;
         }
+        for (int k = 0; k < n->obj->keys.count; k++) {
+            const jv *v = n->obj->items.items[k];
+            if (v->kind == GJ_NUMBER && str_eq_c(n->obj->keys.items[k], "target")) p->target = (int)v->number;
+        }
         for (int k = 0; k < n->inputs.count; k++) vec_push(p->inputs, n->inputs.items[k]);
         for (int k = 0; k < n->bodies.count; k++) vec_push(p->bodies, n->bodies.items[k]);
         int widest = 0;

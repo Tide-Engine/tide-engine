@@ -121,8 +121,10 @@ namespace Tide.Editor
 
     // A node in a frame: its title in its category's colour, its inputs and its own values on it. A statement that
     // is a call is one node (the call with the statement's flow). An input's row is its name, then what's in it:
-    // a number's, a tick's or a text's own control, a chip with a name or a path (wobble.phase) in its type's
-    // colour, a pin with a wire from the node that works it out, or "pick…" when nothing is.
+    // a number's, a tick's or a text's own control, a chip with a name that never changes or a path from one
+    // (Math.PI, .Run) in its type's colour, a pin with a wire from a Get or from the node that works it out, or
+    // "pick…" when nothing is. A Get is compact (its name and its pin), a reroute a knot; a Set says what it changes
+    // in its title (Set score), and a call on a type or a namespace says it beneath its name (Clamp, Math).
     class GraphNodeView : VisualElement
     {
         public readonly GraphFrame Frame;
@@ -153,8 +155,19 @@ namespace Tide.Editor
             Node = node;
             Call = call;
             AddToClassList("tg-node");
-            RegisterCallback<PointerEnterEvent>(_ => AskHover());
+            RegisterCallback<PointerEnterEvent>(_ =>
+            {
+                AskHover();
+                if (lights != null) Frame.Light(lights.Value.name, lights.Value.local, true);
+            });
+            RegisterCallback<PointerLeaveEvent>(_ =>
+            {
+                if (lights != null) Frame.Light(lights.Value.name, lights.Value.local, false);
+            });
         }
+
+        // The variable a Get reads, which is lit with its other Gets and where it comes from under the pointer
+        (string name, int local)? lights;
 
         protected TideGraphWindow Window => Frame.Window;
         protected GraphDocument Doc => Frame.Doc;
@@ -184,9 +197,12 @@ namespace Tide.Editor
         // tidec's layout's own estimate of a node's size (graph_layout_measure), until it's drawn
         public virtual Vector2 Estimate() => EstimateOf(Node, Call, Frame);
 
-        // As wide as its widest input's row too: the input's name, then what's shown in it (graph_layout_fold)
+        // As wide as its widest input's row too: the input's name, then what's shown in it (graph_layout_fold). A Get
+        // is its name and its pin (and a member's Target pin), a reroute a knot.
         public static Vector2 EstimateOf(JValue n, JValue call, GraphFrame frame = null)
         {
+            if (call == null && n != null && IsGet(n.Str("k"))) return GetSize(n, frame);
+            if (call == null && n?.Str("k") == "reroute") return KnotSize;
             var widest = 0;
             var ports = 1;
             var width = 0f;
@@ -206,6 +222,26 @@ namespace Tide.Editor
             return new Vector2(Mathf.Max(width, 140 + Mathf.Min(260, widest * 8)), 34 + 22 * ports);
         }
 
+        // The kinds drawn as a compact Get: a variable read (a name, a local, this) or a field of a value
+        internal static bool IsGet(string k) => k == "name" || k == "local" || k == "member" || k == "this";
+
+        internal static readonly Vector2 KnotSize = new Vector2(34, 18);
+
+        static Vector2 GetSize(JValue n, GraphFrame frame)
+        {
+            var k = n.Str("k");
+            var text = k == "member" ? n.Str("member") : k == "local" ? (frame != null && frame.ById.TryGetValue(n.Wire("ref"), out var d) ? GraphSchema.LocalName(d) : "local") : k == "this" ? GraphFrame.SelfWord : n.Str("name");
+            // As tidec's layout measures one (graph_layout_measure): its name, and a field's Target pin with its word
+            var width = 48f + Mathf.Min(200, 8 * (text?.Length ?? 4));
+            if (k == "member" && !n.Flag("shorthand"))
+            {
+                width += 60;
+                var of = frame?.ShownIn(n.Wire("object"));
+                if (of != null) width += Mathf.Min(200, frame.WidthOf(of) * 7.5f + 18);
+            }
+            return new Vector2(width, 32);
+        }
+
         public bool Selected
         {
             get => selected;
@@ -213,6 +249,7 @@ namespace Tide.Editor
             {
                 selected = value;
                 EnableInClassList("tg-selected", value);
+                TintGet();
             }
         }
 
@@ -236,10 +273,17 @@ namespace Tide.Editor
                     if (p.Path == null || p.Exec) continue;
                     // What's shown in its inputs is part of it
                     foreach (var id in frame.ChainOf(p.Path.Get(v)))
-                        if (frame.ById.TryGetValue(id, out var source)) sb.Append('<').Append(GraphJson.Write(source)).Append('>');
+                        if (frame.ById.TryGetValue(id, out var source))
+                        {
+                            sb.Append('<').Append(GraphJson.Write(source)).Append('>');
+                            // A local in a Set's title says its declaration's name
+                            if (source.Str("k") == "local" && frame.ById.TryGetValue(source.Wire("ref"), out var made)) sb.Append(GraphSchema.LocalName(made));
+                        }
                 }
                 if (frame.Declares(v))
                     sb.Append(frame.Readers.TryGetValue(v.Wire("id"), out var readers) && readers.Count > 0 ? "R" : "");
+                // A Get of a local says its name, which is its declaration's
+                if (v.Str("k") == "local" && frame.ById.TryGetValue(v.Wire("ref"), out var declared)) sb.Append("=").Append(GraphSchema.LocalName(declared));
             }
             Write(n);
             if (call != null) Write(call);
@@ -257,10 +301,23 @@ namespace Tide.Editor
             var shown = Call ?? n;
             var k = shown.Str("k");
             var spec = GraphSchema.Spec(k);
-            var own = GraphSchema.Spec(n.Str("k"));
             EnableInClassList("tg-node--unreached", !Frame.Reached.Contains(Id));
-            var small = k == "name" || IsLiteral(k) || k == "this" || k == "default" || k == "null";
-            EnableInClassList("tg-node--small", small);
+            var get = Call == null && IsGet(k);
+            var knot = Call == null && k == "reroute";
+            EnableInClassList("tg-get", get);
+            EnableInClassList("tg-knot", knot);
+            EnableInClassList("tg-node--small", IsLiteral(k) || k == "default" || k == "null");
+            getName = null;
+            if (get)
+            {
+                BuildGet(n, k);
+                return;
+            }
+            if (knot)
+            {
+                BuildKnot(n);
+                return;
+            }
 
             var note = shown.Str("comment") ?? n.Str("comment");
             if (!string.IsNullOrEmpty(note))
@@ -280,6 +337,12 @@ namespace Tide.Editor
             var callPorts = Call != null ? GraphPorts.Of(Call) : new List<GraphPort>();
             var execIn = ports.FirstOrDefault(p => p.Input && p.Exec);
             if (execIn != null) Head.Add(Pin(execIn));
+            // What a Set changes, in its title: Set score
+            if (Call == null && Frame.Titles.TryGetValue(Id, out var target) && Frame.ById.TryGetValue(target, out var changed))
+            {
+                changes = changed;
+                changesKey = spec?.Inputs.FirstOrDefault();
+            }
             Title(shown, k, spec);
             var more = GraphLook.IconButton("more", "More for this node", null, "tg-on-hover");
             more.clicked += () => Frame.OpenNodeMenu(this, more);
@@ -289,13 +352,32 @@ namespace Tide.Editor
             if (next != null) Head.Add(Pin(next));
             else if (dataOut != null && execIn == null) Head.Add(Pin(dataOut));
 
+            if (titleTarget != null)
+            {
+                // "Target is Math": what a call is of, when it's a name that never changes, beneath its name
+                var sub = GraphLook.Row("tg-node-sub");
+                sub.style.backgroundColor = Head.style.backgroundColor;
+                sub.Add(titleTarget);
+                Insert(IndexOf(Head) + 1, sub);
+            }
+
             Fields(shown, k);
 
             // Its inputs: the call's when it's drawn with one, but not the statement's value, which is the call;
-            // and not what the title says it's of (ball.Bounce)
+            // and not what the title says it's of (Math under Clamp). What a Set's title says it changes is no row:
+            // what that's a field of is its Target.
             bool Titled(GraphPort p) => titled != null && p.Path.Parts.Length == 1 && p.Path.Key == "object";
             foreach (var p in callPorts.Where(p => p.Input && !p.Exec && !(Call == titled && Titled(p)))) InputRow(Call, p);
-            foreach (var p in ports.Where(p => p.Input && !p.Exec && !(Call != null && p.Path.Key == "value" && p.Path.Parts.Length == 1) && !(n == titled && Titled(p)))) InputRow(n, p);
+            foreach (var p in ports.Where(p => p.Input && !p.Exec && !(Call != null && p.Path.Key == "value" && p.Path.Parts.Length == 1) && !(n == titled && Titled(p))))
+            {
+                if (changes != null && p.Path.Parts.Length == 1 && p.Path.Key == changesKey)
+                {
+                    if (changes.Str("k") == "member" && !changes.Flag("shorthand"))
+                        InputRow(changes, GraphPorts.Of(changes).First(q => q.Input && !q.Exec && q.Path?.Key == "object"));
+                    continue;
+                }
+                InputRow(n, p);
+            }
             Growers(shown);
             if (Call != null && Call != shown) Growers(Call);
 
@@ -325,10 +407,18 @@ namespace Tide.Editor
 
         static bool IsLiteral(string k) => k == "int" || k == "float" || k == "string" || k == "bool" || k == "char";
 
-        JValue titled; // The method or member whose title says what it's of
+        JValue titled; // The method whose title says what it's of
+        VisualElement titleTarget; // What it's of, shown beneath its name
+        JValue changes; // What a Set's title says it changes
+        string changesKey;
+        VisualElement getName; // A Get's name, in its value's type's colour
 
         protected void ResetShown()
         {
+            lights = null;
+            titleTarget = null;
+            changes = null;
+            changesKey = null;
             hiddenRows.Clear();
             Chips.Clear();
             Reads.Clear();
@@ -394,9 +484,12 @@ namespace Tide.Editor
                 var word = GraphSchema.Spec(k)?.Lists.FirstOrDefault(l => l.Key == path.Key)?.Label ?? path.Key;
                 return call?.At(index).name ?? $"{word} {index + 1}";
             }
-            if (path.Parts.Length == 1) return GraphSchema.PortLabel(path.Key);
+            if (path.Parts.Length == 1) return path.Key == "object" ? TargetWord : GraphSchema.PortLabel(path.Key);
             return fallback ?? "";
         }
+
+        // What a method's or a field's value is of, as Blueprint calls it
+        internal const string TargetWord = "Target";
 
         // The arguments' names, as the check that just came back has them; and the row that adds one says which
         // comes next, and goes once the call has all its callee takes
@@ -580,7 +673,7 @@ namespace Tide.Editor
         static string Word(GraphPort p)
         {
             if (p.Path == null) return p.Label ?? "";
-            if (p.Path.Parts.Length == 1) return GraphSchema.PortLabel(p.Path.Key);
+            if (p.Path.Parts.Length == 1) return p.Path.Key == "object" ? TargetWord : GraphSchema.PortLabel(p.Path.Key);
             return p.Label ?? "";
         }
 
@@ -612,17 +705,15 @@ namespace Tide.Editor
                 case "method":
                 case "member":
                 {
-                    // What it's of, when that's a name or a path: ball.Bounce, Math.Clamp, with no "of" row
+                    // What it's of, when that's a name that never changes: Clamp, with "Math" beneath it, as Blueprint's
+                    // "Target is Math"; else what it's of is its Target pin
                     if (Frame.ShownIn(shown.Wire("object")) != null)
                     {
                         titled = shown;
-                        var of = ValueOf(shown, new WirePath("object"), GraphSchema.PortLabel("object"), true);
-                        Head.Add(of);
-                        foreach (var id in Frame.ChainOf(shown.Wire("object"))) hiddenRows.Add((id, of));
+                        titleTarget = ValueOf(shown, new WirePath("object"), TargetWord, true);
+                        titleTarget.tooltip = "What it's of. Click to change it.";
+                        foreach (var id in Frame.ChainOf(shown.Wire("object"))) hiddenRows.Add((id, titleTarget));
                     }
-                    var dot = GraphLook.Text(".", "tg-node-title", "tg-node-dot");
-                    if (titled == shown) dot.AddToClassList("tg-node-dot--after");
-                    Head.Add(dot);
                     Named(k == "member" ? "member" : "name");
                     Head.Add(new VisualElement { style = { flexGrow = 1 }, pickingMode = PickingMode.Ignore });
                     if (!shown.Flag("shorthand"))
@@ -632,19 +723,19 @@ namespace Tide.Editor
                     }
                     break;
                 }
-                case "name":
-                    Named("name", true);
-                    Head.Add(new VisualElement { style = { flexGrow = 1 }, pickingMode = PickingMode.Ignore });
+                case "this":
+                    Words(GraphFrame.SelfWord);
                     break;
-                case "local":
-                {
-                    var decl = Frame.ById.TryGetValue(shown.Wire("ref"), out var d) ? d : null;
-                    Words(decl != null ? GraphSchema.LocalName(decl) : "a local that's gone");
-                    break;
-                }
                 case "assign":
-                    // Its operator is on its value's row: Set / what wobble.phase / += wobble.frequency
+                    // Set score: what it changes is in its title, when nothing else reads it; its operator is on its
+                    // value's row (+= wobble.frequency)
                     Words(spec?.Title ?? k);
+                    if (changes != null)
+                    {
+                        Head[Head.childCount - 1].style.flexGrow = 0;
+                        Head.Add(ChangesButton(shown));
+                        Head.Add(new VisualElement { style = { flexGrow = 1 }, pickingMode = PickingMode.Ignore });
+                    }
                     break;
                 default:
                     if (ops.Length > 0)
@@ -656,12 +747,177 @@ namespace Tide.Editor
                         pick.Add(new Label(title != null ? $"{title}  {op}" : $"{spec?.Title}  {op}") { pickingMode = PickingMode.Ignore, style = { color = Color.white, unityFontStyleAndWeight = FontStyle.Bold } });
                         pick.Add(new GraphIcon("down") { pickingMode = PickingMode.Ignore, style = { color = new Color(1, 1, 1, 0.7f) } });
                         pick.name = "op";
-                        pick.style.flexGrow = 1;
+                        pick.style.flexGrow = changes != null ? 0 : 1;
                         Head.Add(pick);
+                        if (changes != null)
+                        {
+                            Head.Add(ChangesButton(shown));
+                            Head.Add(new VisualElement { style = { flexGrow = 1 }, pickingMode = PickingMode.Ignore });
+                        }
                     }
                     else Words(spec?.Title ?? k ?? "?");
                     break;
             }
+        }
+
+        // The name of what a Set (or a step) changes, in its title: clicked, the picker of what can be changed
+        Button ChangesButton(JValue owner)
+        {
+            var path = new WirePath(changesKey);
+            var ck = changes.Str("k");
+            var what = ck == "member" ? changes.Str("member") : ck == "local" ? (Frame.ById.TryGetValue(changes.Wire("ref"), out var d) ? GraphSchema.LocalName(d) : "a local that's gone") : changes.Str("name");
+            Button b = null;
+            b = GraphLook.Plain(() => Frame.Board.PickValue(Frame, owner, path, LabelOf(Window.Checked, owner, path, "what"), b), "tg-title-name");
+            b.text = what ?? "?";
+            b.name = "changes";
+            b.tooltip = changes.Str("k") == "member" ? $"What it changes: the {what} of its Target. Click to pick something else." : $"What it changes: {what}. Click to pick something else.";
+            // What it changes is lit with the variable's Gets and where it comes from
+            var variable = ck == "name" && Frame.Reads.ContainsKey(what ?? "") ? what : null;
+            var local = ck == "local" ? changes.Wire("ref") : 0;
+            if (variable != null || local != 0)
+            {
+                b.RegisterCallback<PointerEnterEvent>(_ => Frame.Light(variable, local, true));
+                b.RegisterCallback<PointerLeaveEvent>(_ => Frame.Light(variable, local, false));
+            }
+            return b;
+        }
+
+        // ---------------------------------------------------------------------------------------------------------
+        // Gets and reroutes
+
+        // A Get: no title bar, the variable's name and its value pin, in its type's colour. A field of a value has
+        // its Target pin (what it's a field of) on its left. Hovering it lights where the variable comes from and
+        // its other Gets.
+        void BuildGet(JValue n, string k)
+        {
+            var note = n.Str("comment");
+            if (!string.IsNullOrEmpty(note))
+            {
+                var said = GraphLook.Text(note, "tg-node-note");
+                said.tooltip = "A note. Change it from the node's menu.";
+                Add(said);
+            }
+            Head = GraphLook.Row("tg-get-row");
+            Add(Head);
+            Body = GraphLook.Row("tg-node-body");
+            Body.style.display = DisplayStyle.None;
+            Add(Body);
+            var ports = GraphPorts.Of(n);
+            if (k == "member" && !n.Flag("shorthand"))
+            {
+                var of = ports.First(p => p.Input && !p.Exec && p.Path?.Key == "object");
+                var path = of.Path;
+                var row = GraphLook.Row("tg-port-row", "tg-get-target");
+                row.name = "in:" + path;
+                of.Label = TargetWord;
+                var pin = Pin(of);
+                pin.Connected = n.Wire("object") != 0;
+                row.Add(pin);
+                row.Add(GraphLook.Text(TargetWord, "tg-port-label"));
+                var shownOf = Frame.ShownIn(n.Wire("object"));
+                if (shownOf != null)
+                {
+                    var value = ValueOf(n, path, TargetWord);
+                    if (value != null) row.Add(value);
+                    foreach (var id in Frame.ChainOf(n.Wire("object"))) hiddenRows.Add((id, row));
+                }
+                rowLabels[row] = TargetWord;
+                inputs[row] = (n, path, TargetWord);
+                Head.Add(row);
+            }
+            string variable = null;
+            var local = 0;
+            switch (k)
+            {
+                case "name":
+                {
+                    var order = GraphSchema.NodeOrder(k);
+                    var f = GraphLook.DottedNameField(n.Str("name"), name => Frame.Edit("Rename", () => n.Set("name", JValue.Of(name), order)), "name");
+                    f.Named("title");
+                    f.tooltip = "Double-click to read something else by its name (F2)";
+                    getName = f;
+                    if (Frame.Reads.ContainsKey(n.Str("name") ?? "")) variable = n.Str("name");
+                    break;
+                }
+                case "member":
+                {
+                    var order = GraphSchema.NodeOrder(k);
+                    var f = GraphLook.Name(n.Str("member"), name => Frame.Edit("Rename", () => n.Set("member", JValue.Of(name), order)), "field");
+                    f.Named("title");
+                    getName = f;
+                    break;
+                }
+                case "local":
+                {
+                    var decl = Frame.ById.TryGetValue(n.Wire("ref"), out var d) ? d : null;
+                    getName = GraphLook.Text(decl != null ? GraphSchema.LocalName(decl) : "a local that's gone");
+                    local = n.Wire("ref");
+                    break;
+                }
+                default:
+                    getName = GraphLook.Text(GraphFrame.SelfWord);
+                    break;
+            }
+            getName.AddToClassList("tg-get-name");
+            Head.Add(getName);
+            if (k == "member" && !n.Flag("shorthand"))
+            {
+                var id = n.Wire("id");
+                Head.Add(GraphLook.IconButton("down", "Pick from what its value has", () => Frame.Board.OpenMemberSearch(Frame, id, this), "tg-on-hover"));
+            }
+            var output = ports.First(p => !p.Input && !p.Exec);
+            output.Label = (getName as GraphName)?.Value ?? (getName as Label)?.text;
+            Head.Add(Pin(output));
+            if (variable != null || local != 0)
+            {
+                lights = (variable, local);
+                Reads.Add((lights.Value, this));
+            }
+            TintGet();
+        }
+
+        // A reroute: a knot on a wire, its input on the left and its value on the right, which goes to any number of
+        // inputs. Dragged by its middle.
+        void BuildKnot(JValue n)
+        {
+            Head = GraphLook.Row("tg-knot-row");
+            Head.name = "in:value";
+            Add(Head);
+            Body = GraphLook.Row("tg-node-body");
+            Body.style.display = DisplayStyle.None;
+            Add(Body);
+            var ports = GraphPorts.Of(n);
+            var into = ports.First(p => p.Input && !p.Exec && p.Path?.Key == "value");
+            var pin = Pin(into);
+            pin.Connected = n.Wire("value") != 0;
+            Head.Add(pin);
+            var shown = Frame.ShownIn(n.Wire("value"));
+            if (shown != null)
+            {
+                var value = ValueOf(n, into.Path, "value");
+                if (value != null) Head.Add(value);
+            }
+            inputs[Head] = (n, into.Path, "value");
+            var grip = new VisualElement();
+            grip.AddToClassList("tg-knot-grip");
+            Head.Add(grip);
+            Head.Add(Pin(ports.First(p => !p.Input && !p.Exec)));
+            Head.tooltip = "A reroute: drag it to route the wire tidily. Its value goes to any number of inputs; deleting it joins its wires again.";
+        }
+
+        // A Get's name, in its value's type's colour
+        void TintGet()
+        {
+            if (getName == null) return;
+            var c = TideGraphTypes.ColorOf(typeText, Frame.Board.Light);
+            var label = getName as Label ?? getName.Q<Label>();
+            if (label != null) label.style.color = c;
+            // Its edge in its type's colour, but while it's selected, which says so
+            var edge = selected ? new StyleColor(StyleKeyword.Null) : new StyleColor(new Color(c.r, c.g, c.b, 0.6f));
+            style.borderLeftColor = edge;
+            style.borderRightColor = edge;
+            style.borderTopColor = edge;
+            style.borderBottomColor = edge;
         }
 
         // ---------------------------------------------------------------------------------------------------------
@@ -867,6 +1123,7 @@ namespace Tide.Editor
             var shown = Frame.ShownIn(from);
             // Its pin is always there, at its left: hollow when it's empty, filled when something's in it (a value,
             // a chip, a wire); a simple value stays in the input beside it
+            if (p.Path.Parts.Length == 1) p.Label = Word(p);
             var pin = Pin(p);
             pin.Connected = from != 0;
             row.Add(pin);
@@ -946,6 +1203,11 @@ namespace Tide.Editor
                 else if (from != 0)
                 {
                     row.Add(new VisualElement { style = { flexGrow = 1 } });
+                    var path = p.Path;
+                    Button other = null;
+                    other = GraphLook.IconButton("down", "Pick something else: a value, a variable, something worked out", () => Frame.Board.PickValue(Frame, owner, path, LabelOf(Window.Checked, owner, path, label), other), "tg-on-hover");
+                    other.name = "other";
+                    row.Add(other);
                     row.Add(EmptyButton(owner, p.Path, label));
                 }
             }
@@ -1149,6 +1411,7 @@ namespace Tide.Editor
             hoverText = null;
             hoverAsked = false;
             Retooltip();
+            TintGet();
         }
 
         public void SetHover(string text)
@@ -1170,7 +1433,8 @@ namespace Tide.Editor
             var parts = new List<string>();
             if (!string.IsNullOrEmpty(hoverText)) parts.Add(hoverText);
             else if (!string.IsNullOrEmpty(typeText)) parts.Add(typeText);
-            if (spec?.Help != null) parts.Add(spec.Help);
+            if (getName != null) parts.Add("A Get: its pin goes to any number of inputs.");
+            else if (spec?.Help != null) parts.Add(spec.Help);
             if (Head != null) Head.tooltip = string.Join("\n\n", parts);
         }
 

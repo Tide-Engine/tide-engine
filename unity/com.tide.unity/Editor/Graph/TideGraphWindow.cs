@@ -254,8 +254,12 @@ namespace Tide.Editor
             CheckSoon();
         }
 
-        // What's selected changed: Details shows it
-        internal void SelectionChanged() => Details?.Fill();
+        // What's selected changed: Details shows it, and My game the variables of the code it's in
+        internal void SelectionChanged()
+        {
+            Details?.Fill();
+            MyGame?.Selected();
+        }
 
         void UndoRedo()
         {

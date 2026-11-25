@@ -978,6 +978,108 @@
     color: var(--tg-warning);
 }
 
+/* A call on a type or a namespace: what it's of beneath its name ("Target is Math") */
+
+.tg-node-sub {
+    flex-direction: row;
+    align-items: center;
+    padding: 0 6px 3px 6px;
+    margin-top: -2px;
+}
+
+.tg-node-sub > .tg-value-with {
+    flex-shrink: 1;
+}
+
+/* What a Set changes, in its title: Set score */
+
+.tg-title-name {
+    padding: 0 4px;
+    margin: 0 0 0 -2px;
+    border-width: 0;
+    border-bottom-width: 1px;
+    border-color: rgba(255, 255, 255, 0.35);
+    border-radius: 0;
+    background-color: rgba(0, 0, 0, 0);
+    color: #ffffff;
+    -unity-font-style: bold;
+    font-size: 12px;
+    flex-shrink: 0;
+}
+
+.tg-title-name:hover {
+    border-color: #ffffff;
+    background-color: rgba(255, 255, 255, 0.14);
+}
+
+/* A Get: no title bar, the variable's name and its pin, in its type's colour; a field's Target pin on its left */
+
+.tg-node.tg-get {
+    min-width: 0;
+    border-radius: 12px;
+    background-color: var(--tg-head);
+}
+
+.tg-node.tg-get.tg-selected {
+    border-width: 2px;
+}
+
+.tg-get-row {
+    flex-direction: row;
+    align-items: center;
+    min-height: 24px;
+    padding: 0 2px 0 6px;
+}
+
+.tg-get-row > .tg-get-target {
+    padding: 0;
+    min-height: 22px;
+    margin-left: -4px;
+}
+
+.tg-get-name {
+    -unity-font-style: bold;
+    font-size: 12px;
+    margin: 0 2px;
+    padding: 0;
+    flex-shrink: 0;
+}
+
+.tg-get-name > .tg-name-text {
+    -unity-font-style: bold;
+}
+
+.tg-node.tg-get.tg-lit {
+    border-color: var(--tg-accent);
+    background-color: var(--tg-accent-soft);
+}
+
+/* A reroute: a knot on a wire, dragged by its middle */
+
+.tg-node.tg-knot {
+    min-width: 0;
+    border-radius: 9px;
+    background-color: var(--tg-head);
+}
+
+.tg-knot-row {
+    flex-direction: row;
+    align-items: center;
+    height: 16px;
+    padding: 0 1px;
+}
+
+.tg-knot-grip {
+    width: 4px;
+    height: 10px;
+}
+
+.tg-knot-row > .tg-port {
+    width: 12px;
+    height: 12px;
+    margin: 0;
+}
+
 /* The entry of a frame: what its code takes */
 .tg-entry {
     min-width: 230px;
@@ -1489,6 +1591,24 @@
 
 .tg-mine-row {
     min-height: 24px;
+}
+
+.tg-mine-arrow {
+    width: 16px;
+    height: 16px;
+    margin: 0 2px 0 0;
+    flex-shrink: 0;
+}
+
+.tg-mine-of {
+    margin-left: 6px;
+    -unity-text-align: middle-right;
+    flex-shrink: 1;
+    overflow: hidden;
+}
+
+.tg-mine-var > .tg-option-title {
+    flex-shrink: 1;
 }
 
 .tg-mine-row.tg-lit {

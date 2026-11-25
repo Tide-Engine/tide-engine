@@ -1,6 +1,7 @@
 // The board's two panels (notes/visual-scripting.md, Round three), as Blueprint has them:
 //
-//   My game, on the left: the file's declarations by the schema's groups, a "+" on each group's heading that adds one
+//   My game, on the left: the Variables of the code in hand (dragged onto it, a Get or a Set of one), then the file's
+//   declarations by the schema's groups, a "+" on each group's heading that adds one
 //   of its kinds, a click goes to one, a double click renames it, and one dragged out goes where it's dropped (a
 //   component or a singleton onto a frame: what it needs; a function into a frame: its call; a constant onto an
 //   input: its value).
@@ -26,6 +27,99 @@
             this.el = el('div.tg-panel.tg-mygame', { dataset: { panel: 'mygame' } });
             this.filter = '';
             this.drag = null;
+            this.openVars = new Set(); // Variables opened to their fields, by frame and path
+            this.fields = new Map();   // What a type has, as tidels said: type -> [{ name, type }]
+            this.varsOf = 0;           // The frame whose variables are listed
+        }
+
+        // The Variables of the code in hand (Blueprint's My Blueprint): what the frame takes and its locals, each
+        // opening to its fields. Dragged onto the frame, one asks "Get <name>" or "Set <name>" (Ctrl makes a Get at
+        // once, Alt a Set); dropped on an input, it's a Get wired to it.
+        variables(list, filter) {
+            const app = this.app;
+            const f = app.variablesFrame();
+            this.varsOf = f?.item?.id || 0;
+            const vars = f ? this.variablesOf(f) : [];
+            const shown = vars.filter(v => !filter || v.text.toLowerCase().includes(filter));
+            G.ui.put(list, el('div.tg-mygame-group.tg-mygame-vars', { dataset: { group: 'variables' }, title: 'What the code in hand takes and makes: drag one onto it to Get or Set it' },
+                el('span.tg-mygame-group-title', { text: 'Variables' }),
+                el('span.tg-mygame-count', { text: shown.length ? String(shown.length) : '' }),
+                el('span.tg-grow'),
+                f ? el('span.tg-mygame-of', { text: app.editor.doc.titleOf(f.item) }) : null));
+            if (!f) {
+                G.ui.put(list, el('div.tg-mygame-none', { text: 'Select some code to see its variables' }));
+                return;
+            }
+            if (!shown.length) {
+                G.ui.put(list, el('div.tg-mygame-none', { text: filter ? 'Nothing by that name' : 'None yet: “+ needs…” on its entry adds what it takes' }));
+                return;
+            }
+            for (const v of shown) this.varRows(list, f, v, 0);
+        }
+
+        // What a frame's code has: { text, start, members, type }
+        variablesOf(f) {
+            const doc = this.app.editor.doc;
+            const s = this.app.editor.schema;
+            const out = f.pins.map(pin => ({ text: pin.name, start: { name: pin.name }, members: [], type: f.typeOfPort({ pin: pin.name }) }));
+            for (const d of f.graph ? doc.locals(f.graph) : []) {
+                const name = s.declaredLocal(d);
+                if (name) out.push({ text: name, start: { local: d.id }, members: [], type: f.typeOfPort({ local: d.id }) });
+            }
+            return out;
+        }
+
+        // A variable's row, and its fields' rows when it's open
+        varRows(list, f, v, depth) {
+            const app = this.app;
+            const ed = app.editor;
+            const s = ed.schema;
+            const key = `${f.item.id}|${v.text}`;
+            const control = s.control(v.type);
+            const opens = !!v.type && depth < 6 && (!control || control === 'vector' || control === 'colour') && !ed.doc.enumMembers(v.type) && app.lang.declares(v.type) !== 'enum';
+            const open = opens && this.openVars.has(key);
+            const toggle = opens
+                ? button(open ? '▾' : '▸', () => { if (open) this.openVars.delete(key); else this.openVars.add(key); this.render(); }, open ? 'Close its fields' : 'Its fields', 'tg-icon.tg-var-toggle')
+                : el('span.tg-var-toggle');
+            const row = el('div.tg-mygame-item.tg-mygame-var', { dataset: { var: v.text }, style: { paddingLeft: 6 + 14 * depth + 'px' }, title: `${v.text}${v.type ? `: ${v.type}` : ''} · drag it onto the code to Get or Set it (Ctrl: Get, Alt: Set), or onto an input` },
+                toggle, el('span.tg-swatch', { style: { background: typeColor(v.type) || 'var(--tg-muted)' } }),
+                el('span.tg-mygame-name', { text: depth ? v.members.at(-1) : v.text }), el('span.tg-mygame-kind', { text: v.type || '' }));
+            row.addEventListener('pointerdown', e => this.downVar(e, row, f, v));
+            row.addEventListener('pointermove', e => this.move(e));
+            row.addEventListener('pointerup', e => this.up(e));
+            row.addEventListener('pointercancel', () => this.end());
+            G.ui.put(list, row);
+            if (!open) return;
+            const fields = this.fieldsOf(v.type);
+            if (!fields) {
+                G.ui.put(list, el('div.tg-mygame-none', { text: 'Asking what it has…', style: { paddingLeft: 20 + 14 * depth + 'px' } }));
+                return;
+            }
+            for (const m of fields) this.varRows(list, f, { text: `${v.text}.${m.name}`, start: v.start, members: [...v.members, m.name], type: m.type }, depth + 1);
+        }
+
+        // A type's fields: the file's, else tidels's (asked once, the list drawn again when it answers); null while
+        // it's asked
+        fieldsOf(type) {
+            const app = this.app;
+            const own = app.editor.doc.membersOf(type).filter(m => !m.method);
+            if (own.length) return own;
+            if (this.fields.has(type)) return this.fields.get(type);
+            if (app.lang.status === 'unavailable') return [];
+            this.fields.set(type, null);
+            app.lang.membersOfType(type).then(items => {
+                const K = G.lang.KIND;
+                this.fields.set(type, items.filter(i => [K.Field, K.Property, K.Constant, K.Variable, K.Value].includes(i.kind) && typeof i.label === 'string')
+                    .map(i => ({ name: i.label.replace(/\(.*$/, ''), type: G.pickers.typeIn(i.detail) })));
+                if (this.app.open.mygame) this.render();
+            });
+            return null;
+        }
+
+        downVar(e, row, f, v) {
+            if (e.button !== 0 || e.target.closest('input, button')) return;
+            this.drag = { start: { x: e.clientX, y: e.clientY }, row, variable: { frame: f, ...v }, moved: false, ghost: null, id: e.pointerId };
+            try { row.setPointerCapture(e.pointerId); } catch {}
         }
 
         render() {
@@ -33,6 +127,9 @@
             const ed = app.editor;
             const box = this.el;
             if (!ed || ed.error) { box.replaceChildren(); return; }
+            // (not while one of its rows is dragged out: the row holds the pointer until it's let go)
+            if (this.drag) { this.stale = true; return; }
+            this.stale = false;
             const s = ed.schema;
             const focused = document.activeElement === this.input;
             const input = el('input.tg-input.tg-panel-filter', { type: 'text', placeholder: 'Find in this file…', spellcheck: 'false', value: this.filter });
@@ -56,6 +153,7 @@
             const entries = G.pickers.contents(app);
             const text = this.filter.trim().toLowerCase();
             list.replaceChildren();
+            this.variables(list, text);
             for (const group of s.groups) {
                 const mine = entries.filter(e => e.group === group.title && (!text || e.title.toLowerCase().includes(text)));
                 G.ui.put(list, el('div.tg-mygame-group', { dataset: { group: group.name }, title: group.summary },
@@ -107,14 +205,15 @@
             if (!d.moved && Math.abs(e.clientX - d.start.x) + Math.abs(e.clientY - d.start.y) < 6) return;
             if (!d.moved) {
                 d.moved = true;
-                d.ghost = el('div.tg-drag-ghost', { text: this.app.editor.doc.titleOf(d.item) });
+                d.ghost = el('div.tg-drag-ghost', { text: d.variable ? d.variable.text : this.app.editor.doc.titleOf(d.item) });
                 document.body.append(d.ghost);
             }
             d.ghost.style.left = e.clientX + 12 + 'px';
             d.ghost.style.top = e.clientY + 8 + 'px';
             // What it would go into lights
             for (const x of document.querySelectorAll('.tg-drop-ok')) x.classList.remove('tg-drop-ok');
-            const target = this.app.dropTarget(d.item, document.elementFromPoint(e.clientX, e.clientY));
+            const under = document.elementFromPoint(e.clientX, e.clientY);
+            const target = d.variable ? this.app.variableTarget(d.variable, under) : this.app.dropTarget(d.item, under);
             target?.el?.classList.add('tg-drop-ok');
             d.ghost.classList.toggle('tg-drag-ghost-ok', !!target);
         }
@@ -123,6 +222,10 @@
             const d = this.drag;
             this.end();
             if (!d) return;
+            if (d.variable) {
+                if (d.moved) this.app.dropVariable(d.variable, e.clientX, e.clientY, { get: e.ctrlKey || e.metaKey, set: e.altKey });
+                return;
+            }
             if (!d.moved) {
                 // A click: go to it
                 this.app.reveal(d.item.id);
@@ -137,6 +240,7 @@
             this.drag = null;
             if (d?.ghost) d.ghost.remove();
             for (const x of document.querySelectorAll('.tg-drop-ok')) x.classList.remove('tg-drop-ok');
+            if (this.stale) requestAnimationFrame(() => { if (this.stale && this.app.open.mygame) this.render(); });
         }
     }
 

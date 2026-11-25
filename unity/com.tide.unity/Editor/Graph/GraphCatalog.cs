@@ -16,6 +16,8 @@ namespace Tide.Editor
         public GraphFrame Frame;
         public GraphPort Pending;
         public int Retarget;
+        // What was in the input a node is worked out for: wired into the new node's first input ("Work it out…")
+        public int Wrap;
         public bool Body => Slot.IsBody;
     }
 
@@ -28,32 +30,59 @@ namespace Tide.Editor
         public string Group, Title, Keywords = "", Detail;
         public int Priority;
         public bool Statement;
-        public bool Reads; // A read of something the code takes, or of a local
+        public bool Reads; // A Get of something the code takes, or of a local
+        public string Variable, Type; // A Get's or a Set's variable, and its type
         public string Op;  // The operator a node of an operator is made with
         public Func<GraphDocument, JValue, Vector2, JValue> Make;
         public Action<JValue> Apply;
         public Action Command;
     }
 
-    // Every node kind of the schema, under its category's title and with what the schema says it does, and the
-    // reads of what a graph's code takes and of its locals
+    // Every node kind of the schema, under its category's title and with what the schema says it does, and Gets and
+    // Sets of what a graph's code takes and of its locals, as Blueprint's context menu has them
     sealed class GraphCatalog : ITideGraphSearch
     {
+        public const string VariablesGroup = "Variables";
+
         public IEnumerable<GraphSearchEntry> Entries(GraphSearchContext c)
         {
             // What the code takes and its locals: the first things a value comes from
-            foreach (var read in GraphDocument.ReadsOf(c.Doc?.RoutineOf(c.Slot)))
-            {
-                if (!c.Body) break;
-                var name = read.Name;
-                yield return Node("This code takes", name, "name", "parameter name read " + name, read.Type, n => n.Set("name", JValue.Of(name), GraphSchema.NodeOrder("name")), true);
-            }
+            var variables = new List<(string name, string type, bool local, int r)>();
+            if (c.Body)
+                foreach (var read in GraphDocument.ReadsOf(c.Doc?.RoutineOf(c.Slot)))
+                    variables.Add((read.Name, read.Type, false, 0));
             if (c.Graph != null)
                 foreach (var local in GraphDocument.Locals(c.Graph))
+                    variables.Add((GraphSchema.LocalName(local), local.Str("type"), true, local.Wire("id")));
+            foreach (var v in variables)
+            {
+                var (name, type, local, r) = v;
+                var get = local
+                    ? Node(VariablesGroup, "Get " + name, "local", "get local read variable " + name, type, n => n.Set("ref", JValue.Of(r), GraphSchema.NodeOrder("local")), true)
+                    : Node(VariablesGroup, "Get " + name, "name", "get parameter name read variable " + name, type, n => n.Set("name", JValue.Of(name), GraphSchema.NodeOrder("name")), true);
+                get.Variable = name;
+                get.Type = type;
+                yield return get;
+            }
+            // A Set of what can be changed: a step of the flow, titled by it
+            if (c.Body && c.Frame != null)
+                foreach (var v in variables)
                 {
-                    var r = local.Wire("id");
-                    var name = GraphSchema.LocalName(local);
-                    yield return Node("Locals", name, "local", "local read " + name, local.Str("type"), n => n.Set("ref", JValue.Of(r), GraphSchema.NodeOrder("local")), true);
+                    var (name, type, local, r) = v;
+                    if (!c.Frame.Changeable(local ? null : name, local ? r : 0)) continue;
+                    yield return new GraphSearchEntry
+                    {
+                        Group = VariablesGroup, Title = "Set " + name, Keywords = "set assign change variable " + name, Detail = type, Statement = true, Variable = name, Type = type, Priority = 1,
+                        Make = (doc, graph, at) =>
+                        {
+                            var set = doc.AddNode(graph, "assign", at.x, at.y);
+                            var target = doc.AddNode(graph, local ? "local" : "name", at.x - 150, at.y + 26);
+                            if (local) target.Set("ref", JValue.Of(r), GraphSchema.NodeOrder("local"));
+                            else target.Set("name", JValue.Of(name), GraphSchema.NodeOrder("name"));
+                            new WirePath("target").Set(set, target.Wire("id"));
+                            return set;
+                        },
+                    };
                 }
             if (c.Body)
             {
@@ -79,7 +108,8 @@ namespace Tide.Editor
                     }
                     continue;
                 }
-                var made = Node(group, spec.Title, spec.K, spec.K + " " + spec.Title, spec.Help);
+                // `this`, as Blueprint says it
+                var made = Node(group, spec.K == "this" ? GraphFrame.SelfWord : spec.Title, spec.K, spec.K + " " + spec.Title, spec.Help);
                 made.Statement = spec.Exec;
                 yield return made;
             }

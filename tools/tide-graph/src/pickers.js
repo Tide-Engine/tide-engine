@@ -287,7 +287,8 @@
             if (wantExec && !spec.exec) continue;
             if (wantValue && !spec.value) continue;
             if (takesValue && !(spec.inputs?.length || spec.lists?.length || spec.items?.length || spec.map)) continue;
-            if (spec.k === 'local' || spec.k === 'outVar' || spec.k === 'out') continue; // Wires from a local's pin, and a call's own
+            // A local's Get comes from its pin, an out from a call's own, a knot from a wire
+            if (spec.k === 'local' || spec.k === 'outVar' || spec.k === 'out' || spec.k === 'reroute') continue;
             const category = s.categoryByName.get(spec.category);
             out.push({ title: spec.title, key: 'k:' + spec.k, summary: spec.help, group: category?.title || spec.category, color: category?.color, node: { k: spec.k, fields: {} }, keywords: spec.k });
         }
@@ -404,7 +405,7 @@
         return /^[A-Za-z_][\w.<>?,\[\] ]*$/.test(last) && !['enum', 'struct', 'component', 'singleton', 'event', 'scene', 'input', 'function', 'const'].includes(last) ? last : null;
     }
 
-    function valuePicker(app, frame, port, { anchor = null, from = 0, work = false, x = 0, y = 0 } = {}) {
+    function valuePicker(app, frame, port, { anchor = null, from = 0, work = false, x = 0, y = 0, variablesFirst = false } = {}) {
         const ed = app.editor;
         const s = ed.schema;
         const doc = ed.doc;
@@ -470,7 +471,7 @@
             for (const o of s.operators.binary) if (!validOps || validOps.binary.has(o.op)) out.push({ title: o.title, detail: o.op, key: 'op:' + o.op, group: WORK, color: s.color('binary'), make: nodeOf('binary', { op: o.op }, 'lhs') });
             for (const o of s.operators.unary) if (!validOps || validOps.unary.has(o.op)) out.push({ title: o.title, detail: o.op, key: 'un:' + o.op, group: WORK, color: s.color('unary'), make: nodeOf('unary', { op: o.op }, 'value') });
             for (const spec of s.nodes) {
-                if (spec.exec || !spec.value || s.inlineKind(spec.k) || ['binary', 'unary', 'method'].includes(spec.k)) continue;
+                if (spec.exec || !spec.value || s.inlineKind(spec.k) || ['binary', 'unary', 'method', 'reroute', 'local'].includes(spec.k)) continue;
                 const wrap = spec.category !== 'math' ? null : spec.k === 'conditional' ? 'then' : spec.inputs?.[0];
                 out.push({ title: spec.title, summary: spec.help, key: 'k:' + spec.k, group: WORK, color: s.color(spec.k), keywords: spec.k, make: nodeOf(spec.k, {}, wrap) });
             }
@@ -480,17 +481,18 @@
         // The first list: its type's own values, what this code has, the game's, then "Work it out…"
         const top = game => {
             const out = [];
+            const own = []; // Its type's own values: after what this code has when that's asked for first
             const control = s.control(want);
             const name = String(want || '').split('.').pop();
             const choices = want ? doc.enumMembers(want) || lang.choices[name] : null;
-            for (const c of choices || []) out.push({ title: `${name}.${c}`, key: 'e:' + c, group: name, color: colour(want), make: pathOf({ start: { name }, members: [c] }) });
+            for (const c of choices || []) own.push({ title: `${name}.${c}`, key: 'e:' + c, group: name, color: colour(want), make: pathOf({ start: { name }, members: [c] }) });
             if (control === 'tick') {
-                out.push({ title: 'yes', detail: 'true', key: '\0yes', group: want, make: (d, graph, at) => d.makeLiteral(graph, 'bool', true, at) },
+                own.push({ title: 'yes', detail: 'true', key: '\0yes', group: want, make: (d, graph, at) => d.makeLiteral(graph, 'bool', true, at) },
                     { title: 'no', detail: 'false', key: '\0no', group: want, make: (d, graph, at) => d.makeLiteral(graph, 'bool', false, at) });
             }
             if (control === 'vector' || control === 'colour') {
                 const size = control === 'colour' ? 3 : G.values.vectorSize(want, s);
-                out.push({ title: `${want}(…)`, summary: control === 'colour' ? 'Its red, green and blue, to fill in' : 'A number for each axis, to fill in', key: '\0new', group: want, color: colour(want),
+                own.push({ title: `${want}(…)`, summary: control === 'colour' ? 'Its red, green and blue, to fill in' : 'A number for each axis, to fill in', key: '\0new', group: want, color: colour(want),
                     make: (d, graph, at) => {
                         const call = d.newNode('call', at.x, at.y, { name: want, args: [] });
                         Doc.nodes(graph).push(call);
@@ -506,6 +508,7 @@
             };
             for (const pin of frame.pins) has(pin.name, pin.type, { name: pin.name });
             for (const d of frame.localsBefore(reader)) has(s.declaredLocal(d), frame.typeOfPort({ local: d.id }), { local: d.id });
+            if (variablesFirst) out.push(...own); else out.unshift(...own);
             if (place) {
                 out.length = 0;
                 const readOnly = [];
@@ -754,5 +757,5 @@
         });
     }
 
-    G.pickers = { addMenu, addEntries, typePicker, needsPicker, valuePicker, nodeSearch, jumpTo, contents, nameFor, lowerFirst, fits };
+    G.pickers = { addMenu, addEntries, typePicker, needsPicker, valuePicker, nodeSearch, jumpTo, contents, nameFor, lowerFirst, fits, typeIn };
 })(globalThis.TideGraph = globalThis.TideGraph || {});

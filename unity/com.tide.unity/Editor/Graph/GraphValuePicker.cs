@@ -9,8 +9,10 @@ namespace Tide.Editor
     // Picks what goes in an input: a search box over a value of the input's type to type in, what this code has
     // (what it takes and the locals declared before the node, each opening to its fields), the game's constants
     // and functions, and "Work it out…", which makes a node wired in. Where the input's type is known (a call's
-    // parameter, what a Set changes), only what fits is listed, with a way to see the rest. A name or a path
-    // picked is shown in the input (the schema's `inline`): no node, no wire. Enter takes the first match.
+    // parameter, what a Set changes), only what fits is listed, with a way to see the rest. A variable picked is a
+    // Get (a node for it and for each field of the path, left of the input, wired in); what never changes (a
+    // number, a constant, an enum's choice) is shown in the input (the schema's `inline`). Enter takes the first
+    // match.
     sealed class GraphValuePicker : GraphOptionList
     {
         readonly GraphBoard board;
@@ -298,7 +300,7 @@ namespace Tide.Editor
                     if (!offered && k != "default" && k != "null") continue;
                     if (GraphSchema.Spec(k) == null) continue;
                     var part = new GraphFrame.Part { Kind = k, Name = k };
-                    options.Add(new GraphOption { Title = k, Detail = GraphSchema.Spec(k).Help, Section = k == "this" ? has : value, Searched = !offered, Priority = -1, Pick = () => Take(new List<GraphFrame.Part> { part }) });
+                    options.Add(new GraphOption { Title = k == "this" ? GraphFrame.SelfWord : k, Keywords = k, Detail = GraphSchema.Spec(k).Help, Section = k == "this" ? has : value, Searched = !offered, Priority = -1, Pick = () => Take(new List<GraphFrame.Part> { part }) });
                 }
                 foreach (var c in scope.Where(m => m.Kind == TideGraphLanguage.KindConstant))
                 {
@@ -475,11 +477,13 @@ namespace Tide.Editor
                 var k = of != null ? "method" : "call";
                 var order = GraphSchema.NodeOrder(k);
                 var call = Doc.AddNode(g, k, at.x, at.y);
-                if (of != null) call.Set("object", JValue.Of(frame.MakePath(g, of, at).Last()), order);
+                var target = of != null ? frame.MakePath(g, of, at) : null;
+                if (target != null) call.Set("object", JValue.Of(target.Last()), order);
                 call.Set("name", JValue.Of(callee.Label), order);
                 var count = callee.Parameters.Count;
                 if (count > 0) call.Set("args", JValue.ArrayOf(Enumerable.Range(0, count).Select(_ => JValue.Null())), order);
-                frame.SetWire(owner, path, call.Wire("id"), out why);
+                // What it's a method of: its Target, Gets left of it (or a name beneath its own, Math)
+                if (frame.SetWire(owner, path, call.Wire("id"), out why) && target != null) frame.PlaceMade(call, new WirePath("object"), target);
             });
             if (why != null) Window.Say(GraphLook.UpperFirst(why), true);
             else board.WatchOperator(owner, path);

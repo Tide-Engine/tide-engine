@@ -38,6 +38,17 @@ void graph_layout_measure(graph_layout_node *n, const int widest_text)
 {
     n->text = widest_text;
     const int text = widest_text * 8;
+    if (str_eq_c(n->kind, "reroute")) { // A knot
+        n->w = 34;
+        n->h = 18;
+        return;
+    }
+    if (str_eq_c(n->kind, "name") || str_eq_c(n->kind, "local") || str_eq_c(n->kind, "member") || str_eq_c(n->kind, "this")) {
+        // A Get: its name and its pin, and a member's Target pin
+        n->w = 48 + (text > 200 ? 200 : text) + (str_eq_c(n->kind, "member") && n->inputs.count ? 60 : 0);
+        n->h = 32;
+        return;
+    }
     n->w = 140 + (text > 260 ? 260 : text);
     const int ports = n->inputs.count + n->bodies.count + 1;
     n->h = 48 + 24 * ports;
@@ -102,11 +113,14 @@ void graph_layout_fold(graph_layout_node *nodes, const int count)
             if (read) readers[read - nodes]++;
         }
     }
-    // What a Set changes, read by it alone, is in its title: Set score, Set scale (what it's a member of is wired in)
+    // What a Set changes, read by it alone, is in its title: Set score, Set speed, Set scale (what it's a member
+    // of is wired in)
     for (int i = 0; i < count; i++) {
-        const graph_layout_node *target = nodes[i].inputs.count ? find(&l, nodes[i].inputs.items[0]) : NULL;
+        const graph_layout_node *target = nodes[i].target ? find(&l, nodes[i].target) : NULL;
         if (!target || readers[target - nodes] != 1 || !graph_schema_titled(nodes[i].kind)) continue;
-        if (str_eq_c(target->kind, "name") || str_eq_c(target->kind, "member")) state[target - nodes] = 3;
+        if (str_eq_c(target->kind, "name") || str_eq_c(target->kind, "local") || str_eq_c(target->kind, "member")) {
+            state[target - nodes] = 3;
+        }
     }
     for (int i = 0; i < count; i++) nodes[i].folded = folds(&l, &nodes[i], readers, state);
     // A reader is as wide as its widest input's row: the input's name, then what's shown in it
@@ -130,12 +144,17 @@ static int place_value(layout *l, const int id, const int right, const int top)
 {
     graph_layout_node *n = find(l, id);
     if (!n || n->placed) return 0;
-    if (n->folded) { // Where its reader is: it's shown there
+    if (n->folded) { // Where its reader is: it's shown there, and what's wired into it (a titled member's
+                     // object) is left of the reader, taking room as its own inputs would
         n->placed = true;
         n->x = right + NODE_GAP;
         n->y = top;
-        for (int i = 0; i < n->inputs.count; i++) place_value(l, n->inputs.items[i], right, top);
-        return 0;
+        int height = 0;
+        for (int i = 0; i < n->inputs.count; i++) {
+            const int h = place_value(l, n->inputs.items[i], right, top + height);
+            height += h ? h + 16 : 0;
+        }
+        return height ? height - 16 : 0;
     }
     n->placed = true;
     n->x = right - n->w;
@@ -153,12 +172,13 @@ static int place_value(layout *l, const int id, const int right, const int top)
 static int value_width(const layout *l, const int id, const int depth)
 {
     const graph_layout_node *n = find(l, id);
-    if (!n || depth > 256 || n->folded) return 0;
+    if (!n || depth > 256) return 0;
     int widest = 0;
     for (int i = 0; i < n->inputs.count; i++) {
         const int w = value_width(l, n->inputs.items[i], depth + 1);
         if (w > widest) widest = w;
     }
+    if (n->folded) return widest; // Shown in its reader: only what's wired into it takes room
     return n->w + (widest ? NODE_GAP + widest : 0);
 }
 
@@ -261,6 +281,8 @@ bool graph_layout_json(const graph_json *g, sb *out)
         p->kind = key_text(n, "k");
         p->op = key_text(n, "op");
         p->name = key_text(n, "name");
+        const graph_json *target = graph_json_get(n, "target");
+        p->target = target && target->kind == GJ_NUMBER ? (int)target->number : 0;
         const graph_json *next = graph_json_get(n, "next");
         p->next = next && next->kind == GJ_NUMBER ? (int)next->number : 0;
         int widest = 0;
@@ -336,6 +358,8 @@ static void measure_frame(board_items *items, const graph_json *owner)
         size->kind = key_str(n, "k");
         size->op = key_str(n, "op");
         size->name = key_str(n, "name");
+        const graph_json *target = graph_json_get(n, "target");
+        size->target = target && target->kind == GJ_NUMBER ? (int)target->number : 0;
         graph_data_wires(n, &size->inputs);
         graph_exec_wires(n, &size->bodies);
         int widest = 0;

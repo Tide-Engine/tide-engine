@@ -516,8 +516,8 @@
             return hole ? `Pick what goes in '${hole.label}'` : d.message;
         }
 
-        // What reads the same thing lights with it: over a name shown in an input, the entry's row of that name (or
-        // the node that declares the local) and its other reads; over the entry's row or the local's pin, its reads
+        // What reads the same thing lights with it: over a Get (or a Set's name), the entry's row of that variable (or
+        // the node that declares the local) and its other Gets; over the entry's row or the local's pin, its Gets
         light(target) {
             const frameEl = target.closest?.('.tg-frame');
             let read = null;
@@ -536,7 +536,7 @@
             for (const x of frameEl.querySelectorAll('[data-read]')) if (x.dataset.read === read) x.classList.add('tg-lit');
             if (read.startsWith('pin:')) {
                 for (const x of frameEl.querySelectorAll('[data-pin]')) if (x.dataset.pin === read.slice(4)) x.closest('.tg-entry-row')?.classList.add('tg-lit');
-            } else {
+            } else if (read.startsWith('local:')) {
                 frameEl.querySelector(`.tg-pin[data-port="${read.slice(6)}|o|d|local"]`)?.classList.add('tg-lit');
             }
         }
@@ -788,6 +788,10 @@
                 const under = document.elementFromPoint(e.clientX, e.clientY) || e.target;
                 const named = under?.closest?.('[data-rename]');
                 if (named?.rename) { named.rename(true); return; }
+                // A data wire: a knot on it where it was clicked
+                const wire = under?.closest?.('.tg-wire-hit');
+                const wired = wire ? this.frameAt(wire) : null;
+                if (wired) { wired.addReroute(JSON.parse(wire.dataset.wire), e.clientX, e.clientY); return; }
                 if (under?.closest?.('.tg-node, .tg-note, .tg-card, .tg-frame-head, .tg-entry, .tg-region-head, .tg-start, input, textarea, select, button')) return;
                 this.openAdd(e.clientX, e.clientY, under);
             });
@@ -1252,7 +1256,7 @@
                 }
                 // A click on a pin, or a wire dropped on empty space: what can go there, as Blueprint's actions for
                 // a pin. An input's is the value picker (what fits it); an output's the node search.
-                if (d.from.input && !d.from.exec) f.pickValue(d.from, null, { x: e.clientX, y: e.clientY });
+                if (d.from.input && !d.from.exec) f.pickValue(d.from, null, { x: e.clientX, y: e.clientY, variablesFirst: moved });
                 else G.pickers.nodeSearch(this.app, f, e.clientX, e.clientY, { from: d.from });
             }
         }

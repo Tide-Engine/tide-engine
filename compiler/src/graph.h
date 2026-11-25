@@ -42,6 +42,7 @@ typedef struct graph_layout_node {
     int next;
     str kind, op;     // Its 'k' and its 'op', for what's shown in the input that reads it
     str name;         // ...and a call's name
+    int target;       // What's wired into its `target`, for what a Set changes (graph_schema_titled)
     int text;         // Its longest text's length, as measured
     bool folded;      // Shown in its reader's input (graph_layout_fold): it has no size and no place of its own
 } graph_layout_node;

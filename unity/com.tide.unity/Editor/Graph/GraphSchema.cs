@@ -89,7 +89,7 @@ namespace Tide.Editor
             public readonly Dictionary<string, (string control, string help)> ValueControls = new Dictionary<string, (string, string)>();
             public string ChoiceHelp;
             public readonly Dictionary<string, int> Inline = new Dictionary<string, int>();
-            public readonly HashSet<string> InlineNumbersOf = new HashSet<string>();
+            public readonly HashSet<string> InlineNumbersOf = new HashSet<string>(), Titled = new HashSet<string>();
             public readonly Dictionary<string, Info> AssignInfo = new Dictionary<string, Info>();
             public string InlineAbout;
             public string[] TypeCommon = Array.Empty<string>(), Rules = Array.Empty<string>();
@@ -317,6 +317,8 @@ namespace Tide.Editor
             foreach (var k in Strings(inline?.Arr("path"))) s.Inline[k] = InlinePath;
             foreach (var k in Strings(inline?.Arr("negative"))) s.Inline[k] = InlineNegative;
             foreach (var k in Strings(inline?.Arr("numbers"))) s.Inline[k] = InlineNumbers;
+            foreach (var k in Strings(inline?.Arr("named"))) s.Inline[k] = InlineNamed;
+            foreach (var k in Strings(inline?.Arr("titled"))) s.Titled.Add(k);
             foreach (var name in Strings(inline?.Arr("numbersOf"))) s.InlineNumbersOf.Add(name);
             Infos(j.Get("operators")?.Get("assignInfo"), s.AssignInfo);
             return s;
@@ -394,12 +396,20 @@ namespace Tide.Editor
         public static string ChoiceHelp => S.ChoiceHelp;
 
         // Which kinds of node are shown in the input that reads them, when one input does (`inline`): always (a
-        // literal, a name), as a path (a member of what is itself shown there), as a negative (a '-' over a number);
-        // 0 for a kind that's always a node. And the rule in the schema's words.
-        // ...and as numbers (a call named one of `numbersOf`, a vector's or a colour's, whose arguments are all
-        // numbers shown there: float2(16, 14)), which is shown as the type's own control.
-        public const int InlineAlways = 1, InlinePath = 2, InlineNegative = 3, InlineNumbers = 4;
+        // literal), as a path (a member of what is itself shown there), as a negative (a '-' over a number), as
+        // numbers (a call named one of `numbersOf`, a vector's or a colour's, whose arguments are all numbers shown
+        // there: float2(16, 14)), which is shown as the type's own control, and named (a name in PascalCase or
+        // FULL_CASE: a type, a namespace, an enum, a constant); 0 for a kind that's always a node. A variable is a
+        // Get node. And the rule in the schema's words.
+        public const int InlineAlways = 1, InlinePath = 2, InlineNegative = 3, InlineNumbers = 4, InlineNamed = 5;
         public static bool InlineNumbersOf(string name) => name != null && S.InlineNumbersOf.Contains(name);
+
+        // Whether a name is one of what never changes, shown in the pin that reads it: it starts with a capital
+        public static bool IsNamed(string name) => !string.IsNullOrEmpty(name) && name[0] >= 'A' && name[0] <= 'Z';
+
+        // The kinds whose first input, a name or a member read by them alone, is in their title (`titled`): a Set
+        // and a step, "Set score"
+        public static bool Titled(string k) => k != null && S.Titled.Contains(k);
 
         // What a Set's operator is in words (operators.assignInfo): "becomes", "goes up by"; null where it has none
         public static string AssignWord(string op) => op != null && S.AssignInfo.TryGetValue(op, out var i) ? i.Label : null;

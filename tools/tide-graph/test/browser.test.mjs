@@ -21,7 +21,8 @@ import { fileUri, startServer } from './lsp.mjs';
 const browser = findBrowser();
 const schema = JSON.parse(fs.readFileSync(path.join(repo, 'compiler/src/graph_schema.json'), 'utf8'));
 const EMPTY = '{"tidegraph": 1, "nextId": 1, "decls": []}\n';
-// tidec's graph of: system Spin(mut Wobble wobble) { wobble.phase = 1.5 + wobble.frequency; wobble.frequency = wobble.phase; }
+// tidec's graph of: system Spin(mut Wobble wobble) { wobble.phase = 1.5 + wobble.frequency; wobble.frequency = wobble.phase; },
+// its Gets laid out by hand left of what reads them
 const SPIN = fs.readFileSync(path.join(root, 'test', 'spin.tidegraph'), 'utf8');
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'tide-graph-browser-test-'));
 const skip = !browser && 'no Chrome or Edge (set TIDE_BROWSER)';
@@ -39,6 +40,8 @@ const grouped = p => p.evaluate(`(() => { const out = {}; let group = ''; for (c
 const row = label => `[...document.querySelectorAll('.tg-frame .tg-node:not(.tg-entry) .tg-port.tg-in')].find(x => x.querySelector('.tg-port-label')?.textContent === ${JSON.stringify(label)})`;
 const drawn = p => p.evaluate(`({ nodes: document.querySelectorAll('.tg-frame .tg-node:not(.tg-entry)').length, wires: document.querySelectorAll('.tg-frame .tg-wires path.tg-wire-data').length })`);
 const picker = (p, label) => p.until(`!!document.querySelector('.tg-value-picker')`, label || 'the value picker');
+// A picture of a step, when TIDE_GRAPH_SHOTS names a folder
+const shotIf = (p, name) => (process.env.TIDE_GRAPH_SHOTS ? (fs.mkdirSync(process.env.TIDE_GRAPH_SHOTS, { recursive: true }), p.shot(path.join(process.env.TIDE_GRAPH_SHOTS, name + '.png'))) : null);
 const picked = (p, label) => p.until(`!document.querySelector('.tg-value-picker')`, label || 'the value picker closed');
 // From the frame's arrow, a Set node
 async function addSet(p) {
@@ -200,26 +203,34 @@ describe('the graph editor in a browser', { skip }, () => {
         const set = nodes.find(n => n.k === 'assign');
         let target = nodes.find(n => n.id === set.target);
         assert.deepEqual([target.k, target.member, nodes.find(n => n.id === target.object).name], ['member', 'phase', 'wobble']);
-        assert.deepEqual(await drawn(p), { nodes: 1, wires: 0 }, 'the value is in the input: no node, no wire');
-        assert.equal(await p.evaluate(`${row('what')}.querySelector('.tg-path').textContent`), 'wobble.phase');
-        // value: the parameter's pin dragged onto the input fills it with the parameter
+        // "Set phase": what it changes is in its title, and what it's a field of is a Get of wobble wired into its Target
+        assert.deepEqual(await drawn(p), { nodes: 2, wires: 1 }, 'the Set and a Get of wobble, wired');
+        const setNode = `document.querySelector('.tg-frame .tg-node[data-id="${set.id}"]')`;
+        assert.equal(await p.evaluate(`${setNode}.querySelector('.tg-set-target').textContent`), 'phase');
+        assert.equal(await p.evaluate(`document.querySelector('.tg-frame .tg-get .tg-get-name').textContent`), 'wobble');
+        assert.ok(await p.evaluate(`!!${row('Target')}`), 'its Target');
+        // value: the parameter's pin dragged onto the input: a Get of it beside the input, wired
         const pin = await p.center('.tg-entry-row .tg-pin .tg-dot');
-        await p.drag(pin, await dot(p, `document.querySelector('.tg-frame .tg-node.tg-exec .tg-pick')`));
-        await p.until(`app.editor.doc.root.decls[1].body.nodes.length === 4`, 'the read of the parameter');
-        assert.deepEqual(await drawn(p), { nodes: 1, wires: 0 });
-        const valueRow = `document.querySelector('.tg-frame .tg-node.tg-exec .tg-port.tg-in:has(.tg-op)')`;
-        assert.equal(await p.evaluate(`${valueRow}.querySelector('.tg-path').textContent`), 'wobble');
-        // ...and its field from there: the name clicked, "wobble." typed, the field picked
-        await p.evaluate(`${valueRow}.querySelector('.tg-path-part').click()`);
+        await p.drag(pin, await dot(p, `${setNode}.querySelector('.tg-pick')`));
+        await p.until(`app.editor.doc.root.decls[1].body.nodes.length === 4`, 'the Get of the parameter');
+        assert.deepEqual(await drawn(p), { nodes: 3, wires: 2 });
+        const valueRow = `${setNode}.querySelector('.tg-port.tg-in:has(.tg-op)')`;
+        const gets = () => p.evaluate(`[...document.querySelectorAll('.tg-frame .tg-get')].map(g => { const r = g.getBoundingClientRect(), s = ${setNode}.getBoundingClientRect(); return [g.querySelector('.tg-get-name').textContent, r.right <= s.left + 1]; })`);
+        assert.deepEqual(await gets(), [['wobble', true], ['wobble', true]], 'each Get left of what reads it');
+        // ...and its field from there: picked for the input ("wobble." typed, the field picked); the Get it replaces goes
+        const valuePin = await dot(p, `${valueRow}.querySelector('.tg-dot')`);
+        await p.click(valuePin.x, valuePin.y, { button: 'right' });
+        await p.until(`!!document.querySelector('.tg-context [data-name="pick"]')`, "the value's pin menu");
+        await p.evaluate(`document.querySelector('.tg-context [data-name="pick"]').click()`);
         await picker(p);
         await p.type('wobble.');
         await p.until(`document.querySelector('.tg-value-picker .tg-picker-title')?.textContent === 'wobble: which of it?'`, 'a typed dot goes into what it has');
         await p.type('freq');
         await p.key('Enter');
         await picked(p);
-        await p.until(`${valueRow}.querySelector('.tg-path').textContent === 'wobble.frequency'`, 'wobble.frequency in the input');
+        await p.until(`[...document.querySelectorAll('.tg-frame .tg-get-member .tg-get-name')].some(n => n.textContent === 'frequency')`, 'a Get of wobble.frequency wired in');
         assert.equal((await doc(p)).decls[1].body.nodes.length, 5, 'Set wobble.phase = wobble.frequency: five nodes in the file');
-        assert.deepEqual(await drawn(p), { nodes: 1, wires: 0 }, 'one on the board');
+        assert.deepEqual(await drawn(p), { nodes: 4, wires: 3 }, 'the Set, a Get of wobble for its Target, and Gets of wobble and its frequency for its value');
         // How Set changes it: its sign, said in words, and picked from a menu of what each does
         const info = schema.operators.assignInfo;
         assert.deepEqual(await p.evaluate(`(() => { const b = document.querySelector('.tg-frame .tg-node.tg-exec .tg-op'); return [b.textContent, b.title]; })()`), ['=', `It ${info['='].label}: pick another way`]);
@@ -228,23 +239,27 @@ describe('the graph editor in a browser', { skip }, () => {
         assert.deepEqual(await p.evaluate(`[...document.querySelectorAll('.tg-menu .tg-menu-label')].map(l => l.textContent)`), schema.operators.assign.map(o => info[o].label));
         await p.evaluate(`document.querySelector('.tg-menu-item[data-name="op:+="]').click()`);
         await p.until(`document.querySelector('.tg-frame .tg-node.tg-exec .tg-op')?.textContent === '+='`, 'Set wobble.phase += wobble.frequency');
-        assert.equal(await p.evaluate(`[...document.querySelectorAll('.tg-frame .tg-node.tg-exec :is(.tg-node-title, .tg-port-label, .tg-path, .tg-op)')].map(e => e.textContent).join(' ')`),
-            'Set what wobble.phase += wobble.frequency', 'the node reads as what it does');
-        // Over a name in an input, the entry's row it comes from lights, and its other reads
-        const chip = await dot(p, `${valueRow}.querySelector('.tg-path-dot')`);
-        await p.move(chip.x, chip.y);
-        await p.until(`document.querySelectorAll('.tg-path.tg-lit').length === 2 && !!document.querySelector('.tg-entry-row.tg-lit')`, 'the reads of wobble lit with its row');
-        // A part of the path is clicked to change it from there
-        await p.evaluate(`[...${valueRow}.querySelectorAll('.tg-path-part')].find(b => b.textContent === 'frequency').click()`);
+        assert.equal(await p.evaluate(`[...${setNode}.querySelectorAll(':is(.tg-node-title, .tg-set-target, .tg-port-label, .tg-op)')].map(e => e.textContent).join(' ')`),
+            'Set phase Target +=', 'the node reads as what it does');
+        // Over a Get, where its variable comes from lights (the entry's row), and its other Gets
+        const get = await p.center('.tg-frame .tg-get:not(.tg-get-member) .tg-get-name');
+        await p.move(get.x, get.y);
+        await p.until(`document.querySelectorAll('.tg-get.tg-lit').length === 2 && !!document.querySelector('.tg-entry-row.tg-lit')`, 'the Gets of wobble lit with its row');
+        // What it changes is picked again from its name in the title: of what this code can change
+        await p.evaluate(`${setNode}.querySelector('.tg-set-target').click()`);
         await picker(p);
-        assert.equal(await text(p, '.tg-value-picker .tg-picker-title'), 'wobble: which of it?');
-        await p.type('pha');
+        assert.equal(await text(p, '.tg-value-picker .tg-picker-title'), 'What does it change? Something this code can change.');
+        await p.type('wobble.');
+        await p.until(`document.querySelector('.tg-value-picker .tg-picker-title')?.textContent === 'wobble: which of it?'`, "wobble's fields");
+        await p.type('freq');
         await p.key('Enter');
         await picked(p);
-        await p.until(`${valueRow}.querySelector('.tg-path').textContent === 'wobble.phase'`, 'the path changed');
-        assert.equal((await doc(p)).decls[1].body.nodes.length, 5, "the old path's nodes went");
-        // A number typed in the picker is the value; then it's edited where it is
-        await p.evaluate(`${valueRow}.querySelector('.tg-path-part').click()`);
+        await p.until(`${setNode}.querySelector('.tg-set-target').textContent === 'frequency'`, 'Set frequency');
+        assert.equal((await doc(p)).decls[1].body.nodes.length, 5, "the Gets it was made of went with what it changed");
+        // A number typed in the picker is the value, in place of the Gets; then it's edited where it is
+        await p.evaluate(`${valueRow}.querySelector('.tg-dot').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 10, clientY: 10 }))`);
+        await p.until(`!!document.querySelector('.tg-context [data-name="pick"]')`, "the value's pin menu");
+        await p.evaluate(`document.querySelector('.tg-context [data-name="pick"]').click()`);
         await picker(p);
         await p.type('3');
         assert.deepEqual((await entries(p))[0], { title: '3', name: '' });
@@ -256,25 +271,25 @@ describe('the graph editor in a browser', { skip }, () => {
         await p.key('Enter');
         await p.until(`app.editor.doc.root.decls[1].body.nodes.some(n => n.k === 'unary')`, 'a negative number: a minus over it');
         assert.deepEqual((await doc(p)).decls[1].body.nodes.map(n => n.k).sort(), ['assign', 'float', 'member', 'name', 'unary']);
-        assert.deepEqual(await drawn(p), { nodes: 1, wires: 0 });
+        assert.deepEqual(await drawn(p), { nodes: 2, wires: 1 }, 'the Set and the Get of its Target');
         // Work it out: Multiply is a node wired in, with what was there as its first input and its second to pick
         await p.evaluate(`${valueRow}.querySelector('.tg-row-pick').click()`);
         await picker(p);
         assert.equal((await grouped(p))['Work it out…'], 'Work it out');
         await p.type('Multiply');
         await p.key('Enter');
-        await p.until(`document.querySelectorAll('.tg-frame .tg-node.tg-data').length === 1`, 'a Multiply node');
-        assert.deepEqual(await drawn(p), { nodes: 2, wires: 1 });
+        await p.until(`document.querySelectorAll('.tg-frame .tg-node.tg-data:not(.tg-get)').length === 1`, 'a Multiply node');
+        assert.deepEqual(await drawn(p), { nodes: 3, wires: 2 });
         d = await doc(p);
         nodes = d.decls[1].body.nodes;
         const times = nodes.find(n => n.k === 'binary');
         assert.deepEqual([times.op, nodes.find(n => n.id === times.lhs).k, times.rhs ?? null, nodes.find(n => n.k === 'assign').value], ['*', 'unary', null, times.id]);
         // Every input has its pin, filled when something is in it and hollow when nothing is
-        assert.equal(await p.evaluate(`getComputedStyle(${row('what')}.querySelector('.tg-dot')).visibility`), 'visible');
-        assert.equal(await p.evaluate(`${row('what')}.querySelector('.tg-dot').classList.contains('tg-dot-empty')`), false);
+        assert.equal(await p.evaluate(`getComputedStyle(${row('Target')}.querySelector('.tg-dot')).visibility`), 'visible');
+        assert.equal(await p.evaluate(`${row('Target')}.querySelector('.tg-dot').classList.contains('tg-dot-empty')`), false);
         assert.equal(await p.evaluate(`${row('b')}.querySelector('.tg-dot').classList.contains('tg-dot-empty')`), true);
         assert.equal(await p.evaluate(`document.querySelector('.tg-frame .tg-node.tg-data .tg-op-title').textContent`), 'Multiply*', 'an operator is titled by what it is called');
-        assert.deepEqual(await p.evaluate(`[...document.querySelectorAll('.tg-frame .tg-node.tg-data .tg-port-label')].map(l => l.textContent)`), [schema.portInfo.lhs.label, schema.portInfo.rhs.label]);
+        assert.deepEqual(await p.evaluate(`[...document.querySelectorAll('.tg-frame .tg-node.tg-data:not(.tg-get) .tg-port-label')].map(l => l.textContent)`), [schema.portInfo.lhs.label, schema.portInfo.rhs.label]);
 
         // An input with nothing in it: the compiler says which by its key, the page says it on that row in its words
         await p.until(`document.querySelector('.tg-status').textContent === 'Checked'`, 'the check before');
@@ -306,19 +321,19 @@ describe('the graph editor in a browser', { skip }, () => {
         await p.key('Enter');
         await p.until(`app.editor.doc.root.decls[1].params[0].name === 'w'`, 'the parameter renamed');
         assert.equal((await doc(p)).decls[1].body.nodes.find(n => n.k === 'name').name, 'w');
-        assert.equal(await p.evaluate(`${row('what')}.querySelector('.tg-path').textContent`), 'w.phase');
+        assert.equal(await p.evaluate(`document.querySelector('.tg-frame .tg-get .tg-get-name').textContent`), 'w', 'its Get says its new name');
 
         // A problem is on its element, with the compiler's words and its note, and goes with the next check: one
-        // about a value shown in an input is on that input
+        // about what a Set changes is on its name in the title
         target = (await doc(p)).decls[1].body.nodes.find(n => n.k === 'member');
         const problem = { severity: 1, message: "Wobble has no field 'phase'\nnote: did you mean 'frequency'?", data: { node: target.id }, range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } } };
         const onField = { severity: 1, message: "unknown type 'Nope'", data: { node: wobble.members[1].id }, range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } } };
         await p.evaluate(`TideGraph.receive(${JSON.stringify({ type: 'diagnostics', diagnostics: [problem, onField] })})`);
-        await p.until(`!!${row('what')}?.classList.contains('tg-has-error')`, 'the error on the input that shows it');
+        await p.until(`!!${setNode}.querySelector('.tg-set-target.tg-has-error')`, 'the error on the title that shows it');
         assert.ok(await p.evaluate(`!!document.querySelector('.tg-row.tg-has-error[data-id="${wobble.members[1].id}"]')`), 'the error on its row: ' + await p.evaluate(`JSON.stringify([...document.querySelectorAll('.tg-has-error')].map(e => e.className + ' ' + e.dataset.id))`));
         assert.match(await text(p, '.tg-status'), /2 problems/);
         assert.equal(await text(p, `.tg-frame [data-badge="${spin.id}"]`), '1');
-        assert.equal(await p.evaluate(`${row('what')}.dataset.problem`), "EWobble has no field 'phase'\ndid you mean 'frequency'?");
+        assert.equal(await p.evaluate(`${setNode}.querySelector('.tg-set-target').dataset.problem`), "EWobble has no field 'phase'\ndid you mean 'frequency'?");
         await p.clickOn('.tg-status');
         await p.until(`document.querySelectorAll('.tg-problems-popup .tg-problem').length === 2`, 'the list of problems');
         assert.equal(await text(p, '.tg-problems-popup .tg-problem-note'), "did you mean 'frequency'?");
@@ -556,7 +571,7 @@ describe('the graph editor in a browser', { skip }, () => {
         assert.equal(await p.evaluate(`localStorage.getItem('tide-graph:details')`), 'true');
 
         // My game: the file by the schema's groups; a component dragged onto a frame is what it needs
-        assert.deepEqual(await p.evaluate(`(() => { const out = []; let g = null; for (const e of document.querySelector('.tg-mygame-list').children) { if (e.classList.contains('tg-mygame-group')) { g = [e.querySelector('.tg-mygame-group-title').textContent, []]; out.push(g); } else if (e.classList.contains('tg-mygame-item')) g[1].push(e.querySelector('.tg-mygame-name').textContent); } return out; })()`),
+        assert.deepEqual(await p.evaluate(`(() => { const out = []; let g = null; for (const e of document.querySelector('.tg-mygame-list').children) { if (e.dataset.group === 'variables' || e.classList.contains('tg-mygame-var')) continue; if (e.classList.contains('tg-mygame-group')) { g = [e.querySelector('.tg-mygame-group-title').textContent, []]; out.push(g); } else if (e.classList.contains('tg-mygame-item')) g[1].push(e.querySelector('.tg-mygame-name').textContent); } return out; })()`),
             [[schema.groups[0].title, ['Spring']], [schema.groups[1].title, ['Turn']], [schema.groups[2].title, []]]);
         const from = await p.center(`.tg-mygame-item[data-id="${wobble.id}"] .tg-mygame-kind`);
         const onto = await p.center(`.tg-frame[data-id="${spin.id}"] .tg-entry`);
@@ -604,35 +619,36 @@ describe('the graph editor in a browser', { skip }, () => {
         await p.sleep(50);
         near(await rect(node(13)), set0, 'back where it was');
 
-        // A filled input's × empties it: the path's nodes go with it
-        const target = await p.center(`${port(13, 'target')} .tg-port-label`);
-        await p.move(target.x, target.y);
-        const x = `${port(13, 'target')} .tg-row-empty`;
-        assert.match(await p.evaluate(`document.querySelector(${JSON.stringify(x)}).title`), /Empty 'what'/);
-        assert.match(await p.evaluate(`document.querySelector(${JSON.stringify(port(13, 'target') + ' .tg-path-part')}).title`), /× empties it/);
+        // A typed value's × empties it: the literal goes with it
+        const lhs = await p.center(`${port(12, 'lhs')} .tg-port-label`);
+        await p.move(lhs.x, lhs.y);
+        const x = `${port(12, 'lhs')} .tg-row-empty`;
+        assert.match(await p.evaluate(`document.querySelector(${JSON.stringify(x)}).title`), /Empty 'a'/);
         await p.clickOn(x);
-        await p.until(`!app.editor.doc.get(13).target`, 'the target emptied');
-        d = await doc(p);
-        assert.deepEqual(d.decls[1].body.nodes.filter(n => n.id === 7 || n.id === 8), [], "the path's nodes gone with it");
-        assert.equal(await p.evaluate(`document.querySelector(${JSON.stringify(port(13, 'target') + ' .tg-pick')})?.textContent`), 'pick…');
+        await p.until(`!app.editor.doc.get(12).lhs`, 'the value emptied');
+        assert.ok(!(await doc(p)).decls[1].body.nodes.some(n => n.id === 9), 'the literal gone with it');
+        assert.equal(await p.evaluate(`document.querySelector(${JSON.stringify(port(12, 'lhs') + ' .tg-pick')})?.textContent`), 'pick…');
         await p.evaluate(`app.command('undo')`);
         assert.equal(p.text, start, 'emptying undone');
 
-        // Delete with the pointer on a typed value empties it, and what's selected isn't deleted
+        // Delete with the pointer on an input a Get is wired into: the wire goes and the Get stays; what's selected
+        // isn't deleted
         await p.evaluate(`app.editor.selectNodes(app.editor.doc.find(13).slot, [13])`);
-        const lhs = await p.center(`${port(12, 'lhs')} .tg-port-label`);
-        await p.move(lhs.x, lhs.y);
-        await p.key('Delete');
-        await p.until(`!app.editor.doc.get(12).lhs`, 'the typed value emptied by Delete');
-        assert.ok(!(await doc(p)).decls[1].body.nodes.some(n => n.id === 9), 'the literal gone with it');
-        assert.ok(await p.evaluate(`!!app.editor.doc.get(13)`), 'the selected node kept');
-        await p.evaluate(`app.command('undo')`);
-        // ...and Backspace a chip
         const rhs = await p.center(`${port(12, 'rhs')} .tg-port-label`);
         await p.move(rhs.x, rhs.y);
+        await p.key('Delete');
+        await p.until(`!app.editor.doc.get(12).rhs`, 'the wired input emptied by Delete');
+        assert.ok([10, 11].every(id => (p.text.match(new RegExp(`"id": ${id},`)) || []).length === 1), 'the Gets stay, unwired');
+        assert.ok(await p.evaluate(`!!app.editor.doc.get(13)`), 'the selected node kept');
+        await p.evaluate(`app.command('undo')`);
+        // ...and Backspace on a Set's Target
+        const target = `${node(13)} .tg-port.tg-in[data-port="8|i|d|object"]`;
+        const label = await p.center(`${target} .tg-port-label`);
+        assert.equal(await p.evaluate(`document.querySelector(${JSON.stringify(target)}).querySelector('.tg-port-label').textContent`), 'Target');
+        await p.move(label.x, label.y);
         await p.key('Backspace');
-        await p.until(`!app.editor.doc.get(12).rhs`, 'the chip emptied by Backspace');
-        assert.ok(!(await doc(p)).decls[1].body.nodes.some(n => n.id === 10 || n.id === 11), "the chip's nodes gone with it");
+        await p.until(`!app.editor.doc.get(8).object`, 'the Target emptied by Backspace');
+        assert.ok(await p.evaluate(`!!app.editor.doc.get(7)`), 'the Get of wobble stays');
         await p.evaluate(`app.command('undo')`);
         assert.equal(p.text, start);
 
@@ -644,7 +660,7 @@ describe('the graph editor in a browser', { skip }, () => {
         await p.evaluate(`document.querySelector('.tg-context [data-name="empty"]').click()`);
         await p.until(`!app.editor.doc.get(13).value`, 'the wired input emptied');
         const plus = (await doc(p)).decls[1].body.nodes.find(n => n.id === 12);
-        assert.deepEqual([plus?.x, plus?.y, plus?.lhs, plus?.rhs], [0, 136, 9, 11], 'the node wired in stays as it was');
+        assert.deepEqual([plus?.x, plus?.y, plus?.lhs, plus?.rhs], [356, 184, 9, 11], 'the node wired in stays as it was');
         near(await rect(node(12)), plus0, 'and where it was seen');
         // ...and is off when nothing is in it
         const pin2 = await p.center(`${port(13, 'value')} .tg-dot`);
@@ -654,6 +670,170 @@ describe('the graph editor in a browser', { skip }, () => {
         await p.key('Escape');
         await p.evaluate(`app.command('undo')`);
         assert.equal(p.text, start);
+        assert.deepEqual(b.errors, []);
+    });
+
+    test('full Blueprint: a Get wired to many inputs, Set titled by what it changes, reroutes, Keep it as a local, Gets and Sets made from My game', async () => {
+        const p = await openEditor(b, { text: SPIN, schema, scratch });
+        await p.size(2100, 760);
+        await p.evaluate(`app.open.details = false; app.open.mygame = true; app.showPanels(); app.renderPanels()`);
+        await p.evaluate(`app.board.zoomAt(1 / app.board.zoom)`);
+        await p.evaluate(`app.reveal(5)`);
+        await p.sleep(100);
+        const start = p.text;
+        const node = id => `.tg-frame .tg-node[data-id="${id}"]`;
+        const nodes = async () => (await doc(p)).decls[1].body.nodes;
+        const back = async () => {
+            for (let i = 0; i < 30 && p.text !== start && await p.evaluate('app.editor.canUndo'); i++) await p.evaluate(`app.command('undo')`);
+            assert.equal(p.text, start, 'undone, byte for byte');
+        };
+        const overlaps = async () => {
+            const boxes = await p.evaluate(`[...document.querySelectorAll('.tg-frame .tg-node')].map(n => { const r = n.getBoundingClientRect(); return [n.dataset.id, r.left, r.top, r.right, r.bottom]; })`);
+            return boxes.filter((a, i) => boxes.some((c, j) => i < j && a[1] < c[3] - 1 && c[1] < a[3] - 1 && a[2] < c[4] - 1 && c[2] < a[4] - 1)).map(a => a[0]);
+        };
+        // Gets are compact (no title bar: the variable's name and its pin), a field's with its Target on the left;
+        // a Set says what it changes in its title
+        assert.deepEqual(await p.evaluate(`[...document.querySelectorAll('.tg-frame .tg-get')].map(g => [g.dataset.id, g.querySelector('.tg-get-name').textContent, !!g.querySelector('.tg-node-header'), g.querySelector('.tg-port-label')?.textContent ?? ''])`),
+            [['7', 'wobble', false, ''], ['10', 'wobble', false, ''], ['11', 'frequency', false, 'Target'], ['14', 'wobble', false, ''], ['16', 'wobble', false, ''], ['17', 'phase', false, 'Target']]);
+        assert.deepEqual(await p.evaluate(`[13, 18].map(id => document.querySelector('.tg-frame .tg-node[data-id="' + id + '"] .tg-set-target').textContent)`), ['phase', 'frequency']);
+        assert.deepEqual(await overlaps(), [], 'nothing on top of anything');
+
+        // A Get's pin dragged to another input adds a wire: one Get, read by both Sets' Targets
+        const from = await p.center(`${node(7)} .tg-get-out .tg-dot`);
+        await p.drag(from, await p.center('[data-port="15|i|d|object"] .tg-dot'), { steps: 10 });
+        await p.until(`app.editor.doc.get(15).object === 7 && app.editor.doc.get(8).object === 7`, 'one Get wired to two Targets');
+        // Over it, where wobble comes from lights (its row on the entry), and its other Gets
+        const over = await p.center(`${node(7)} .tg-get-name`);
+        await p.move(over.x, over.y);
+        await p.until(`document.querySelectorAll('.tg-get.tg-lit').length === 4 && !!document.querySelector('.tg-entry-row.tg-lit')`, 'the Gets of wobble lit with its row');
+        await p.move(5, 400);
+        await back();
+
+        // A wire dragged from a Get's pin into empty space: what wobble has comes first, each a Get with it as Target
+        const space = await p.evaluate(`(() => { const r = document.querySelector('.tg-frame .tg-frame-body').getBoundingClientRect(); return { x: r.left + 396 + 140, y: r.bottom - 34 }; })()`);
+        await p.drag(await p.center(`${node(7)} .tg-get-out .tg-dot`), space, { steps: 8 });
+        await p.until(`!!document.querySelector('.tg-node-search')`, 'the node search for the value');
+        assert.deepEqual((await entries(p)).slice(0, 2).map(e => e.title), ['frequency', 'phase']);
+        assert.equal((await groups(p))[0], 'Of Wobble');
+        await p.key('Enter');
+        await p.until(`app.editor.doc.root.decls[1].body.nodes.some(n => n.k === 'member' && n.object === 7 && n.id > 18)`, 'a Get of frequency, its Target wobble');
+        await back();
+        // ...and one dragged from an input into empty space: what this code has comes first
+        await p.evaluate(`app.edit(d => d.disconnect(d.find(12).graph, 12, ['rhs']))`);
+        await p.drag(await p.center(`${node(12)} [data-port="12|i|d|rhs"] .tg-dot`), space, { steps: 8 });
+        await picker(p);
+        assert.equal((await groups(p))[0], 'What this code has');
+        await p.key('Escape');
+        await back();
+
+        // Reroutes: a double click on a data wire puts a knot there; it's dragged like a node; deleted, the wire is
+        // whole again, in one edit
+        const midOf = (node, path) => p.evaluate(`(() => { const h = [...document.querySelectorAll('.tg-wire-hit')].find(x => x.dataset.wire === ${JSON.stringify(JSON.stringify({ node, path }))}); const pt = h.getPointAtLength(h.getTotalLength() / 2); const m = h.getScreenCTM(); return { x: m.a * pt.x + m.e, y: m.d * pt.y + m.f }; })()`);
+        let mid = await midOf(13, ['value']);
+        await p.click(mid.x, mid.y);
+        await p.click(mid.x, mid.y, { count: 2 });
+        await p.until(`app.editor.doc.root.decls[1].body.nodes.some(n => n.k === 'reroute')`, 'a knot on the wire');
+        const knot = (await nodes()).find(n => n.k === 'reroute');
+        assert.deepEqual([knot.value, (await nodes()).find(n => n.id === 13).value], [12, knot.id]);
+        assert.ok(await p.evaluate(`!!document.querySelector(${JSON.stringify(node(knot.id) + ' .tg-knot-body')})`), 'drawn as a knot');
+        const knotAt = await p.center(`${node(knot.id)} .tg-knot-body`);
+        await p.drag(knotAt, { x: knotAt.x + 30, y: knotAt.y + 40 });
+        await p.until(`app.editor.doc.get(${knot.id}).y === ${knot.y + 40}`, 'the knot moved');
+        // ...its value goes on to any number of inputs
+        await p.evaluate(`app.edit(d => d.disconnect(d.find(18).graph, 18, ['value']))`);
+        await p.drag(await p.center(`${node(knot.id)} .tg-knot-out .tg-dot`), await p.center(`${node(18)} [data-port="18|i|d|value"] .tg-dot`), { steps: 8 });
+        await p.until(`app.editor.doc.get(18).value === ${knot.id}`, 'the knot wired to a second input');
+        await p.evaluate(`app.editor.selectNodes(app.editor.doc.find(${knot.id}).slot, [${knot.id}])`);
+        const steps = await p.evaluate('app.editor.at');
+        await p.move(space.x, space.y);
+        await p.key('Delete');
+        await p.until(`!app.editor.doc.get(${knot.id})`, 'the knot deleted');
+        assert.deepEqual([(await nodes()).find(n => n.id === 13).value, (await nodes()).find(n => n.id === 18).value], [12, 12], 'what came into it, wired to both');
+        assert.equal(await p.evaluate('app.editor.at'), steps + 1, 'one edit');
+        await back();
+        // ...and from the wire's menu
+        mid = await midOf(13, ['value']);
+        await p.click(mid.x, mid.y, { button: 'right' });
+        await p.until(`!!document.querySelector('.tg-context [data-name="reroute"]')`, "the wire's menu");
+        assert.deepEqual(await p.evaluate(`[...document.querySelectorAll('.tg-context .tg-menu-label')].map(l => l.textContent)`), ['Add a reroute', 'Break this link']);
+        await p.evaluate(`document.querySelector('.tg-context [data-name="reroute"]').click()`);
+        await p.until(`app.editor.doc.root.decls[1].body.nodes.some(n => n.k === 'reroute')`, 'a knot from the menu');
+        await back();
+
+        // Keep it as a local: from a worked-out value's pin; a Local before the Set that reads it, a Get of it there
+        const getPin = await p.center(`${node(7)} .tg-get-out .tg-dot`);
+        await p.click(getPin.x, getPin.y, { button: 'right' });
+        await p.until(`!!document.querySelector('.tg-context')`, "a Get's pin menu");
+        assert.ok(await p.evaluate(`!document.querySelector('.tg-context [data-name="keep-local"]')`), 'a Get is no worked-out value');
+        await p.key('Escape');
+        const out = await p.center(`${node(12)} .tg-head-port.tg-out .tg-dot`);
+        await p.click(out.x, out.y, { button: 'right' });
+        await p.until(`!!document.querySelector('.tg-context [data-name="keep-local"]')`, "the value's pin menu");
+        await shotIf(p, 'keep-before');
+        await p.evaluate(`document.querySelector('.tg-context [data-name="keep-local"]').click()`);
+        await p.until(`app.editor.doc.root.decls[1].body.nodes.some(n => n.k === 'var')`, 'a Local');
+        let all = await nodes();
+        const local = all.find(n => n.k === 'var'), get = all.find(n => n.k === 'local');
+        assert.deepEqual([(await doc(p)).decls[1].body.entry, local.next, local.value, get.ref, all.find(n => n.id === 13).value], [local.id, 13, 12, local.id, get.id]);
+        await p.until(`document.activeElement?.classList.contains('tg-renaming')`, "the Local's name to type");
+        await p.type('spun');
+        await p.key('Enter');
+        await p.until(`app.editor.doc.get(${local.id}).name === 'spun'`, 'the Local named');
+        await p.move(5, 400);
+        await p.sleep(100);
+        await shotIf(p, 'keep-after');
+        assert.deepEqual(await overlaps(), [], 'nothing on top of anything');
+        await back();
+
+        // My game's Variables: the code's, each opening to its fields; dragged onto the code with Ctrl a Get, with Alt a
+        // Set, with neither a choice of the two; dropped on an input, a Get wired to it
+        await p.until(`!!document.querySelector('.tg-mygame-var[data-var="wobble"]')`, 'the variables of Spin');
+        assert.equal(await text(p, '.tg-mygame-vars .tg-mygame-of'), 'Spin');
+        await p.clickOn('.tg-mygame-var[data-var="wobble"] .tg-var-toggle');
+        await p.until(`!!document.querySelector('.tg-mygame-var[data-var="wobble.phase"]')`, "wobble's fields");
+        const row = v => p.center(`.tg-mygame-var[data-var="${v}"] .tg-mygame-name`);
+        const count = k => p.evaluate(`app.editor.doc.root.decls[1].body.nodes.filter(n => n.k === '${k}').length`);
+        await p.drag(await row('wobble'), space, { steps: 8, modifiers: 2 });
+        await p.until(`app.editor.doc.root.decls[1].body.nodes.filter(n => n.k === 'name').length === 5`, 'Ctrl: a Get');
+        await p.drag(await row('wobble.phase'), { x: space.x + 260, y: space.y }, { steps: 8, modifiers: 1 });
+        await p.until(`app.editor.doc.root.decls[1].body.nodes.filter(n => n.k === 'assign').length === 3`, 'Alt: a Set');
+        all = await nodes();
+        const made = all.find(n => n.k === 'assign' && n.id > 18);
+        const changes = all.find(n => n.id === made.target);
+        assert.deepEqual([made.op, changes.k, changes.member, all.find(n => n.id === changes.object).name], ['=', 'member', 'phase', 'wobble']);
+        assert.equal(await text(p, `${node(made.id)} .tg-set-target`), 'phase', 'Set phase');
+        await p.drag(await row('wobble'), { x: space.x + 520, y: space.y }, { steps: 8 });
+        await p.until(`!!document.querySelector('.tg-context [data-name="get"]')`, 'Get or Set asked');
+        assert.deepEqual(await p.evaluate(`[...document.querySelectorAll('.tg-context .tg-menu-label')].map(l => l.textContent)`), ['Get wobble', 'Set wobble']);
+        await p.evaluate(`document.querySelector('.tg-context [data-name="get"]').click()`);
+        await p.until(`app.editor.doc.root.decls[1].body.nodes.filter(n => n.k === 'name').length === 7`, 'a Get from the menu');
+        assert.equal(await count('assign'), 3);
+        await p.drag(await row('wobble.frequency'), await p.center(`${node(12)} [data-port="12|i|d|lhs"] .tg-port-label`), { steps: 8 });
+        await p.until(`app.editor.doc.get(app.editor.doc.get(12).lhs)?.member === 'frequency'`, 'a Get wired to the input');
+        all = await nodes();
+        const wired = all.find(n => n.id === all.find(m => m.id === 12).lhs);
+        assert.ok(wired.x < all.find(n => n.id === 12).x && all.find(n => n.id === wired.object).x < wired.x, 'the Gets left of the input, in a chain');
+        assert.deepEqual(await overlaps(), [], 'nothing on top of anything');
+        await back();
+        assert.deepEqual(b.errors, []);
+    });
+
+    test("a call on a type or a namespace says it beneath its name, and what never changes is in its input", async () => {
+        const tidec = findProgram('tidec', 'TIDE_TIDEC');
+        const source = path.join(scratch, 'calls.tide');
+        fs.writeFileSync(source, 'system Calls(mut Transform transform) {\n    transform.localScale.x = Math.Clamp(transform.localScale.y, 0, Math.PI);\n}\n');
+        const file = path.join(scratch, 'calls.tidegraph');
+        execFileSync(tidec, ['--to-graph', source, '-o', file], { stdio: 'pipe' });
+        const p = await openEditor(b, { text: fs.readFileSync(file, 'utf8'), schema, scratch });
+        await p.evaluate(`app.board.zoomAt(1 / app.board.zoom)`);
+        await p.evaluate(`app.reveal(app.editor.doc.root.decls[0].id)`);
+        await p.until(`!!document.querySelector('.tg-frame .tg-node-sub')`, 'the call drawn');
+        const call = `[...document.querySelectorAll('.tg-frame .tg-node')].find(n => n.querySelector('.tg-node-sub'))`;
+        assert.match(await p.evaluate(`${call}.querySelector('.tg-node-header').textContent`), /^Clamp/, 'Clamp');
+        assert.equal(await p.evaluate(`${call}.querySelector('.tg-node-sub').textContent.replace('×', '')`), 'Math', '"Math" beneath it');
+        assert.ok(await p.evaluate(`[...${call}.querySelectorAll('.tg-path')].some(c => c.textContent === 'Math.PI')`), 'Math.PI in its input');
+        assert.equal(await text(p, '.tg-frame .tg-set-target'), 'x', 'Set x');
+        assert.ok(await p.evaluate(`[...document.querySelectorAll('.tg-frame .tg-get-member .tg-get-name')].filter(n => n.textContent === 'localScale').length === 2`), 'Gets of localScale, their Target a Get of transform');
         assert.deepEqual(b.errors, []);
     });
 
@@ -682,10 +862,10 @@ describe('the graph editor in a browser', { skip }, () => {
         assert.ok(c.drawn > 10 && c.drawn < c.nodes / 2, `their nodes alone: ${JSON.stringify(c)}`);
         assert.ok(c.wires > 10 && c.bad === 0, `wires are drawn: ${JSON.stringify(c)}`);
         assert.ok(opened < 20000, `opened in ${opened} ms`);
-        // Simple values are in the inputs that read them: fewer nodes drawn than the frame has, and far fewer wires
-        const first = await p.evaluate(`(() => { const f = [...app.board.frames.values()].find(f => f.mode === 'near'); return { has: f.graph.nodes.length, hidden: f.analysis.folded.size, merged: f.analysis.merged.size, views: f.views.size - 1, chips: f.el.querySelectorAll('.tg-path, .tg-inline-number').length, wires: f.el.querySelectorAll('path.tg-wire-data').length }; })()`);
+        // What never changes is in the inputs that read them: fewer nodes drawn than the frame has; variables are Gets
+        const first = await p.evaluate(`(() => { const f = [...app.board.frames.values()].find(f => f.mode === 'near'); return { has: f.graph.nodes.length, hidden: f.analysis.folded.size, merged: f.analysis.merged.size, views: f.views.size - 1, chips: f.el.querySelectorAll('.tg-path, .tg-inline-number').length, gets: f.el.querySelectorAll('.tg-get').length }; })()`);
         assert.ok(first.hidden > 0 && first.views === first.has - first.hidden - first.merged, JSON.stringify(first));
-        assert.ok(first.chips > first.wires, `more values in inputs than wires: ${JSON.stringify(first)}`);
+        assert.ok(first.chips > 0 && first.gets > 0, `values in inputs, and Gets: ${JSON.stringify(first)}`);
         // Far away, a frame's blocks are the nodes that are drawn near: the same count, by tidec's sizes
         const far = await p.evaluate(`(() => { const f = [...app.board.frames.values()].find(f => f.mode === 'near'); return { sizes: f.sizes.size, views: f.views.size - 1 + f.analysis.merged.size }; })()`);
         assert.equal(far.sizes, far.views, JSON.stringify(far));
@@ -708,7 +888,7 @@ describe('the graph editor in a browser', { skip }, () => {
         assert.ok(await p.evaluate(`document.querySelectorAll('.tg-far-nodes rect').length`) > 200);
         // My game lists what the file has by group, and a click goes there
         await p.until(`document.querySelectorAll('.tg-mygame-item').length > 10`, 'My game');
-        assert.deepEqual(await p.evaluate(`[...document.querySelectorAll('.tg-mygame-group-title')].map(g => g.textContent)`), schema.groups.map(g => g.title));
+        assert.deepEqual(await p.evaluate(`[...document.querySelectorAll('.tg-mygame-group-title')].map(g => g.textContent)`), ['Variables', ...schema.groups.map(g => g.title)], 'the Variables of the code in hand, then the file by group');
         const settleRow = await p.evaluate(`(() => { const i = [...document.querySelectorAll('.tg-mygame-item')].find(i => i.textContent.includes('Settle')); i.scrollIntoView(); return i.dataset.id; })()`);
         await p.clickOn(`.tg-mygame-item[data-id="${settleRow}"] .tg-mygame-kind`);
         await p.until(`[...app.board.frames.values()].some(f => f.mode === 'near' && f.item.value.name === 'Settle')`, 'Settle drawn after the jump');
@@ -830,8 +1010,8 @@ describe('the graph editor in a browser', { skip }, () => {
             assert.equal(under['Work it out…'], 'Work it out');
             await p.type('Twice');
             await p.key('Enter');
-            await p.until(`document.querySelectorAll('.tg-frame .tg-node.tg-data').length === 1`, 'the call, a node wired in');
-            assert.deepEqual(await drawn(p), { nodes: 2, wires: 1 });
+            await p.until(`document.querySelectorAll('.tg-frame .tg-node.tg-data:not(.tg-get)').length === 1`, 'the call, a node wired in');
+            assert.deepEqual(await drawn(p), { nodes: 3, wires: 2 }, 'the Set, the Get of its Target, the call');
             // Its argument is called what the function calls it (tide/graphCalls), and the hole on it says so
             await p.until(`!!${row('amount')}`, "the argument by its parameter's name");
             await p.until(`${row('amount')}.dataset.problem === "EPick what goes in 'amount'"`, 'the hole on the argument');
@@ -848,16 +1028,18 @@ describe('the graph editor in a browser', { skip }, () => {
             await p.until(`app.lang.text?.includes('wobble.frequency = Twice(wobble.frequency);')`, 'the Tide it stands for');
             assert.match(await p.evaluate('app.lang.text'), /system Spin\(mut Wobble wobble\) \{\s*wobble\.frequency = Twice\(wobble\.frequency\);\s*\}/);
             await p.until(`!document.querySelector('.tg-has-error')`, 'nothing left to pick');
-            // A field that isn't there (as a change made in the text would leave it): tidec's error on the input that
-            // shows it, with its note, counted on the chip
+            // A field that isn't there (as a change made in the text would leave it): tidec's error on the Set's title,
+            // which shows it, with its note, counted on the chip
             const member = (await doc(p)).decls[1].body.nodes.find(n => n.id === set.target);
             await p.evaluate(`app.edit(d => { d.get(${member.id}).member = 'frequenc'; })`);
-            await p.until(`!!${row('what')}?.classList.contains('tg-has-error')`, "tidels's error on the input");
-            assert.match(await p.evaluate(`${row('what')}.dataset.problem`), /^EWobble has no field 'frequenc'\ndid you mean 'frequency'\?$/);
+            const title = `document.querySelector('.tg-frame .tg-set-target')`;
+            await p.until(`!!${title}?.classList.contains('tg-has-error')`, "tidels's error on the title");
+            assert.match(await p.evaluate(`${title}.dataset.problem`), /^EWobble has no field 'frequenc'\ndid you mean 'frequency'\?$/);
             assert.match(await text(p, '.tg-status'), /1 problem/);
-            // Fixed by picking the field again from that part of the path: nothing of it stays on screen
-            await p.evaluate(`[...${row('what')}.querySelectorAll('.tg-path-part')].find(b => b.textContent === 'frequenc').click()`);
+            // Fixed by picking what it changes again from its name: nothing of it stays on screen
+            await p.evaluate(`${title}.click()`);
             await picker(p);
+            await p.type('wobble.');
             await p.until(`[...document.querySelectorAll('.tg-value-picker .tg-picker-name')].some(n => n.textContent === 'frequency')`, "wobble's fields to pick from");
             await p.type('frequency');
             await p.key('Enter');
@@ -959,14 +1141,19 @@ describe('the graph editor in a browser', { skip }, () => {
                 return ops;
             };
             assert.deepEqual(await offered(), ['='], 'a Transform is only set whole');
-            // transform.localScale by testFromGraph.frequency: a float3 changed by a float, by all but =
-            await p.evaluate(`[...${row('what')}.querySelectorAll('.tg-path-part')].find(x => x.textContent === 'transform').click()`);
+            // transform.localScale by testFromGraph.frequency: a float3 changed by a float, by all but =. What it changes is
+            // picked again from its name in the title (Set transform)
+            assert.equal(await text(p, '.tg-frame .tg-set-target'), 'transform');
+            await p.evaluate(`document.querySelector('.tg-frame .tg-set-target').click()`);
             await picker(p);
             await p.type('transform.');
             await p.until(`[...document.querySelectorAll('.tg-value-picker .tg-picker-name')].some(n => n.textContent === 'localScale')`, "Transform's fields again", 30000);
             await p.type('localSc');
             await p.key('Enter');
             await picked(p);
+            // Set localScale, its Target a Get of transform
+            await p.until(`document.querySelector('.tg-frame .tg-set-target')?.textContent === 'localScale' && document.querySelector('.tg-frame .tg-get .tg-get-name')?.textContent === 'transform'`, 'Set localScale, Target transform');
+            assert.ok(await p.evaluate(`!!${row('Target')} && !${row('Target')}.querySelector('.tg-dot').classList.contains('tg-dot-empty')`), 'its Target wired');
             await p.evaluate(`document.querySelector('.tg-frame .tg-node.tg-exec .tg-pick').click()`);
             await picker(p);
             await p.type('testFromGraph.');

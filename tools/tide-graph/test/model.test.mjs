@@ -473,7 +473,7 @@ test('nothing is offered that a kind cannot have', () => {
     assert.equal(schema.modeLabel('mut'), 'changes');
 });
 
-test('a simple value read by one input is shown in that input, not a node', () => {
+test('what never changes is shown in the input that reads it; a variable is a Get node', () => {
     const { doc, f, g } = fileWithFunction();
     const pins = doc.pins(f);
     assert.deepEqual(pins.map(p => [p.name, p.type]), [['a', 'int']]);
@@ -500,24 +500,48 @@ test('a simple value read by one input is shown in that input, not a node', () =
     doc.connect(g, run.id, ['value'], call.id);
 
     let a = doc.analyse(g);
-    for (const n of [read, other, local, five, minus]) assert.ok(a.folded.has(n.id), `${n.k} is shown in the input that reads it`);
+    for (const n of [other, five, minus]) assert.ok(a.folded.has(n.id), `${n.k} ${n.name ?? n.text ?? n.op} is shown in the input that reads it`);
+    for (const n of [read, local]) assert.ok(!a.folded.has(n.id), `a variable (${n.k}) is a Get, read by one input or many`);
     assert.ok(!a.folded.has(loose.id), 'a name nothing reads stays a node, to be seen and deleted');
     assert.ok(!a.folded.has(shared.id), 'a value two inputs read stays a node');
     assert.ok(!a.folded.has(sum.id), 'what is worked out is a node');
-    assert.deepEqual(a.shown.get(read.id), { node: sum.id, path: ['lhs'] });
+    assert.deepEqual(a.shown.get(other.id), { node: sum.id, path: ['rhs'] }, 'a constant, named with a capital, is shown in its input');
     assert.deepEqual(a.shown.get(five.id), { node: call.id, path: ['args', 0] }, "a minus's number is shown where the minus is");
     assert.equal(a.merged.get(run.id), call.id, 'a call one statement runs is drawn as the statement');
     assert.equal(a.mergedInto.get(call.id), run.id);
     assert.equal(doc.valueText(g, minus.id), '-5');
     assert.equal(doc.valueText(g, local.id), 'x');
-    // A minus over anything but a number is worked out
+    assert.ok(doc.isGet(read) && doc.isGet(local) && !doc.isGet(other), 'a Get is of a variable, not of a constant');
+    // A minus over anything but a number is worked out, and a variable under it is a Get
     const nameUnder = doc.addNode(g, 'name', 0, 500, { name: 'a' });
     const negName = doc.addNode(g, 'unary', 0, 500, { op: '-' });
     doc.connect(g, negName.id, ['value'], nameUnder.id);
     const use = doc.addNode(g, 'return', 800, 500);
     doc.connect(g, use.id, ['value'], negName.id);
     a = doc.analyse(g);
-    assert.ok(!a.folded.has(negName.id) && a.folded.has(nameUnder.id));
+    assert.ok(!a.folded.has(negName.id) && !a.folded.has(nameUnder.id));
+    // self, and a member of a type or a namespace (Math.PI), are in the input; a member of a variable is a Get
+    const self = doc.addNode(g, 'this', 0, 900);
+    const math = doc.addNode(g, 'name', 0, 900, { name: 'Math' });
+    const pi = doc.addNode(g, 'member', 0, 900, { object: math.id, member: 'PI' });
+    const ofA = doc.addNode(g, 'member', 0, 950, { object: doc.addNode(g, 'name', 0, 950, { name: 'a' }).id, member: 'x' });
+    doc.addNode(g, 'call', 300, 900, { name: 'Show', args: [self.id, pi.id, ofA.id] });
+    a = doc.analyse(g);
+    assert.ok(a.folded.has(self.id) && a.folded.has(math.id) && a.folded.has(pi.id), 'self and Math.PI are in their inputs');
+    assert.ok(!a.folded.has(ofA.id) && !a.folded.has(ofA.object), 'a.x is a Get of a, and a Get of its x with a as its Target');
+    assert.equal(doc.valueText(g, self.id), 'self');
+    // A Set of a local is titled by it: Set x
+    const setX = doc.addNode(g, 'assign', 600, 900, { op: '=' });
+    const x0 = doc.addNode(g, 'local', 600, 900, { ref: v.id });
+    doc.connect(g, setX.id, ['target'], x0.id);
+    a = doc.analyse(g);
+    assert.ok(a.titled.get(setX.id) === x0.id && a.folded.has(x0.id), 'Set x');
+    // ...and one with nothing to change, whose value is a variable, isn't: the value is a Get, wired in
+    const setNone = doc.addNode(g, 'assign', 600, 1000, { op: '=' });
+    const read2 = doc.addNode(g, 'name', 600, 1000, { name: 'a' });
+    doc.connect(g, setNone.id, ['value'], read2.id);
+    a = doc.analyse(g);
+    assert.ok(!a.titled.has(setNone.id) && !a.folded.has(read2.id));
     // A vector or a colour made of numbers alone is shown in its input too; one with anything else in it is a node
     const x = doc.addNode(g, 'int', 0, 600, { text: '16' });
     const fourteen = doc.addNode(g, 'int', 0, 600, { text: '14' });
@@ -536,14 +560,14 @@ test('a simple value read by one input is shown in that input, not a node', () =
     assert.ok(a.folded.has(vector.id) && a.folded.has(x.id) && a.folded.has(y.id) && a.folded.has(fourteen.id), 'float2(16, -14) is in the input that reads it');
     assert.deepEqual(a.shown.get(fourteen.id), { node: place.id, path: ['args', 0] });
     assert.equal(doc.valueText(g, vector.id), 'float2(16, -14)');
-    assert.ok(!a.folded.has(mixed.id) && a.folded.has(mixedArg.id), 'float2(a, 1) is worked out: a node, with its own values in its inputs');
+    assert.ok(!a.folded.has(mixed.id) && !a.folded.has(mixedArg.id) && a.folded.has(one.id), 'float2(a, 1) is worked out: a node, a Get of a wired in, 1 in its input');
     assert.ok(!a.folded.has(other2.id), 'a call of anything else is a node');
-    // Copied, moved or deleted, a node takes the values shown in it with it
-    assert.deepEqual([...doc.withFolded(g, new Set([sum.id]))].sort(), [read.id, other.id, sum.id].sort());
+    // Copied, moved or deleted, a node takes the values shown in it with it, and not the Gets wired into it
+    assert.deepEqual([...doc.withFolded(g, new Set([sum.id]))].sort(), [other.id, sum.id].sort());
     assert.deepEqual([...doc.withFolded(g, new Set([run.id]))].sort(), [call.id, run.id, minus.id, five.id].sort());
     // How big tidec takes the drawn nodes to be: none for a value shown in an input, and its reader as wide as it
     const sizes = doc.sizes(g, a);
-    assert.ok(!sizes.has(read.id) && sizes.has(sum.id) && sizes.has(shared.id));
+    assert.ok(!sizes.has(other.id) && sizes.has(read.id) && sizes.has(sum.id) && sizes.has(shared.id));
     assert.deepEqual(sizes.get(sum.id), { w: 140 + 'binary'.length * 8, h: 48 + 24 * 3 });
     // Renaming the parameter renames its reads
     f.params[0].name = 'count';
@@ -557,7 +581,7 @@ test('a simple value read by one input is shown in that input, not a node', () =
     assert.deepEqual(doc.pins({ type: 'float' }, { word: 'get' }), []);
 });
 
-test('a value is put in an input, a path is changed from one of its parts, and what was there goes', () => {
+test('a value is put in an input, a path is changed from one of its parts, and what was there goes; a Set is titled by what it changes', () => {
     const doc = Doc.empty(schema);
     const c = doc.newElement('component', false, 'Wobble');
     for (const name of ['frequency', 'phase']) {
@@ -573,14 +597,17 @@ test('a value is put in an input, a path is changed from one of its parts, and w
     const set = doc.addNode(g, 'assign', 300, 0, { op: '+=' });
     doc.setEntry(g, set.id);
     const count = () => Doc.nodes(g).length;
-    // Set wobble.phase += wobble.frequency: one node on the board, five in the file
+    // Set phase += wobble.frequency: "Set phase" with a Get of wobble as its Target, and a Get of wobble and of its
+    // frequency for its value; five nodes in the file, four on the board
     assert.equal(doc.setInput(g, set.id, ['target'], (d, graph) => d.makePath(graph, { name: 'wobble' }, ['phase'], set)), null);
     assert.equal(doc.setInput(g, set.id, ['value'], (d, graph) => d.makePath(graph, { name: 'wobble' }, ['frequency'], set)), null);
     doc.reindex();
     assert.equal(count(), 5);
     let a = doc.analyse(g);
-    assert.equal(a.folded.size, 4);
-    assert.deepEqual([...doc.sizes(g, a).keys()], [set.id]);
+    assert.deepEqual([...a.folded], [set.target], 'what it changes, in its title');
+    assert.equal(a.titled.get(set.id), set.target);
+    assert.deepEqual(a.shown.get(set.target), { node: set.id, path: ['target'] });
+    assert.deepEqual([...doc.sizes(g, a).keys()].sort(), Doc.nodes(g).filter(n => n.id !== set.target).map(n => n.id).sort());
     assert.equal(doc.valueText(g, set.target), 'wobble.phase');
     assert.deepEqual(doc.pathNodes(g, set.value).map(n => n.k), ['name', 'member']);
     assert.match(graphText(doc, 'spin'), /system Spin\(mut Wobble wobble\)\s*\{\s*wobble\.phase \+= wobble\.frequency;\s*\}/);
@@ -610,6 +637,23 @@ test('a value is put in an input, a path is changed from one of its parts, and w
     assert.equal(doc.setInput(g, times.id, ['rhs'], (d, graph) => d.makeLiteral(graph, 'int', '2', times)), null);
     doc.reindex();
     assert.match(graphText(doc, 'spin'), /wobble\.phase \+= wobble\.frequency \* 2;/);
+    // Emptied, an input lets go of a Get wired into it, which stays; picked again, the Gets it had go
+    const frequency = times.lhs;
+    assert.equal(doc.setInput(g, times.id, ['lhs'], null), null);
+    doc.reindex();
+    assert.ok(Doc.nodeIn(g, frequency) && Doc.nodeIn(g, Doc.nodeIn(g, frequency).object), 'the Gets stay, unwired');
+    assert.equal(doc.setInput(g, times.id, ['lhs'], (d, graph) => d.makePath(graph, { name: 'wobble' }, ['frequency'], times)), null);
+    assert.equal(doc.setInput(g, times.id, ['lhs'], (d, graph) => d.makeLiteral(graph, 'int', '3', times)), null);
+    doc.reindex();
+    assert.equal(Doc.nodes(g).filter(n => n.k === 'member' && n.member === 'frequency').length, 1, 'the Gets a pick replaced went; the ones left unwired before stay');
+    doc.deleteNodes(g, [frequency, Doc.nodeIn(g, frequency).object]);
+    // A target another node reads too isn't in the title: it's a Get wired into the Set's 'what'
+    const shared = Doc.nodeIn(g, set.target);
+    const other = doc.addNode(g, 'binary', 0, 300, { op: '+' });
+    doc.connect(g, other.id, ['lhs'], shared.id);
+    a = doc.analyse(g);
+    assert.ok(!a.titled.has(set.id) && !a.folded.has(shared.id));
+    doc.deleteNodes(g, [other.id]);
     assert.equal(doc.setInput(g, set.id, ['value'], (d, graph) => d.makeLiteral(graph, 'int', '1', set)), null);
     doc.reindex();
     assert.ok(Doc.nodeIn(g, times.id), 'what was worked out stays, to be wired again');
@@ -622,6 +666,111 @@ test('a value is put in an input, a path is changed from one of its parts, and w
     assert.equal(doc.setInput(g, set.id, ['value'], (d, graph) => d.makePath(graph, { local: v.id }, [], set)), null);
     doc.reindex();
     assert.deepEqual([Doc.nodeIn(g, set.value).k, Doc.nodeIn(g, set.value).ref], ['local', v.id]);
+});
+
+// Compiles a graph as a file of a game, with tidec
+function compiles(doc, name) {
+    fs.writeFileSync(path.join(scratch, 'main.tide'), 'scene Main { }\n');
+    fs.mkdirSync(path.join(scratch, 'out-' + name), { recursive: true });
+    fs.writeFileSync(path.join(scratch, name + '.tidegraph'), doc.text);
+    run(tidec, [path.join(scratch, 'main.tide'), path.join(scratch, name + '.tidegraph'), '-o', path.join(scratch, 'out-' + name)]);
+}
+
+test('a reroute passes on what is wired into it, to any number of inputs; deleted, what it went to is wired to what came into it', () => {
+    const { doc, f, g } = fileWithFunction();
+    f.returnType = 'int';
+    const a = doc.addNode(g, 'name', 0, 0, { name: 'a' });
+    const sum = doc.addNode(g, 'binary', 300, 0, { op: '+' });
+    doc.connect(g, sum.id, ['lhs'], a.id);
+    const ret = doc.addNode(g, 'return', 500, 0);
+    doc.connect(g, ret.id, ['value'], sum.id);
+    doc.setEntry(g, ret.id);
+    const knot = doc.addReroute(g, sum.id, ['lhs'], { x: 150, y: 20 });
+    assert.deepEqual([knot.k, knot.value, sum.lhs, knot.x, knot.y], ['reroute', a.id, knot.id, 150, 20]);
+    assert.equal(doc.addReroute(g, sum.id, ['rhs'], { x: 0, y: 0 }), null, 'no knot where no wire is');
+    assert.equal(doc.connect(g, sum.id, ['rhs'], knot.id), null, "a knot's value fans out");
+    const an = doc.analyse(g);
+    assert.ok(!an.folded.has(knot.id) && !an.folded.has(a.id), 'a knot is a node, and a Get wired into it too');
+    assert.match(graphText(doc, 'knots'), /int F\(int a\)\s*\{\s*return a \+ a;\s*\}/);
+    compiles(doc, 'knots');
+    // Two knots on one wire, deleted together: the wire is whole again
+    const second = doc.addReroute(g, sum.id, ['lhs'], { x: 220, y: 20 });
+    assert.equal(second.value, knot.id);
+    doc.deleteNodes(g, [knot.id, second.id]);
+    assert.deepEqual([sum.lhs, sum.rhs], [a.id, a.id]);
+    assert.ok(!Doc.nodes(g).some(n => n.k === 'reroute'));
+    // ...and one on a value's result
+    const value = { root: a.id, nodes: [a] };
+    const onRoot = doc.addReroute(value, 0, null, { x: 0, y: 0 });
+    assert.equal(value.root, onRoot.id);
+    doc.deleteNodes(value, [onRoot.id]);
+    assert.equal(value.root, a.id);
+});
+
+test('Keep it as a local: a Local before the statement that first reads the value, in the innermost code that has its reads, a Get of it where its wires went; one edit, undone', () => {
+    const { doc, f, g } = fileWithFunction();
+    f.returnType = 'int';
+    // mut var y = 0; if (a > 1) { y += a * 3; y += a * 5; y -= a * 5; } return y + a * 3;
+    const y = doc.addNode(g, 'var', 0, 0, { mut: true, name: 'y' });
+    doc.connect(g, y.id, ['value'], doc.addNode(g, 'int', 0, 0, { text: '0' }).id);
+    doc.setEntry(g, y.id);
+    const times = (n, at) => {
+        const t = doc.addNode(g, 'binary', at, 200, { op: '*' });
+        doc.connect(g, t.id, ['lhs'], doc.addNode(g, 'name', at, 200, { name: 'a' }).id);
+        doc.connect(g, t.id, ['rhs'], doc.addNode(g, 'int', at, 200, { text: String(n) }).id);
+        return t;
+    };
+    const three = times(3, 100), five = times(5, 400);
+    const iff = doc.addNode(g, 'if', 200, 0);
+    const more = doc.addNode(g, 'binary', 200, 100, { op: '>' });
+    doc.connect(g, more.id, ['lhs'], doc.addNode(g, 'name', 0, 100, { name: 'a' }).id);
+    doc.connect(g, more.id, ['rhs'], doc.addNode(g, 'int', 0, 100, { text: '1' }).id);
+    doc.connect(g, iff.id, ['cond'], more.id);
+    doc.connect(g, y.id, ['next'], iff.id);
+    const change = (op, value, after) => {
+        const s = doc.addNode(g, 'assign', 600, 300, { op });
+        doc.connect(g, s.id, ['target'], doc.addNode(g, 'local', 600, 300, { ref: y.id }).id);
+        doc.connect(g, s.id, ['value'], value.id);
+        if (after) doc.connect(g, after.id, ['next'], s.id); else doc.connect(g, iff.id, ['then'], s.id);
+        return s;
+    };
+    const s1 = change('+=', three), s2 = change('+=', five, s1);
+    change('-=', five, s2);
+    const sum = doc.addNode(g, 'binary', 800, 100, { op: '+' });
+    doc.connect(g, sum.id, ['lhs'], doc.addNode(g, 'local', 800, 100, { ref: y.id }).id);
+    doc.connect(g, sum.id, ['rhs'], three.id);
+    const ret = doc.addNode(g, 'return', 900, 0);
+    doc.connect(g, ret.id, ['value'], sum.id);
+    doc.connect(g, iff.id, ['next'], ret.id);
+    doc.reindex();
+    assert.match(graphText(doc, 'keep0'), /if \(a > 1\) \{\s*y \+= a \* 3;\s*y \+= a \* 5;\s*y -= a \* 5;\s*\}\s*return y \+ a \* 3;/);
+
+    const editor = new Editor(schema);
+    editor.load(doc.text, true);
+    const before = editor.text;
+    const eg = () => editor.doc.decls[0].body;
+    // Read in the if and after it: kept before the if, after y
+    let r = editor.edit(d => d.keepAsLocal(eg(), three.id, 'tripled'));
+    assert.ok(!r.why, r.why);
+    assert.equal(r.before, iff.id);
+    assert.equal(editor.history.length, 2, 'one edit');
+    let text = graphText(editor.doc, 'keep1');
+    assert.match(text, /mut var y = 0;\s*var tripled = a \* 3;\s*if \(a > 1\) \{\s*y \+= tripled;\s*y \+= a \* 5;\s*y -= a \* 5;\s*\}\s*return y \+ tripled;/, text);
+    assert.equal(Doc.nodes(eg()).filter(n => schema.dataWires(n).includes(r.get.id)).length, 2, 'one Get, wired where its wires went');
+    assert.deepEqual([Doc.nodeIn(eg(), r.get.id).k, Doc.nodeIn(eg(), r.get.id).ref, Doc.nodeIn(eg(), r.local.id).value], ['local', r.local.id, three.id]);
+    compiles(editor.doc, 'keep1');
+    // Read only inside the if: kept there, before the first statement that reads it
+    r = editor.edit(d => d.keepAsLocal(eg(), five.id, 'fived'));
+    assert.ok(!r.why, r.why);
+    text = graphText(editor.doc, 'keep2');
+    assert.match(text, /if \(a > 1\) \{\s*y \+= tripled;\s*var fived = a \* 5;\s*y \+= fived;\s*y -= fived;\s*\}/, text);
+    compiles(editor.doc, 'keep2');
+    editor.undo();
+    editor.undo();
+    assert.equal(editor.text, before, 'undone, byte for byte');
+    // What nothing that runs reads can't be kept
+    const loose = editor.edit(d => d.keepAsLocal(eg(), d.addNode(eg(), 'binary', 0, 900, { op: '+' }).id, 'x'));
+    assert.match(loose.why, /nothing that runs reads it/);
 });
 
 test("what's shown in an input is what tidec's layout gives no room: in a converted file, a value is where its reader is exactly when it's shown in it", () => {

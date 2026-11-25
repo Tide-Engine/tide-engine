@@ -338,10 +338,33 @@
         }
 
         // Removes nodes and notes, and every wire to them; a statement taken from a chain leaves the statements
-        // around it joined
+        // around it joined, and a reroute taken from a wire leaves what was wired into it wired to what it went to
         deleteNodes(g, ids) {
             const s = this.schema;
             const gone = new Set(ids);
+            const knots = new Map(); // A reroute that goes -> what's wired into it, past others that go too
+            for (const id of ids) {
+                const n = Doc.nodeIn(g, id);
+                if (n?.k !== 'reroute') continue;
+                let from = n.value || 0;
+                for (let depth = 0; from && gone.has(from) && depth < 256; depth++) {
+                    const next = Doc.nodeIn(g, from);
+                    if (next?.k !== 'reroute') { from = 0; break; }
+                    from = next.value || 0;
+                }
+                knots.set(id, from);
+            }
+            if (knots.size) {
+                for (const n of Doc.nodes(g)) {
+                    if (gone.has(n.id)) continue;
+                    for (const p of s.ports(n)) {
+                        if (!p.input || p.exec || !p.path) continue;
+                        const w = s.wire(n, p.path);
+                        if (knots.get(w)) s.setWire(n, p.path, knots.get(w));
+                    }
+                }
+                if (knots.get(g.root)) g.root = knots.get(g.root);
+            }
             for (const id of ids) {
                 const n = Doc.nodeIn(g, id);
                 if (!n || !s.isExec(n.k)) continue;
@@ -700,14 +723,18 @@
             return out;
         }
 
-        // How a graph's nodes are drawn (notes/visual-scripting.md, Simple values are in the input). A value read by
-        // one input is shown in that input and is no node of the board when it's simple: a literal, a name or a
-        // local (the schema's `inline.always`), a member of what is itself shown there (`path`), a `-` over a number
-        // (`negative`), a vector or a colour made of numbers alone (`numbers`: float2(16, 14)): `folded`, as tidec's
-        // layout folds them (graph_layout_fold), so its sizes are the board's.
-        // `shown`: a folded node's id -> { node, path }, the drawn node and its input that shows it. A call that one
-        // statement alone runs is drawn as that statement (`merged`: the statement's id -> the call's, `mergedInto`
-        // the other way). `rootReads` counts a value graph's root as read once, by its Result.
+        // How a graph's nodes are drawn (notes/visual-scripting.md, Round four: full Blueprint). What never changes
+        // is in the input that reads it, as a Blueprint pin's default, and is no node of the board: a literal (the
+        // schema's `inline.always`), a name that starts with a capital (`named`: a type, a namespace, an enum, a
+        // constant), a member of what is itself shown there (`path`: Math.PI, .Run), a `-` over a number
+        // (`negative`), a vector or a colour made of numbers alone (`numbers`: float2(16, 14)). A variable is a Get
+        // node, which any number of inputs read. What a Set or a step changes, a name or a member read by it alone, is
+        // in its title (`titled`: Set score). These are `folded`, as tidec's layout folds them (graph_layout_fold),
+        // so its sizes are the board's.
+        // `shown`: a folded node's id -> { node, path }, the drawn node and its input that shows it. `titled`: a Set's
+        // or a step's id -> what it changes. A call that one statement alone runs is drawn as that statement
+        // (`merged`: the statement's id -> the call's, `mergedInto` the other way). `rootReads` counts a value graph's
+        // root as read once, by its Result.
         analyse(g, { rootReads = false } = {}) {
             const s = this.schema;
             const nodes = Doc.nodes(g);
@@ -732,6 +759,16 @@
                 readBy.set(g.root, { node: -2, path: null });
             }
             const state = new Map(); // 1 being worked out, 2 no, 3 yes
+            // What a Set or a step changes (its target), a name, a local or a member read by it alone, is in its title
+            const titled = new Map();
+            for (const n of nodes) {
+                if (!s.titled(n.k)) continue;
+                const at = s.wire(n, ['target']);
+                const target = at ? byId.get(at) : null;
+                if (!target || readers.get(at) !== 1 || !['name', 'local', 'member'].includes(target.k)) continue;
+                state.set(at, 3);
+                titled.set(n.id, at);
+            }
             const folds = n => {
                 if (state.has(n.id)) return state.get(n.id) === 3;
                 state.set(n.id, 1);
@@ -741,6 +778,7 @@
                 let yes = false;
                 if (kind === 1) yes = inputs.length === 0;
                 else if (kind === 2) yes = inputs.length === 0 || (!!of && s.inlineKind(of.k) !== 3 && folds(of));
+                else if (kind === 5) yes = inputs.length === 0 && capital(n.name);
                 else if (kind === 3) yes = n.op === '-' && !!of && (of.k === 'int' || of.k === 'float') && folds(of);
                 else if (kind === 4 && s.numbersOf.has(n.name)) { // float2(16, -14): each argument a number shown there
                     yes = inputs.length > 0;
@@ -768,7 +806,7 @@
                 merged.set(n.id, call.id);
                 mergedInto.set(call.id, n.id);
             }
-            return { folded, shown, merged, mergedInto, readers, byId };
+            return { folded, shown, titled, merged, mergedInto, readers, byId };
         }
 
         // How big tidec takes a graph's nodes to be (graph_layout_measure, graph_layout_fold): what's laid out and what
@@ -790,6 +828,14 @@
             for (const n of Doc.nodes(g)) {
                 if (analysis.folded.has(n.id)) continue;
                 const wires = schema.dataWires(n);
+                if (n.k === 'reroute') { // A knot
+                    sizes.set(n.id, { w: 34, h: 18 });
+                    continue;
+                }
+                if (n.k === 'name' || n.k === 'local' || n.k === 'member' || n.k === 'this') { // A Get, and a member's Target pin
+                    sizes.set(n.id, { w: 48 + Math.min(200, text(n) * 8) + (n.k === 'member' && wires.length ? 60 : 0), h: 32 });
+                    continue;
+                }
                 let w = 140 + Math.min(260, text(n) * 8);
                 for (const id of wires) {
                     const read = analysis.byId.get(id);
@@ -808,7 +854,8 @@
                 case 'int': case 'float': case 'char': return String(n.text ?? '');
                 case 'string': return `"${n.text ?? ''}"`;
                 case 'bool': return n.value ? 'true' : 'false';
-                case 'this': case 'default': case 'null': return n.k;
+                case 'this': return 'self';
+                case 'default': case 'null': return n.k;
                 case 'name': return String(n.name ?? '');
                 case 'local': return this.schema.declaredLocal(Doc.nodeIn(g, n.ref) || {}) || '?';
                 case 'member': return `${n.shorthand || !n.object ? '' : this.valueText(g, n.object, depth + 1)}.${n.member ?? ''}`;
@@ -826,6 +873,137 @@
                 n = n.k === 'member' && !n.shorthand && n.object ? Doc.nodeIn(g, n.object) : null;
             }
             return out;
+        }
+
+        // A knot put on the data wire into a node's input (`path`; null for a value graph's result), at a place.
+        // Returns it, or null when nothing is wired there.
+        addReroute(g, node, path, at) {
+            const s = this.schema;
+            const reader = path ? Doc.nodeIn(g, node) : null;
+            const from = path ? (reader ? s.wire(reader, path) : 0) : g.root;
+            if (!from) return null;
+            const knot = this.newNode('reroute', at.x, at.y);
+            s.setWire(knot, ['value'], from);
+            Doc.nodes(g).push(knot);
+            if (path) s.setWire(reader, path, knot.id);
+            else g.root = knot.id;
+            this.reindex();
+            return knot;
+        }
+
+        // The statements of a body, as its code runs them: id -> { id, chain, key, index, parent }, where `chain`
+        // names the run of statements it's in (the body's, or a statement's exec output), `key` that output,
+        // `index` its place in the run and `parent` the statement the run is in (0 for the body's)
+        statementTree(g) {
+            const s = this.schema;
+            const info = new Map();
+            const walk = (start, chain, key, parent, depth) => {
+                let index = 0;
+                for (let id = start; id && !info.has(id) && depth < 256;) {
+                    const n = Doc.nodeIn(g, id);
+                    if (!n || !s.isExec(n.k)) break;
+                    info.set(id, { id, chain, key, index: index++, parent });
+                    for (const p of s.ports(n)) {
+                        if (p.input || !p.exec || G.samePath(p.path, ['next'])) continue;
+                        const w = s.wire(n, p.path);
+                        if (w) walk(w, `${id}:${p.path.join('.')}`, p.path[p.path.length - 1], id, depth + 1);
+                    }
+                    id = n.next || 0;
+                }
+            };
+            if (g.entry) walk(g.entry, 'body', null, 0, 0);
+            return info;
+        }
+
+        // The statements that read a node, through any number of values: [id]
+        statementsReading(g, id) {
+            const s = this.schema;
+            const readers = new Map();
+            for (const n of Doc.nodes(g)) for (const w of s.dataWires(n)) (readers.get(w) || readers.set(w, []).get(w)).push(n.id);
+            const out = new Set(), seen = new Set(), stack = [...(readers.get(id) || [])];
+            while (stack.length) {
+                const at = stack.pop();
+                if (seen.has(at)) continue;
+                seen.add(at);
+                const n = Doc.nodeIn(g, at);
+                if (n && s.isExec(n.k)) out.add(at);
+                else stack.push(...(readers.get(at) || []));
+            }
+            return [...out];
+        }
+
+        // Keeps a worked-out value as a local (Blueprint's Promote to Variable): a Local named `name` declared just
+        // before the statement that first reads it, in the innermost run of statements that has all its reads, the
+        // node its value, and one Get of the local wired where the node's wires went. Returns { local, get, before }
+        // (`before` the statement it's declared before), or { why } when it can't be.
+        keepAsLocal(g, id, name) {
+            const s = this.schema;
+            const n = Doc.nodeIn(g, id);
+            if (!n || s.isExec(n.k) || !s.hasValue(n.k)) return { why: 'only a value that is worked out can be kept' };
+            const tree = this.statementTree(g);
+            const lineOf = st => {
+                const out = [];
+                for (let at = tree.get(st), depth = 0; at && depth < 256; at = at.parent ? tree.get(at.parent) : null, depth++) out.unshift(at);
+                return out;
+            };
+            const lines = this.statementsReading(g, id).filter(st => tree.has(st)).map(lineOf);
+            if (!lines.length) return { why: 'nothing that runs reads it yet: wire it into an input first' };
+            for (const n2 of Doc.nodes(g)) {
+                if ((n2.k === 'eval' || n2.k === 'discard') && n2.value === id) return { why: 'a statement runs it for what it does' };
+            }
+            // The innermost run of statements every read is in
+            let depth = 0;
+            while (lines.every(l => l.length > depth + 1 && l[depth + 1].chain === lines[0][depth + 1].chain)) depth++;
+            // A For's start and step are one statement each, and a call stacked on another is that one's block alone:
+            // the Local goes before what holds them
+            const firstOf = chain => [...tree.values()].find(t => t.chain === chain && t.index === 0);
+            while (depth > 0 && (['init', 'step'].includes(lines[0][depth].key) || Doc.nodeIn(g, firstOf(lines[0][depth].chain)?.id)?.stacked)) depth--;
+            let before = null;
+            for (const l of lines) if (!before || l[depth].index < before.index) before = l[depth];
+            // What it reads of the code's locals is there before that statement
+            const line = lineOf(before.id);
+            const visible = d => {
+                const where = s.isExec(d.k) ? [d.id] : this.statementsReading(g, d.id);
+                return where.some(st => {
+                    let at = tree.get(st);
+                    if (at?.key === 'init' && at.parent) at = tree.get(at.parent); // A For's own counter
+                    if (!at) return false;
+                    return line.some((l, i) => l.chain === at.chain && (at.index < l.index || (at.id === l.id && i < line.length - 1)));
+                });
+            };
+            const seen = new Set(), stack = [id];
+            while (stack.length) {
+                const at = stack.pop();
+                if (seen.has(at)) continue;
+                seen.add(at);
+                const v = Doc.nodeIn(g, at);
+                if (!v) continue;
+                if (v.k === 'local') {
+                    const d = Doc.nodeIn(g, v.ref);
+                    if (d && !visible(d)) return { why: `it reads ${s.declaredLocal(d) || 'a local'}, which is made after where it would be kept` };
+                }
+                stack.push(...s.dataWires(v));
+            }
+            // The Local, run just before that statement, with the node as its value
+            const from = this.execSourceOf(g, before.id);
+            const local = this.newNode('var', Number(n.x) || 0, Number(n.y) || 0, { name });
+            Doc.nodes(g).push(local);
+            if (from) s.setWire(Doc.nodeIn(g, from.node), from.path, local.id);
+            else if (g.entry === before.id) g.entry = local.id;
+            s.setWire(local, ['next'], before.id);
+            // One Get of it, where the node's wires went
+            const get = this.newNode('local', Number(n.x) || 0, Number(n.y) || 0, { ref: local.id });
+            Doc.nodes(g).push(get);
+            for (const r of Doc.nodes(g)) {
+                if (r === local || r === get) continue;
+                for (const p of s.ports(r)) {
+                    if (p.input && !p.exec && p.path && s.wire(r, p.path) === id) s.setWire(r, p.path, get.id);
+                }
+            }
+            if (g.root === id) g.root = get.id;
+            s.setWire(local, ['value'], id);
+            this.reindex();
+            return { local, get, before: before.id };
         }
 
         // Renames what a frame's code takes, and every read of it in the frame's nodes
@@ -857,9 +1035,34 @@
             visit(this.root.decls);
         }
 
+        // Whether a node is of what's shown in an input, by what it is (whoever reads it): a literal, a capitalised
+        // name, a member of one of those, a minus over a number, a vector of numbers
+        foldable(g, n, depth = 0) {
+            const s = this.schema;
+            const kind = n && depth < 64 ? s.inlineKind(n.k) : 0;
+            const wires = kind ? s.dataWires(n) : [];
+            const of = wires.length === 1 ? Doc.nodeIn(g, wires[0]) : null;
+            if (kind === 1) return !wires.length;
+            if (kind === 5) return !wires.length && capital(n.name);
+            if (kind === 2) return !wires.length || (!!of && s.inlineKind(of.k) !== 3 && this.foldable(g, of, depth + 1));
+            if (kind === 3) return n.op === '-' && !!of && (of.k === 'int' || of.k === 'float');
+            if (kind === 4) return s.numbersOf.has(n.name) && wires.length > 0 && wires.every(w => { const a = Doc.nodeIn(g, w); return !!a && (a.k === 'int' || a.k === 'float' || (a.k === 'unary' && this.foldable(g, a, depth + 1))); });
+            return false;
+        }
+
+        // Whether a node is a Get: a variable read (a name that isn't capitalised, a local, self), or a member of one
+        // or of anything wired in
+        isGet(n) {
+            if (!n) return false;
+            if (n.k === 'local' || n.k === 'this') return true;
+            if (n.k === 'name') return !capital(n.name);
+            return n.k === 'member';
+        }
+
         // Removes a simple value nothing reads any more (after its input took another), with what it was made of:
-        // a path's members down to its name, a minus's number. A value that was worked out stays, to be wired again.
-        dropValue(g, id) {
+        // a path's members down to its name, a minus's number. A value that was worked out stays, to be wired again,
+        // and so does a Get, unless `gets` (a value picked in its place: the Gets it was made of go too).
+        dropValue(g, id, { gets = false } = {}) {
             const s = this.schema;
             const gone = [];
             const read = new Set();
@@ -867,7 +1070,7 @@
             if (g.root) read.add(g.root);
             const drop = at => {
                 const n = Doc.nodeIn(g, at);
-                if (!n || read.has(at) || !s.inlineKind(n.k) || gone.includes(at)) return;
+                if (!n || read.has(at) || gone.includes(at) || !(this.foldable(g, n) || (gets && this.isGet(n)))) return;
                 gone.push(at);
                 // What it alone read goes with it
                 const wires = s.dataWires(n);
@@ -882,7 +1085,8 @@
 
         // Puts a value into an input (a path of an input of a node, or null for a value graph's result): `make(doc, g)`
         // makes the value's nodes and returns the id of the one whose value it is, or 0 for no value. What was there
-        // goes if it was simple. Returns why it can't be, or null.
+        // goes if it was simple; a Get that nothing else reads goes when another value takes its place, and stays
+        // when the input is emptied. Returns why it can't be, or null.
         setInput(g, node, path, make) {
             const s = this.schema;
             const n = path ? Doc.nodeIn(g, node) : null;
@@ -894,8 +1098,8 @@
             else if (id) why = this.connect(g, node, path, id);
             else this.disconnect(g, node, path);
             this.reindex();
-            if (why && id) this.dropValue(g, id);
-            else if (old && old !== id) this.dropValue(g, old);
+            if (why && id) this.dropValue(g, id, { gets: true });
+            else if (old && old !== id) this.dropValue(g, old, { gets: !!id });
             return why;
         }
 
@@ -1038,6 +1242,11 @@
                 default: return name ?? e.role;
             }
         }
+    }
+
+    // Whether a name is written with a capital first, as Tide names a type, a namespace, an enum or a constant
+    function capital(name) {
+        return /^[A-Z]/.test(String(name ?? ''));
     }
 
     function firstLine(s) {

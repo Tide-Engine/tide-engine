@@ -18,7 +18,8 @@ data is in the cards on the left: drag with the right button, or click one in **
 - On the card `FALL`, change `90` to `200`: the stars fall faster.
 - On `WIDTH`, change `40` to `80`: the basket is twice as wide.
 - On `GOLD`, click the colour and pick another: the stars change colour.
-- In `Fall`, find the node that reads Set `score.caught` `+=` `1`. The `1` is what a catch counts: make it `10`.
+- In `Fall`, find the node **Set caught**, with a Get of `score` wired to its Target, `+=` and `1`. The `1` is what a catch
+  counts: make it `10`.
 
 The score and the stars carry over. **Restart** starts the last successful build from the beginning, and
 **Reset graph** brings back the original graph and starts it again. Your graph is kept in this browser, so it's
@@ -35,9 +36,10 @@ This is the graph editor of the [editor extensions](../tools/editors.md), checke
 - **Cards** are the game's data: a row for each field, with its name, its type and its value, each changed where
   it is. **Frames** are its code: nodes, starting from the entry on the left, which says when the code runs and
   what it takes.
-- A node's simple values are in its inputs: a number is typed there, and a name such as `star.position` is
-  picked. Click an input to choose what goes in it from a list of what fits. Only what's worked out (a
-  **Multiply**, a call) is a node of its own, wired in.
+- What never changes is in a node's input: a number is typed there, a constant or a type's name picked. A variable
+  is a Get node, as in Blueprint (`star`, then its `position`, wired in), whose pin goes to any number of inputs.
+  Click an input to choose what goes in it from a list of what fits; what's worked out (a **Multiply**, a call)
+  is a node of its own, wired in.
 - **+ Add**, or a right click on an empty part of the board, adds a card or a frame. A right click inside a frame
   adds a node, and a wire dragged from a pin and dropped in the frame offers what can go there.
 - Anything moves by dragging it, a name is renamed by a double click, and a right click on anything opens the same

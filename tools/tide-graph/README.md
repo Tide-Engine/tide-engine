@@ -8,10 +8,12 @@ Gradle build has no Node).
 
 A file is one board (notes/visual-scripting.md, "The experience: one board"): a card for each declaration of data,
 edited where it's drawn; a frame for each piece of code, with its entry (what it takes, each with a pin) and its
-nodes. A simple value that one input reads (a literal, a name, a local, a path of members, a minus over a number,
-a vector or a colour made of numbers: the schema's `inline`) is shown and changed in that input's row, with no node and no wire, by the same rule as
-tidec's layout (`graph_layout_fold`), so the layout's sizes are the board's; what's worked out is a node wired in
-(notes/visual-scripting.md, "Simple values are in the input"). The file is the same either way.
+nodes, as Unreal's Blueprint has them (notes/visual-scripting.md, "Round four: full Blueprint"). What never changes
+and one input reads (a literal, a capitalised name and a path of members from one, a minus over a number, a vector or
+a colour made of numbers: the schema's `inline`) is shown and changed in that input's row, with no node and no wire;
+what a Set changes, read by it alone, is in its title (`inline.titled`); both by the same rule as tidec's layout
+(`graph_layout_fold`), so the layout's sizes are the board's. A variable is a Get node, a knot on a wire a reroute,
+and what's worked out a node wired in. The file is the same either way.
 
 Everything it says and offers comes from the schema tidels serves (`tide/graphSchema`, the compiler's
 `compiler/src/graph_schema.json`, which each host also packages as the schema to start with): the kinds and their
@@ -36,12 +38,14 @@ call's parameters (`tide/graphCalls`), which names are the game's own (`tide/gra
 - `src/pickers.js`: the Add menu, the type picker, what a frame needs, the value picker of an input, the node
   search, jump-to.
 - `src/cards.js`: a card: its name (renamed by a double click), its "+" on the title, its rows.
-- `src/frames.js`: a frame: its entry, nodes, inputs with their values, pins (always shown) and wires, the
-  operators a Set or an operator can have (`tide/graphOperators`), what a Set can change, a free place for a new
-  node; a value's small graph.
+- `src/frames.js`: a frame: its entry, nodes (Gets, knots, a Set titled by what it changes), inputs with their
+  values, pins (always shown) and wires, the operators a Set or an operator can have (`tide/graphOperators`), what a
+  Set can change, a free place for a new node and for the Gets a pick makes, Keep it as a local; a value's small
+  graph.
 - `src/menus.js`: the one menu of every card, frame, node, row and pin, in the same sections and order (notes/
   visual-scripting.md, "Round three: like Blueprint").
-- `src/panels.js`: My game (the file by group; click, double-click to rename, drag out) and Details (what's
+- `src/panels.js`: My game (the Variables of the code in hand, dragged out as Gets and Sets; the file by group;
+  click, double-click to rename, drag out) and Details (what's
   selected: its options as ticks with their help, Advanced, its note; the file's own with nothing selected).
 - `src/board.js`: the board: places, pan and zoom, what's drawn (frames off screen are empty, far ones are
   blocks), the pointer (anything is dragged to move it, a box selects, a right or middle drag looks around, a pin

@@ -466,7 +466,9 @@ namespace Tide.Editor
             Showing = "node:" + view.Id;
             var shown = view.Call ?? view.Node;
             var spec = GraphSchema.Spec(shown.Str("k"));
-            Head(spec?.Title ?? shown.Str("k"), "Behaviour", spec?.Help);
+            // A variable's or a field's read is a Get, as Blueprint calls it
+            var get = view.Call == null && GraphNodeView.IsGet(shown.Str("k"));
+            Head(get ? GraphBoard.GetWord : spec?.Title ?? shown.Str("k"), "Behaviour", get ? "Its value: one Get can be wired to any number of inputs." : spec?.Help);
             var advanced = Advanced();
             foreach (var v in view.Call != null ? new[] { view.Call, view.Node } : new[] { view.Node })
             {
@@ -608,8 +610,8 @@ namespace Tide.Editor
 
         internal void Type(string text) => query.value = text;
 
-        // The groups' headings, in order
-        internal List<string> Groups => list.Query<Label>(className: "tg-section-title").ToList().Select(l => l.text).ToList();
+        // The groups' headings, in order (the selected code's variables are before them)
+        internal List<string> Groups => list.Query<Label>(className: "tg-section-title").ToList().Where(l => l.parent?.name != "variables").Select(l => l.text).ToList();
 
         public override void Fill()
         {
@@ -650,6 +652,7 @@ namespace Tide.Editor
                 }
             }
             Decls(doc.Root.Arr("decls"), "");
+            Variables(typed);
             foreach (var group in GraphSchema.Groups)
             {
                 var of = rows.Where(r => r.group == group.Name && (typed.Length == 0 || (r.title + " " + r.kind).ToLowerInvariant().Contains(typed))).ToList();
@@ -669,6 +672,212 @@ namespace Tide.Editor
                 foreach (var r in of) list.Add(Row(r.id, r.title, r.kind, r.depth, r.e));
             }
             if (typed.Length > 0 && shown.Count == 0) list.Add(GraphLook.Text($"Nothing here is called '{query.value.Trim()}'.", "tg-empty"));
+        }
+
+        // ---------------------------------------------------------------------------------------------------------
+        // Variables: what the selected code has (its parameters, its locals), as Blueprint's My Blueprint lists a
+        // graph's. Each opens to its fields; dragged onto the board it asks "Get <name>" or "Set <name>" (Ctrl makes
+        // a Get, Alt a Set), and dropped on an input it's a Get wired in.
+
+        GraphFrame variablesOf;  // The code whose variables are listed
+        readonly HashSet<string> opened = new HashSet<string>();  // Variables and fields opened to their fields
+        readonly Dictionary<string, List<TideGraphLanguage.Member>> fieldsOf = new Dictionary<string, List<TideGraphLanguage.Member>>();
+        readonly HashSet<string> asked = new HashSet<string>();
+        string fieldsText; // The file as it was when what the types have was asked
+        readonly List<(string title, List<GraphFrame.Part> parts)> variables = new List<(string, List<GraphFrame.Part>)>();
+
+        // What it lists of the selected code's variables, in order: the tests' view of it
+        internal IReadOnlyList<(string title, List<GraphFrame.Part> parts)> VariablesShown => variables;
+        internal GraphFrame VariablesOf => variablesOf;
+        internal const string VariablesTitle = "Variables";
+
+        // The selection moved: the variables are those of the code it's in now
+        internal void Selected()
+        {
+            if (Window.Board?.CodeInFocus != variablesOf) Fill();
+        }
+
+        // Opens a variable or a field (by its path, ball.position) to its fields, or closes it
+        internal void Open(string path, bool open)
+        {
+            if (open) opened.Add(path);
+            else opened.Remove(path);
+            Fill();
+        }
+
+        static bool Simple(string type) => GraphSchema.ValueControl(type) is string c && (c == "whole" || c == "decimal" || c == "tick" || c == "text" || c == "char");
+
+        void Variables(string typed)
+        {
+            variables.Clear();
+            var frame = Window.Board?.CodeInFocus;
+            if (frame != variablesOf)
+            {
+                opened.Clear();
+                variablesOf = frame;
+            }
+            // What a type has is asked again once the file has changed (a field added to a component)
+            if (opened.Count > 0 && Window.Doc.Text != fieldsText)
+            {
+                fieldsOf.Clear();
+                asked.Clear();
+                fieldsText = Window.Doc.Text;
+            }
+            var heading = GraphLook.Row("tg-section", "tg-mine-group");
+            var words = GraphLook.Text(VariablesTitle.ToUpperInvariant(), "tg-section-title");
+            words.tooltip = "What the selected code has: what it takes and its locals. Drag one onto its code to get or set it.";
+            heading.Add(words);
+            heading.name = "variables";
+            if (frame != null) heading.Add(GraphLook.Text(frame.Title, "tg-option-detail", "tg-mine-of"));
+            list.Add(heading);
+            if (frame == null)
+            {
+                list.Add(GraphLook.Text("Select some code to see what it has: what it takes and its locals.", "tg-empty"));
+                return;
+            }
+            frame.Classify();
+            var all = new List<GraphFrame.Part>();
+            foreach (var read in frame.Reads.Values) all.Add(new GraphFrame.Part { Kind = "name", Name = read.Name, Type = read.Type });
+            foreach (var local in GraphDocument.Locals(frame.Graph))
+            {
+                var name = GraphSchema.LocalName(local);
+                if (frame.Reads.ContainsKey(name) || all.Any(p => p.Kind == "local" && p.Name == name)) continue;
+                all.Add(new GraphFrame.Part { Kind = "local", Ref = local.Wire("id"), Name = name, Type = !string.IsNullOrEmpty(local.Str("type")) ? local.Str("type") : TypeOfLocal(frame, local) });
+            }
+            if (all.Count == 0)
+            {
+                list.Add(GraphLook.Text("It takes nothing and has no locals yet.", "tg-empty"));
+                return;
+            }
+            foreach (var part in all) Variable(frame, new List<GraphFrame.Part> { part }, typed, 0);
+        }
+
+        // A local with no type of its own: what its reads were checked to be
+        static string TypeOfLocal(GraphFrame frame, JValue local)
+        {
+            foreach (var n in frame.ById.Values)
+                if (n.Str("k") == "local" && n.Wire("ref") == local.Wire("id") && frame.TypeAt(n.Wire("id")) is string t) return t;
+            var value = local.Wire("value");
+            return value != 0 ? frame.TypeAt(value) : null;
+        }
+
+        void Variable(GraphFrame frame, List<GraphFrame.Part> parts, string typed, int depth)
+        {
+            var part = parts[parts.Count - 1];
+            var path = GraphFrame.PathText(parts);
+            var type = part.Type;
+            var opens = !string.IsNullOrEmpty(type) && !Simple(type) && type.IndexOfAny(new[] { '<', '[' }) < 0;
+            var isOpen = opens && opened.Contains(path);
+            if (typed.Length == 0 || path.ToLowerInvariant().Contains(typed) || isOpen)
+                list.Add(VariableRow(frame, parts, path, type, depth, opens, isOpen));
+            if (!isOpen) return;
+            if (!fieldsOf.TryGetValue(type, out var fields))
+            {
+                // Listed once it's answered (which may be at once, without the language server: then nothing)
+                if (asked.Add(type))
+                    TideGraphLanguage.MembersOfType(Window, type, (found, _) =>
+                    {
+                        fieldsOf[type] = found ?? new List<TideGraphLanguage.Member>();
+                        schedule.Execute(() =>
+                        {
+                            if (parent != null) Fill();
+                        });
+                    });
+                list.Add(GraphLook.Text("Asking what it has…", "tg-empty", "tg-mine-asking"));
+                return;
+            }
+            foreach (var f in fields.Where(m => !m.Callable && m.Kind != TideGraphLanguage.KindKeyword && m.Kind != TideGraphLanguage.KindSnippet))
+                Variable(frame, parts.Append(new GraphFrame.Part { Kind = "member", Name = f.Label, Type = f.Type }).ToList(), typed, depth + 1);
+            if (fields.Count == 0) list.Add(GraphLook.Text("It has no fields.", "tg-empty"));
+        }
+
+        VisualElement VariableRow(GraphFrame frame, List<GraphFrame.Part> parts, string path, string type, int depth, bool opens, bool isOpen)
+        {
+            var row = GraphLook.Row("tg-option", "tg-mine-row", "tg-mine-var");
+            row.name = "var:" + path;
+            row.style.paddingLeft = 6 + depth * 14;
+            variables.Add((path, parts));
+            if (opens)
+            {
+                var arrow = GraphLook.IconButton(isOpen ? "down" : "right", isOpen ? "Close its fields" : "Open it to its fields", () => Open(path, !isOpen), "tg-mine-arrow");
+                arrow.name = "open";
+                row.Add(arrow);
+            }
+            else row.Add(new VisualElement { style = { width = 18, flexShrink = 0 } });
+            var dot = GraphLook.Row("tg-type-dot");
+            dot.style.backgroundColor = TideGraphTypes.ColorOf(type, Window.Light);
+            row.Add(dot);
+            row.Add(GraphLook.Text(depth == 0 ? path : parts[parts.Count - 1].Name, "tg-option-title"));
+            row.Add(new VisualElement { style = { flexGrow = 1 }, pickingMode = PickingMode.Ignore });
+            row.Add(GraphLook.Text(type ?? "", "tg-option-detail"));
+            var changeable = frame.Changeable(parts);
+            row.tooltip = $"{path}{(string.IsNullOrEmpty(type) ? "" : ": " + type)}\nDrag it onto its code to get or set it (Ctrl: a Get, Alt: a Set), or onto an input to wire a Get of it in." + (changeable ? "" : "\nIt's only read here: it can't be set.");
+            // What it reads is lit on the board under the pointer
+            var root = parts[0];
+            row.RegisterCallback<PointerEnterEvent>(_ => frame.Light(root.Kind == "local" ? null : root.Name, root.Kind == "local" ? root.Ref : 0, true));
+            row.RegisterCallback<PointerLeaveEvent>(_ => frame.Light(root.Kind == "local" ? null : root.Name, root.Kind == "local" ? root.Ref : 0, false));
+            DragsVariable(row, frame, parts, path);
+            return row;
+        }
+
+        // A click goes to where it comes from (the entry's row, the node that declares a local); a drag carries a
+        // Get or a Set of it out onto the board
+        void DragsVariable(VisualElement row, GraphFrame frame, List<GraphFrame.Part> parts, string path)
+        {
+            Vector2 start = default;
+            var down = false;
+            var dragging = false;
+            Label ghost = null;
+            row.RegisterCallback<PointerDownEvent>(ev =>
+            {
+                if (ev.button != 0 || GraphLook.TakesClicks(ev.target as VisualElement, row)) return;
+                down = true;
+                dragging = false;
+                start = ev.position;
+                row.CapturePointer(ev.pointerId);
+                ev.StopPropagation();
+            });
+            row.RegisterCallback<PointerMoveEvent>(ev =>
+            {
+                if (!down) return;
+                if (!dragging && ((Vector2)ev.position - start).sqrMagnitude > 36)
+                {
+                    dragging = true;
+                    ghost = GraphLook.Text(path, "tg-mine-ghost");
+                    ghost.pickingMode = PickingMode.Ignore;
+                    Window.Overlay?.Add(ghost);
+                }
+                if (ghost != null && ghost.parent != null)
+                {
+                    var at = ghost.parent.WorldToLocal(ev.position);
+                    ghost.style.left = at.x + 12;
+                    ghost.style.top = at.y + 6;
+                    ghost.text = ev.actionKey || ev.ctrlKey ? $"{GraphBoard.GetWord} {path}" : ev.altKey ? $"{GraphBoard.SetWord} {path}" : path;
+                }
+            });
+            row.RegisterCallback<PointerUpEvent>(ev =>
+            {
+                if (!down) return;
+                down = false;
+                if (row.HasPointerCapture(ev.pointerId)) row.ReleasePointer(ev.pointerId);
+                ghost?.RemoveFromHierarchy();
+                ghost = null;
+                ev.StopPropagation();
+                if (dragging)
+                {
+                    dragging = false;
+                    Window.Board?.DropVariable(frame, parts, ev.position, ev.actionKey || ev.ctrlKey, ev.altKey);
+                    return;
+                }
+                var root = parts[0];
+                if (root.Kind == "local")
+                {
+                    Window.Board?.SelectNode(frame, root.Ref, false);
+                    return;
+                }
+                var read = frame.Reads.TryGetValue(root.Name, out var r) ? r : null;
+                if (read != null && read.Id != 0) Window.Board?.SelectRow(frame, read.Id);
+            });
         }
 
         // A group's kinds, to add one of

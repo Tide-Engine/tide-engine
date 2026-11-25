@@ -352,7 +352,7 @@ JetBrains, one web editor). What they'd otherwise each implement is tidec's, ser
   after them: five errors, each once, in that order (`-DERRORS=5`).
 - `tidec_e2e_graph_nodes`: `graph/graph_nodes.tidegraph`, a game of hand-made nodes the converter doesn't make (a
   kept statement value read twice and run once, text and code nodes with inputs, a value wired twice, else-if,
-  unreached nodes), run by `graph_nodes_test.c`.
+  reroutes, unreached nodes), run by `graph_nodes_test.c`.
 - `tidec_e2e_graph_<name>`: 26 e2e tests built from their `.tide` made a graph at build time and run with their
   own `_test.c` (`crossplatform`'s pinned bits among them). chars, json and optional_fields aren't among them:
   their tests take hashes from definitions of their own targets.
@@ -841,3 +841,40 @@ wired to several inputs is worked out at each (Blueprint's pure nodes). What fol
 - **Promote to a local**: a worked-out node's value pin's menu has "Keep it as a local" (Blueprint's Promote to
   Variable): a Local declared before the statement that first reads it, its value that node, and Gets of the
   local where the node's wires went, so it's worked out once.
+
+**Round four built** (2026-11-25, both editors and tidec). As above, with these details and picks:
+
+- tidec: `graph_layout_node.target` is what's wired into a node's `target` key; the title fold takes it (not the
+  first wired input, which skips holes) and a `name`, `local` or `member` read by it alone ("Set speed" for a
+  local). A folded node's wired inputs take room (`place_value`, `value_width`), so a titled member's object Get
+  doesn't land on the Set's value. `graph_layout_measure` sizes a Get (`name`, `local`, `member`, `this`) 48 + 8
+  per character (at most 200) + 60 for a member's Target pin, by 32, and a knot 34 x 18; `Doc.sizes` and Unity's
+  estimate mirror it.
+- Words: "Target", "self", "Get <name>" / "Set <name>" (Ctrl and Alt as hints), "Variables" (with the frame's
+  name; "Select some code to see its variables" when none is), "Keep it as a local" ("Worked out once, before the
+  code that reads it"), "Add a reroute" and "Break this link" on a wire, "What does it change?" from a Set's
+  title. The search also offers "Set <name>" as a step for what can be changed; "Set" is greyed, with the reason,
+  for what can't.
+- Keep it as a local: the Local goes before the first statement that reads the value, in the innermost block
+  holding all its reads, and takes that statement's place (what was right of it moves right); its name is then
+  typed. It's refused, with the reason, when nothing reads the value, when a statement only runs it for what it
+  does, or when it reads a local made later.
+- Picking another value for an input removes the Gets only it used; emptying it keeps them, unwired (Unity fades
+  an unwired Get, as Blueprint does). "Work it out…" wraps what was in the input: it becomes the new node's first
+  input.
+- New Gets can go left of the entry: the frame moves its place as a drag there does. `docs/playground/stars.tidegraph`
+  and `tools/tide-graph/test/spin.tidegraph` are laid out again by tidels (their Tide byte-identical);
+  `docs/tools/visual-scripting.md`, `docs/guide/graph-playground.md` and the editor's README say it.
+- Tests: `tide_graph_editor` (model 22: the fold as tidec's, Gets, titled Sets for fields and locals, a reroute,
+  Keep it as a local compiled by tidec; browser 10: two new over items above with undo), docs graph playground 8,
+  tide-vscode 38, JetBrains 18; Unity's graph fixtures 59, all on the hidden desktop, 57 and the 2 pointer tests
+  skipped under `-nographics` (new: `VariablesAreGetsWiredToAnyNumberOfInputs`, `CallsSayWhatTheyreOf`,
+  `ARerouteIsAKnotOnAWire`, `AWorkedOutValueIsKeptAsALocal`, `MyGameListsTheVariablesToGetAndSet`,
+  `AWireFromAnInputListsItsTypesVariablesFirst`, `BlueprintsWaysAreValidTide` (no overlaps after Tidy up),
+  `ALocalsSetIsTitledByIt`, `ConvertedGamesShowOnTheBoard` (sumo and towers: shown in an input or a title
+  exactly where tidec's layout puts it at its reader)).
+- Not there: a Get can't be pointed at another variable in place (a double click on its name renames what it
+  reads, not the variable); Keep it as a local isn't offered on a call drawn as its own statement; no Unity test
+  drags a My game row with the real pointer (its drop is tested by calls); files laid out before this round have
+  Gets where chips were until "Tidy up its nodes"; the new words are each editor's own until the schema has the
+  menu words.

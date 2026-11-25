@@ -443,15 +443,18 @@ public class GraphTests
             if (made.Str("k") == "eval" && made.Wire("value") != 0) kinds.Add(GraphDocument.NodeIn(b.Graph, made.Wire("value")).Str("k"));
         }
         foreach (var spec in GraphSchema.Nodes) Assert.IsTrue(kinds.Contains(spec.K), $"The search doesn't offer '{spec.K}'");
-        Assert.IsTrue(entries.Any(e => e.Reads && e.Title == "v"), "the local");
-        Assert.IsTrue(entries.Any(e => e.Reads && e.Title == "speed"), "what the code takes");
+        // Gets of what the code has, as Blueprint's context menu offers them
+        Assert.IsTrue(entries.Any(e => e.Reads && e.Title == "Get v" && e.Variable == "v" && e.Group == GraphCatalog.VariablesGroup), "the local");
+        Assert.IsTrue(entries.Any(e => e.Reads && e.Title == "Get speed" && e.Type == "int"), "what the code takes");
         Assert.AreEqual(GraphSchema.BinaryOps.Length, entries.Count(e => e.Make != null && e.Keywords.StartsWith("binary")));
         // In the schema's words: a kind's title, its category's, and what it does
         var schema = GraphSchema.Json;
         foreach (var n in schema.Arr("nodes").Items)
         {
             if (n.Str("k") == "local" || (schema.Get("operators").Has(n.Str("k")) && !n.Flag("exec"))) continue;
-            var entry = entries.FirstOrDefault(e => e.Title == n.Str("title") && e.Detail == n.Str("help"));
+            // `this` is "self", as Blueprint says it
+            var title = n.Str("k") == "this" ? GraphFrame.SelfWord : n.Str("title");
+            var entry = entries.FirstOrDefault(e => e.Title == title && e.Detail == n.Str("help"));
             Assert.IsNotNull(entry, n.Str("k") + " is offered by its title, with its help");
             Assert.AreEqual(schema.Arr("categories").Items.Single(c => c.Str("name") == n.Str("category")).Str("title"), entry.Group);
             Assert.AreEqual(n.Flag("exec"), entry.Statement);
@@ -797,6 +800,7 @@ public class GraphTests
     {
         NeedTidec();
         using var logged = new Logged();
+        int folded = 0, drawn = 0;
         foreach (var tide in Directory.GetFiles(Path.Combine(Repository, "examples", "sumo"), "*.tide").Concat(Directory.GetFiles(Path.Combine(Repository, "examples", "towers"), "*.tide")))
         {
             var path = Path.Combine(Scratch, Path.GetFileNameWithoutExtension(tide) + ".tidegraph");
@@ -820,6 +824,18 @@ public class GraphTests
                 var nodes = frame.Graph?.Arr("nodes")?.Items.Count ?? 0;
                 Assert.AreEqual(nodes, frame.Views.Count + frame.Absorbed.Count + frame.Hidden.Count, $"{path}: {frame.Title}");
                 foreach (var hidden in frame.Hidden) Assert.IsTrue(frame.Readers.ContainsKey(hidden), $"{path}: what isn't drawn as a node is read by one");
+                // What's shown in an input or a title is what tidec's layout gives no room (graph_layout_fold): it
+                // puts such a value at its reader's x, and one it draws to the left of it
+                foreach (var n in frame.ById.Values)
+                {
+                    var id = n.Wire("id");
+                    if (!frame.Readers.TryGetValue(id, out var readers) || readers.Count != 1 || readers[0].node <= 0 || frame.Absorbed.ContainsKey(id) || !frame.Reached.Contains(id)) continue;
+                    var reader = frame.ById[readers[0].node];
+                    var shown = frame.Hidden.Contains(id);
+                    if (shown) folded++;
+                    else drawn++;
+                    Assert.AreEqual(shown, n.Get("x").Number == reader.Get("x").Number, $"{path}: node {id} ({n.Str("k")} {n.Str("name") ?? n.Str("member")}) at x {n.Get("x").Number}, read by {reader.Wire("id")} ({reader.Str("k")}) at x {reader.Get("x").Number}, is {(shown ? "" : "not ")}shown in it");
+                }
             }
             foreach (var card in board.Items.OfType<GraphCard>().ToList())
             {
@@ -831,6 +847,8 @@ public class GraphTests
             Assert.AreEqual(File.ReadAllText(path), window.Doc.Text);
             window.Close();
         }
+        Assert.Greater(folded, 100, $"{folded} shown in inputs and titles, {drawn} drawn");
+        Assert.Greater(drawn, 100, $"{folded} shown in inputs and titles, {drawn} drawn");
     }
 
     // The biggest converted file: only what's on screen is drawn, an edit builds its own node again and no other,
@@ -1133,7 +1151,7 @@ public class GraphTests
         var call = GraphDocument.NodeIn(graph, eval.Wire("value"));
         GraphShots.Enter(frame.Views[eval.Wire("id")].Q<TextField>("title"), "Print");
         Assert.AreEqual("Print", call.Str("name"));
-        // An argument, and the parameter dragged into it: its name in the input, and no node or wire for the read
+        // An argument, and the parameter dragged into it: a Get of it beside the input, wired in
         GraphShots.Click(frame.Views[eval.Wire("id")].Q<Button>("add:" + GraphSchema.Spec("call").Lists[0].Label));
         var arg = frame.Views[eval.Wire("id")].Input("args.0");
         Assert.IsNotNull(arg);
@@ -1141,11 +1159,16 @@ public class GraphTests
         var read = GraphDocument.NodeIn(graph, call.Arr("args").Items[0].Number > 0 ? (int)call.Arr("args").Items[0].Number : 0);
         Assert.AreEqual("name", read.Str("k"));
         Assert.AreEqual("times", read.Str("name"));
-        Assert.IsTrue(frame.Hidden.Contains(read.Wire("id")), "the read isn't a node on the board");
-        Assert.AreEqual(1, frame.Views.Count);
+        Assert.IsFalse(frame.Hidden.Contains(read.Wire("id")), "a variable is a Get: a node of its own");
+        Assert.AreEqual(2, frame.Views.Count, "the call and the Get");
+        var get = frame.Views[read.Wire("id")];
+        Assert.IsTrue(get.ClassListContains("tg-get"), "a Get is compact");
+        Assert.IsNull(get.Q(className: "tg-node-head"), "with no title bar");
+        Assert.AreEqual("times", get.Q<GraphName>("title").Value);
+        Assert.Less(read.Get("x").Number + GraphNodeView.EstimateOf(read, null, frame).x, eval.Get("x").Number, "left of what reads it");
         Assert.IsTrue(frame.Entry.ReadPin("times").Connected, "the parameter's pin says it's used");
-        Assert.IsNull(frame.SourcePin(read.Wire("id")), "no wire: the input says what it reads");
-        Assert.AreEqual("times", frame.Views[eval.Wire("id")].Q("in:args.0").Q("chip").Q<Button>("part0").text);
+        Assert.AreSame(get.DataOut, frame.SourcePin(read.Wire("id")), "the input's wire comes from the Get's pin");
+        Assert.IsNull(frame.Views[eval.Wire("id")].Q("in:args.0").Q("chip"), "a variable isn't in the input");
         Assert.AreEqual("argument 1", frame.Views[eval.Wire("id")].Q("in:args.0").Q<Label>(className: "tg-port-label").text, "until a check names it");
         // Renaming the parameter renames what reads it
         GraphShots.Enter(frame.Entry.Q<TextField>("name" + times), "count");
@@ -1166,7 +1189,7 @@ public class GraphTests
         var cond = GraphDocument.NodeIn(graph, @if.Wire("cond"));
         Assert.AreEqual("bool", cond.Str("k"));
         Assert.IsTrue(frame.Hidden.Contains(cond.Wire("id")));
-        Assert.AreEqual(2, frame.Views.Count);
+        Assert.AreEqual(3, frame.Views.Count, "the call, its Get and the if");
         Assert.IsTrue(frame.Views[@if.Wire("id")].Q("in:cond").Q<Toggle>("ticked").value, "a tick is its control");
         // Typing nothing takes it away again, and the input says "pick…"
         frame.TypeInto(@if, new WirePath("cond"), "", frame.Views[@if.Wire("id")]);
@@ -1174,26 +1197,41 @@ public class GraphTests
         Assert.IsNull(window.Doc.Find(cond.Wire("id")), "what was typed is gone with it");
         Assert.AreEqual("pick…", frame.Views[@if.Wire("id")].Q("in:cond").Q<Button>("pick").text);
         Assert.AreEqual("bool", frame.Wanted(@if, new WirePath("cond")), "a condition takes true or false");
-        // A path typed is a node for each part in the file, and one chip on the board; a '-' before a number is
-        // a node of its own too, as tidec writes it
+        // A path typed is a Get for each part, left to right before the input (Get count, its digits, their first),
+        // wired; the Get that was there stays, unwired, as Blueprint leaves it. A '-' before a number is a node of
+        // its own in the file, as tidec writes it, typed in the input.
         frame.TypeInto(call, new WirePath("args", 0), "count.digits.first", frame.Views[eval.Wire("id")]);
         var leaf = GraphDocument.NodeIn(graph, call.Arr("args").Items[0].Number > 0 ? (int)call.Arr("args").Items[0].Number : 0);
         Assert.AreEqual("member", leaf.Str("k"));
         Assert.AreEqual("first", leaf.Str("member"));
-        Assert.AreEqual("digits", GraphDocument.NodeIn(graph, leaf.Wire("object")).Str("member"));
-        Assert.AreEqual("count", GraphDocument.NodeIn(graph, GraphDocument.NodeIn(graph, leaf.Wire("object")).Wire("object")).Str("name"));
-        Assert.IsNull(window.Doc.Find(read.Wire("id")), "what was in the input went with it");
-        Assert.AreEqual("count.digits.first", frame.TextOf(frame.ShownIn(leaf.Wire("id"))));
-        CollectionAssert.AreEqual(new[] { "count", ".digits", ".first" }, frame.Views[eval.Wire("id")].Q("in:args.0").Q("chip").Query<Button>().ToList().Select(b => b.text).ToList());
-        Assert.AreEqual(2, frame.Views.Count, "none of it is a node on the board");
+        var digits = GraphDocument.NodeIn(graph, leaf.Wire("object"));
+        Assert.AreEqual("digits", digits.Str("member"));
+        var counted = GraphDocument.NodeIn(graph, digits.Wire("object"));
+        Assert.AreEqual("count", counted.Str("name"));
+        Assert.IsNotNull(window.Doc.Find(read.Wire("id")), "the Get that was there stays");
+        Assert.IsTrue(frame.Views[read.Wire("id")].ClassListContains("tg-node--unreached"), "read by nothing, it's faded");
+        Assert.IsNull(frame.ShownIn(leaf.Wire("id")), "a variable's field is no chip");
+        foreach (var part in new[] { counted, digits, leaf }) Assert.IsTrue(frame.Views[part.Wire("id")].ClassListContains("tg-get"), part.Str("member") ?? part.Str("name"));
+        Assert.Less(counted.Get("x").Number, digits.Get("x").Number, "left to right");
+        Assert.Less(digits.Get("x").Number, leaf.Get("x").Number);
+        Assert.Less(leaf.Get("x").Number, eval.Get("x").Number, "before the input");
+        Assert.AreEqual(GraphNodeView.TargetWord, frame.Views[digits.Wire("id")].Q("in:object").Q<PortView>().Port.Label, "a field's Target pin");
+        Assert.AreSame(frame.Views[counted.Wire("id")].DataOut, frame.SourcePin(digits.Wire("object")), "wired from the Get of count");
+        Assert.AreEqual(6, frame.Views.Count, "the call, the if, the Get that was there and the three");
         var nodes = GraphDocument.Nodes(graph).Items.Count;
         frame.TypeInto(call, new WirePath("args", 0), "-3", frame.Views[eval.Wire("id")]);
         var minus = GraphDocument.NodeIn(graph, call.Arr("args").Items[0].Number > 0 ? (int)call.Arr("args").Items[0].Number : 0);
         Assert.AreEqual("unary", minus.Str("k"));
         Assert.AreEqual("-", minus.Str("op"));
         Assert.AreEqual("3", GraphDocument.NodeIn(graph, minus.Wire("value")).Str("text"));
-        Assert.AreEqual(nodes - 1, GraphDocument.Nodes(graph).Items.Count, "the three of the path went, and two came");
+        Assert.AreEqual(nodes + 2, GraphDocument.Nodes(graph).Items.Count, "the Gets stay, and two came");
         Assert.AreEqual("-3", frame.Views[eval.Wire("id")].Q("in:args.0").Q<TextField>("typed").value);
+        // The Gets read by nothing, deleted
+        board.SelectNode(frame, read.Wire("id"), false);
+        foreach (var part in new[] { counted, digits, leaf }) board.SelectNode(frame, part.Wire("id"), true);
+        board.DeleteSelection();
+        frame = board.Frame(f);
+        Assert.AreEqual(nodes - 2, GraphDocument.Nodes(graph).Items.Count);
         Assert.AreEqual(2, frame.Views.Count);
         // A value two inputs read is a node, wired to both: it has to be seen to be one
         frame.TypeInto(@if, new WirePath("cond"), "false", frame.Views[@if.Wire("id")]);
@@ -1220,9 +1258,11 @@ public class GraphTests
         window.Edit("Read once", () => call.Arr("args").Items.RemoveAt(1), f);
         frame = board.Frame(f);
         Assert.IsTrue(frame.Hidden.Contains(shared), "read by one again, it's in the input again");
-        // The parameter's name typed puts it back
+        // The parameter's name typed puts a Get of it back
         frame.TypeInto(call, new WirePath("args", 0), "count", frame.Views[eval.Wire("id")]);
-        Assert.AreEqual("count", frame.TextOf(frame.ShownIn(call.Arr("args").Items[0].Number > 0 ? (int)call.Arr("args").Items[0].Number : 0)));
+        var again = call.Arr("args").Items[0].Number > 0 ? (int)call.Arr("args").Items[0].Number : 0;
+        Assert.AreEqual("count", GraphDocument.NodeIn(graph, again).Str("name"));
+        Assert.IsTrue(board.Frame(f).Views.ContainsKey(again));
 
         // A wire can't leave its frame, and the board says why
         var g = board.AddDeclaration("function");
@@ -1376,21 +1416,25 @@ public class GraphTests
         GraphShots.Drag(window, GraphShots.Middle(start), GraphShots.Middle(frame.Views[print].ExecIn));
         Assert.AreEqual(print, frame.Graph.Wire("entry"), "a drag from pin to pin wires them");
         yield return GraphShots.Settle(3);
-        // ...and from a parameter's pin to an input: its name in the input, with no node or wire of its own
+        // ...and from a parameter's pin to an input: a Get of it beside the input, wired
         frame = board.Frame(f);
         GraphShots.Drag(window, GraphShots.Middle(frame.Entry.ReadPin("count")), GraphShots.Middle(frame.Views[print].Input("args.0")));
         var call = GraphDocument.NodeIn(frame.Graph, window.Doc.Get(print).Wire("value"));
         var read = GraphDocument.NodeIn(frame.Graph, JValue.AsId(call.Arr("args").Items[0]));
         Assert.IsNotNull(read, "a drag from a parameter's pin to an input reads it");
         Assert.AreEqual("count", read.Str("name"));
-        Assert.IsTrue(frame.Hidden.Contains(read.Wire("id")));
+        Assert.IsTrue(frame.Views.ContainsKey(read.Wire("id")), "a Get");
         yield return GraphShots.Settle(3);
-        // Alt and a click on the input empties it, and the read goes with it
+        // Alt and a click on the input empties it: the wire goes, the Get stays
         frame = board.Frame(f);
         var input = GraphShots.Middle(frame.Views[print].Input("args.0"));
         GraphShots.Mouse(window, EventType.MouseDown, input, 0, EventModifiers.Alt);
         GraphShots.Mouse(window, EventType.MouseUp, input, 0, EventModifiers.Alt);
-        Assert.IsNull(window.Doc.Find(read.Wire("id")), "Alt+click empties the input");
+        Assert.AreEqual(0, JValue.AsId(GraphDocument.NodeIn(frame.Graph, call.Wire("id")).Arr("args").Items[0]), "Alt+click empties the input");
+        Assert.IsNotNull(window.Doc.Find(read.Wire("id")), "and the Get stays");
+        // ...and the Get, deleted
+        board.SelectNode(board.Frame(f), read.Wire("id"), false);
+        board.DeleteSelection();
         yield return GraphShots.Settle(3);
 
         // A wire dropped on nothing in its frame asks what to add for it
@@ -1704,30 +1748,31 @@ public class GraphTests
         GraphNodeView View(int id) => board.Frame(5).Views[id];
         JValue Node(int id) => GraphDocument.NodeIn(board.Frame(5).Graph, id);
 
-        // The ×, on a path: its tooltip says what it does, and so does the chip's
-        var target = View(13).Q("in:target");
+        // The ×, on the Target of what a Set changes (Set phase, its Target a Get of wobble): its tooltip says what
+        // it does; the wire goes, the Get stays
+        var target = View(13).Q("in:object");
+        Assert.IsNull(View(13).Q("in:target"), "what it changes is in its title, no row");
+        Assert.AreEqual("phase", View(13).Q<Button>("changes").text);
         var x = target.Q<Button>("empty");
         Assert.IsNotNull(x, "a filled input has its ×");
-        StringAssert.Contains($"Empty '{GraphSchema.PortLabel("target")}'", x.tooltip);
-        StringAssert.Contains("× empties it", target.Q("chip").tooltip);
+        StringAssert.Contains($"Empty '{GraphNodeView.TargetWord}'", x.tooltip);
         GraphShots.Click(x);
-        Assert.AreEqual(0, Node(13).Wire("target"), "the × empties it");
-        Assert.IsNull(Node(7), "the path's names go with it");
-        Assert.IsNull(Node(8));
-        Assert.IsNotNull(View(13).Q("in:target").Q<Button>("pick"), "it says pick… again");
-        Assert.IsNull(View(13).Q("in:target").Q<Button>("empty"), "an empty input has no ×");
+        Assert.AreEqual(0, Node(8).Wire("object"), "the × empties it");
+        Assert.IsNotNull(Node(7), "the Get wired in stays");
+        Assert.AreEqual(8, Node(13).Wire("target"), "and the Set still changes phase");
+        Assert.IsNull(View(13).Q("in:object").Q<Button>("empty"), "an empty input has no ×");
         Undo.PerformUndo();
         Assert.AreEqual(text, window.Doc.Text, "undone");
 
-        // Delete or Backspace on an input (what the board does with the pointer there): a typed value, a chip
+        // Delete or Backspace on an input (what the board does with the pointer there): a typed value, a wire
         Assert.IsTrue(View(12).EmptyAt(View(12).Q("in:lhs").Q<TextField>("typed")), "Delete on a typed value");
         Assert.AreEqual(0, Node(12).Wire("lhs"));
         Assert.IsNull(Node(9), "the literal goes with it");
         Undo.PerformUndo();
-        Assert.IsTrue(View(12).EmptyAt(View(12).Q("in:rhs").Q("part1")), "Backspace on a part of a path");
+        Assert.IsTrue(View(12).EmptyAt(View(12).Q("in:rhs")), "Backspace on an input with a Get wired in");
         Assert.AreEqual(0, Node(12).Wire("rhs"));
-        Assert.IsNull(Node(10));
-        Assert.IsNull(Node(11));
+        Assert.IsNotNull(Node(11), "the Get stays");
+        Assert.IsNotNull(Node(10));
         Assert.IsFalse(View(12).EmptyAt(View(12).Q("in:rhs")), "nothing to empty: Delete deletes what's selected");
         Undo.PerformUndo();
         Assert.AreEqual(text, window.Doc.Text);
@@ -1746,6 +1791,372 @@ public class GraphTests
         Assert.IsTrue(GraphMenu.ForPin(View(13).Input("value")).First(o => o.Title == "Empty it").Off, "an empty input's Empty it is off");
         Undo.PerformUndo();
         Assert.AreEqual(text, window.Doc.Text);
+        window.Close();
+    }
+
+    // ---------------------------------------------------------------------------------------------------------
+    // Round four: full Blueprint (notes/visual-scripting.md)
+
+    // A variable is a Get node, compact, wired to any number of inputs; what never changes is in the pin; what a Set
+    // changes, read by it alone, is in its title (Set phase, its Target a Get of wobble), and stays a node wired into
+    // "what" when something else reads it too. Hovering a Get lights where its variable comes from and its other Gets.
+    [Test]
+    public void VariablesAreGetsWiredToAnyNumberOfInputs()
+    {
+        NeedTidec();
+        var path = Write("Gets.tidegraph", SpinFile);
+        using var logged = new Logged();
+        var window = TideGraphWindow.Open(path);
+        var board = window.Board;
+        var frame = board.Frame(5);
+        var text = window.Doc.Text;
+        JValue Node(int id) => GraphDocument.NodeIn(board.Frame(5).Graph, id);
+        CollectionAssert.AreEquivalent(new[] { 7, 10, 11, 12, 13, 14, 16, 17, 18 }, frame.Views.Keys, "the Gets, what works out a value, the Sets");
+        CollectionAssert.AreEquivalent(new[] { 8, 9, 15 }, frame.Hidden, "what the Sets change and the number");
+        Assert.AreEqual(8, frame.Titles[13]);
+        Assert.AreEqual(15, frame.Titles[18]);
+        // A Get: no title bar, its name and its pin; a field's with its Target pin on its left
+        var wobble = frame.Views[7];
+        Assert.IsTrue(wobble.ClassListContains("tg-get"));
+        Assert.IsNull(wobble.Q(className: "tg-node-head"), "no title bar");
+        Assert.AreEqual("wobble", wobble.Q<GraphName>("title").Value);
+        Assert.IsNotNull(wobble.DataOut);
+        Assert.AreEqual(new Vector2(48 + 8 * "wobble".Length, 32), GraphNodeView.EstimateOf(Node(7), null, frame), "compact: one row, as tidec's layout measures it");
+        var frequency = frame.Views[11];
+        Assert.IsTrue(frequency.ClassListContains("tg-get"));
+        Assert.AreEqual("frequency", frequency.Q<GraphName>("title").Value);
+        Assert.AreEqual(GraphNodeView.TargetWord, frequency.Q("in:object").Q<PortView>().Port.Label);
+        Assert.AreEqual(GraphNodeView.TargetWord, frequency.Q("in:object").Q<Label>(className: "tg-port-label").text, "its Target pin says so beside it");
+        Assert.AreEqual(new Vector2(48 + 8 * "frequency".Length + 60, 32), GraphNodeView.EstimateOf(Node(11), null, frame));
+        Assert.AreSame(frame.Views[10].DataOut, frame.SourcePin(Node(11).Wire("object")), "its Target wired from a Get of wobble");
+        Assert.AreEqual("1.5", frame.Views[12].Q("in:lhs").Q<TextField>("typed").value, "a number is in the pin");
+        // Set phase: what it changes in its title, what that's a field of its Target
+        var set = frame.Views[13];
+        Assert.AreEqual(GraphSchema.Spec("assign").Title, set.Q<Label>(className: "tg-node-title").text);
+        Assert.AreEqual("phase", set.Q<Button>("changes").text);
+        Assert.IsNull(set.Q("in:target"), "no row for what it changes");
+        Assert.AreEqual(GraphNodeView.TargetWord, set.Q("in:object").Q<Label>(className: "tg-port-label").text);
+        var targetPin = set.Q("in:object").Q<PortView>();
+        Assert.AreEqual(8, targetPin.Port.Node, "the Target is of what it changes");
+        Assert.IsTrue(targetPin.Connected);
+        Assert.AreEqual("=", set.Q("in:value").Q<Button>("op").text, "the operator stays, then the value");
+        // One Get wired to a second input: dragged again from its pin, which keeps its first wire
+        Assert.IsTrue(board.Connect(wobble.DataOut, frame.Views[18].Input("value"), out var why), why);
+        frame = board.Frame(5);
+        Assert.AreEqual(7, Node(18).Wire("value"));
+        Assert.AreEqual(7, Node(8).Wire("object"), "its first wire stays");
+        Assert.AreEqual(2, frame.Readers[7].Count);
+        Assert.IsTrue(frame.Views.ContainsKey(7), "a Get read twice is one node");
+        Assert.AreEqual("system Spin(mut Wobble wobble) {\n    wobble.phase = 1.5 + wobble.frequency;\n    wobble.frequency = wobble;\n}", SystemText(window.Doc));
+        Undo.PerformUndo();
+        Assert.AreEqual(text, window.Doc.Text, "one edit, undone");
+        // Hovering a Get lights the variable's row and its other Gets, not a field's
+        frame = board.Frame(5);
+        frame.Light("wobble", 0, true);
+        foreach (var id in new[] { 7, 10, 14, 16 }) Assert.IsTrue(frame.Views[id].ClassListContains("tg-lit"), $"Get {id} is lit");
+        Assert.IsTrue(frame.Entry.RowOf("wobble").ClassListContains("tg-lit"), "and where it comes from");
+        Assert.IsFalse(frame.Views[11].ClassListContains("tg-lit"), "a field's Get is its own");
+        frame.Light("wobble", 0, false);
+        Assert.IsFalse(frame.Views[7].ClassListContains("tg-lit"));
+        // What a Set changes, read by another node too, is a node of its own, wired into "what"
+        window.Edit("Read it twice", () => Node(12).Set("lhs", JValue.Of(8)), 5);
+        frame = board.Frame(5);
+        Assert.IsFalse(frame.Titles.ContainsKey(13));
+        Assert.IsTrue(frame.Views.ContainsKey(8), "a Get of phase");
+        Assert.IsNotNull(frame.Views[13].Q("in:target"), "wired into what the Set changes");
+        Assert.AreSame(frame.Views[8].DataOut, frame.SourcePin(8));
+        Assert.IsNull(frame.Views[13].Q<Button>("changes"));
+        Undo.PerformUndo();
+        Assert.AreEqual(text, window.Doc.Text);
+        // The name in its title opens the picker of what can be changed
+        GraphShots.Click(board.Frame(5).Views[13].Q<Button>("changes"));
+        var picker = window.Popup as GraphValuePicker;
+        Assert.IsNotNull(picker, "a click on what a Set changes picks something else");
+        Assert.AreEqual("What does it change?", picker.Title);
+        window.ClosePopup(picker);
+        Assert.AreEqual(text, window.Doc.Text, "looking changes nothing");
+        window.Close();
+    }
+
+    // The system's lines as tidec writes them
+    static string SystemText(GraphDocument doc)
+    {
+        var lines = Lower(doc).Split('\n').ToList();
+        var start = lines.FindIndex(l => l.StartsWith("system "));
+        var end = lines.FindIndex(start, l => l == "}");
+        return string.Join("\n", lines.Skip(start).Take(end - start + 1));
+    }
+
+    // A method's object is its Target pin; a call on a type or a namespace says it beneath its name, as Blueprint's
+    // "Target is Math": Clamp, with Math under it. `this` is "self".
+    [Test]
+    public void CallsSayWhatTheyreOf()
+    {
+        NeedTidec();
+        var b = new Body("float");
+        b.Function.Arr("params").Items.Add(b.Doc.NewParam("Ball", "ball"));
+        var clamp = b.N("method", "object", b.N("name", "name", "Math"), "name", "Clamp", "args", new[] { b.N("float", "text", "1.5"), b.N("int", "text", "0"), b.N("int", "text", "1") });
+        var bounce = b.N("method", "object", b.N("name", "name", "ball"), "name", "Bounce", "args", new[] { b.N("this") });
+        var first = b.N("eval", "value", bounce);
+        var ret = b.N("return", "value", clamp);
+        b.Run(first, ret);
+        b.Doc.Reindex();
+        var path = Write("Calls.tidegraph", b.Doc.Text);
+        using var logged = new Logged();
+        var window = TideGraphWindow.Open(path);
+        var frame = window.Board.Frame(b.Function.Wire("id"));
+        var math = frame.Views[clamp];
+        Assert.AreEqual("Clamp", math.Q<GraphName>("title").Value);
+        Assert.AreEqual("Math", math.Q(className: "tg-node-sub").Q("chip").Q<Button>("part0").text, "what it's of, beneath its name");
+        Assert.IsNull(math.Q("in:object"), "and no Target row");
+        var ball = frame.ViewOf(bounce);
+        Assert.AreEqual("Bounce", ball.Q<GraphName>("title").Value);
+        Assert.IsNull(ball.Q(className: "tg-node-sub"));
+        Assert.AreEqual(GraphNodeView.TargetWord, ball.Q("in:object").Q<Label>(className: "tg-port-label").text, "a value's method: its Target pin");
+        Assert.AreSame(frame.Views[b.Node(bounce).Wire("object")].DataOut, frame.SourcePin(b.Node(bounce).Wire("object")), "wired from a Get of ball");
+        Assert.AreEqual(GraphFrame.SelfWord, ball.Q("in:args.0").Q("chip").Q<Button>("part0").text, "this is self");
+        Assert.AreEqual("float F(Ball ball) {", Lower(window.Doc).Split('\n')[0]);
+        StringAssert.Contains("ball.Bounce(this);\n    return Math.Clamp(1.5, 0, 1);", Lower(window.Doc));
+        window.Close();
+    }
+
+    // A local's Set is titled by it too (Set speed), its name opening the picker of what can be changed, lit with the
+    // node that declares it; a Get of it elsewhere keeps it a node
+    [Test]
+    public void ALocalsSetIsTitledByIt()
+    {
+        NeedTidec();
+        var b = new Body();
+        var speed = b.N("var", "mut", true, "type", "float", "name", "speed", "value", b.N("float", "text", "1.5"));
+        var set = b.N("assign", "op", "+=", "target", b.N("local", "ref", speed), "value", b.N("int", "text", "2"));
+        b.Run(speed, set);
+        b.Doc.Reindex();
+        var path = Write("LocalSet.tidegraph", b.Doc.Text);
+        using var logged = new Logged();
+        var window = TideGraphWindow.Open(path);
+        var frame = window.Board.Frame(b.Function.Wire("id"));
+        var target = b.Node(set).Wire("target");
+        Assert.AreEqual(target, frame.Titles[set], "a local read by the Set alone is in its title");
+        Assert.IsTrue(frame.Hidden.Contains(target));
+        var view = frame.Views[set];
+        Assert.AreEqual("speed", view.Q<Button>("changes").text, "Set speed");
+        Assert.IsNull(view.Q("in:target"));
+        Assert.IsNull(view.Q("in:object"), "a local has no Target");
+        frame.Light(null, speed, true);
+        Assert.IsTrue(frame.Views[speed].LocalRowOf(speed).ClassListContains("tg-lit"), "lit with where it's declared");
+        frame.Light(null, speed, false);
+        GraphShots.Click(view.Q<Button>("changes"));
+        var picker = window.Popup as GraphValuePicker;
+        Assert.IsNotNull(picker);
+        Assert.AreEqual("What does it change?", picker.Title);
+        window.ClosePopup(picker);
+        StringAssert.Contains("mut float speed = 1.5;\n    speed += 2;", Lower(window.Doc));
+        // Renamed where it's declared, the title follows
+        window.Edit("Rename", () => GraphDocument.NodeIn(frame.Graph, speed).Set("name", JValue.Of("pace")), b.Function.Wire("id"));
+        Assert.AreEqual("pace", window.Board.Frame(b.Function.Wire("id")).Views[set].Q<Button>("changes").text);
+        window.Close();
+    }
+
+    // A reroute: a knot put on a data wire (double-clicking it, or "Add a reroute" in its menu), wired from what the
+    // wire came from and into what it went to; its value goes to any number of inputs; deleting it joins its input to
+    // all its readers, in one edit; tidec lowers it to what's wired into it
+    [Test]
+    public void ARerouteIsAKnotOnAWire()
+    {
+        NeedTidec();
+        var path = Write("Knot.tidegraph", SpinFile);
+        using var logged = new Logged();
+        var window = TideGraphWindow.Open(path);
+        var board = window.Board;
+        var text = window.Doc.Text;
+        JValue Node(int id) => GraphDocument.NodeIn(board.Frame(5).Graph, id);
+        // From the wire's menu: the Get of frequency into the sum
+        var frame = board.Frame(5);
+        var wire = new FrameWires.Wire { From = 11, Reader = 12, Path = new WirePath("rhs") };
+        var menu = GraphMenu.ForWire(frame, wire, new Vector2(200, 300)).Where(o => !o.Separator).ToList();
+        CollectionAssert.AreEqual(new[] { GraphMenu.RerouteWord, "Break this link" }, menu.Select(o => o.Title));
+        menu[0].Pick();
+        frame = board.Frame(5);
+        var knot = Node(12).Wire("rhs");
+        Assert.AreNotEqual(11, knot);
+        Assert.AreEqual("reroute", Node(knot).Str("k"));
+        Assert.AreEqual(11, Node(knot).Wire("value"), "wired from what the wire came from");
+        var view = frame.Views[knot];
+        Assert.IsTrue(view.ClassListContains("tg-knot"));
+        Assert.AreSame(frame.Views[11].DataOut, frame.SourcePin(11));
+        Assert.AreSame(view.DataOut, frame.SourcePin(knot), "and into what it went to");
+        Assert.IsTrue(board.Nodes.Contains(knot), "selected, to be dragged");
+        // Its value fans out
+        Assert.IsTrue(board.Connect(view.DataOut, frame.Views[18].Input("value"), out var why), why);
+        Assert.AreEqual(knot, Node(18).Wire("value"));
+        Assert.AreEqual("system Spin(mut Wobble wobble) {\n    wobble.phase = 1.5 + wobble.frequency;\n    wobble.frequency = wobble.frequency;\n}", SystemText(window.Doc), "a knot is what's wired into it");
+        // Dragged like a node
+        var at = GraphDocument.PlaceOf(Node(knot));
+        board.MoveNodesBy(board.Frame(5), new[] { knot }, new Vector2(40, 20));
+        Assert.AreEqual(at + new Vector2(40, 20), GraphDocument.PlaceOf(Node(knot)));
+        // Deleted: what it passed on goes straight to all its readers, one edit
+        var before = window.Doc.Text;
+        board.SelectNode(board.Frame(5), knot, false);
+        board.DeleteSelection();
+        Assert.IsNull(Node(knot));
+        Assert.AreEqual(11, Node(12).Wire("rhs"), "joined to the sum");
+        Assert.AreEqual(11, Node(18).Wire("value"), "and to the Set");
+        Undo.PerformUndo();
+        Assert.AreEqual(before, window.Doc.Text, "undone as one");
+        Undo.PerformUndo();
+        Undo.PerformUndo();
+        Undo.PerformUndo();
+        Assert.AreEqual(text, window.Doc.Text);
+        window.Close();
+    }
+
+    // "Keep it as a local" (Blueprint's Promote to Variable), in a worked-out node's value pin's menu: a Local just
+    // before the first step that reads it, in the scope every reader is in, its value the node, and Gets of it where
+    // the node's wires went: one edit, undone as one, lowering to Tide where it's worked out once
+    [Test]
+    public void AWorkedOutValueIsKeptAsALocal()
+    {
+        NeedTidec();
+        var path = Write("Keep.tidegraph", SpinFile);
+        using var logged = new Logged();
+        var window = TideGraphWindow.Open(path);
+        var board = window.Board;
+        var text = window.Doc.Text;
+        JValue Node(int id) => GraphDocument.NodeIn(board.Frame(5).Graph, id);
+        var frame = board.Frame(5);
+        // Offered on what's worked out, not on a Get
+        Assert.IsTrue(GraphMenu.ForPin(frame.Views[12].DataOut).Any(o => o.Title == GraphMenu.KeepLocalWord), "the sum's pin");
+        Assert.IsFalse(GraphMenu.ForPin(frame.Views[7].DataOut).Any(o => o.Title == GraphMenu.KeepLocalWord), "a Get's is a variable already");
+        // Read by both Sets
+        Assert.IsTrue(board.Connect(frame.Views[12].DataOut, board.Frame(5).Views[18].Input("value"), out var why), why);
+        var wired = window.Doc.Text;
+        GraphMenu.ForPin(board.Frame(5).Views[12].DataOut).First(o => o.Title == GraphMenu.KeepLocalWord).Pick();
+        frame = board.Frame(5);
+        var local = frame.Graph.Wire("entry");
+        Assert.AreEqual("var", Node(local).Str("k"), "declared before the first that reads it");
+        Assert.AreEqual(13, Node(local).Wire("next"));
+        Assert.AreEqual(12, Node(local).Wire("value"), "its value the node");
+        var name = Node(local).Str("name");
+        foreach (var set in new[] { 13, 18 })
+        {
+            var get = Node(Node(set).Wire("value"));
+            Assert.AreEqual("local", get.Str("k"), $"Set {set} reads a Get of it");
+            Assert.AreEqual(local, get.Wire("ref"));
+            Assert.IsTrue(frame.Views.ContainsKey(get.Wire("id")));
+        }
+        Assert.AreEqual($"system Spin(mut Wobble wobble) {{\n    var {name} = 1.5 + wobble.frequency;\n    wobble.phase = {name};\n    wobble.frequency = {name};\n}}", SystemText(window.Doc));
+        Undo.PerformUndo();
+        Assert.AreEqual(wired, window.Doc.Text, "one edit, undone as one");
+        Undo.PerformUndo();
+        Assert.AreEqual(text, window.Doc.Text);
+        window.Close();
+
+        // Read in an if's code and after it: declared before the if, where both can read it
+        var b = new Body();
+        b.Function.Arr("params").Items.Add(b.Doc.NewParam("int", "a"));
+        var sum = b.N("binary", "op", "+", "lhs", b.N("name", "name", "a"), "rhs", b.N("int", "text", "1"));
+        var inner = b.N("eval", "value", b.N("call", "name", "Print", "args", new[] { sum }));
+        var @if = b.N("if", "cond", b.N("bool", "value", true), "then", inner);
+        var after = b.N("eval", "value", b.N("call", "name", "Print", "args", new[] { sum }));
+        b.Run(@if, after);
+        b.Doc.Reindex();
+        path = Write("KeepScoped.tidegraph", b.Doc.Text);
+        window = TideGraphWindow.Open(path);
+        frame = window.Board.Frame(b.Function.Wire("id"));
+        Assert.IsTrue(frame.CanKeepAsLocal(sum));
+        var made = frame.KeepAsLocal(sum);
+        Assert.AreNotEqual(0, made);
+        StringAssert.Contains("void F(int a) {\n    var value = a + 1;\n    if (true) {\n        Print(value);\n    }\n    Print(value);\n}", Lower(window.Doc));
+        window.Close();
+    }
+
+    // My game lists the selected code's Variables (what it takes, its locals); one dragged onto its code asks "Get
+    // <name>" or "Set <name>" (only a Get of what's only read), Ctrl making a Get and Alt a Set at once
+    [Test]
+    public void MyGameListsTheVariablesToGetAndSet()
+    {
+        NeedTidec();
+        var doc = ScaleFile(out _, out _, out var system, out _, out var set, out var local);
+        var path = Write("Vars.tidegraph", doc.Text);
+        using var logged = new Logged();
+        var window = TideGraphWindow.Open(path);
+        window.ShowMyGame(true);
+        var board = window.Board;
+        var mine = window.MyGame;
+        board.ClearSelection();
+        Assert.IsNull(mine.VariablesOf, "nothing selected: no code's variables");
+        StringAssert.Contains("Select some code", mine.Q("variables").parent.Query<Label>(className: "tg-empty").First().text);
+        board.SelectNode(board.Frame(system), set, false);
+        Assert.AreSame(board.Frame(system), mine.VariablesOf, "the selected node's code");
+        CollectionAssert.AreEqual(new[] { "testFromGraph", "transform", "scale" }, mine.VariablesShown.Select(v => v.title), "what it takes, then its locals");
+        // Dropped on its code: Get or Set, asked
+        var frame = board.Frame(system);
+        Vector2 Panel(Vector2 inFrame) => board.LocalToWorld(board.ToBoard(frame.At + inFrame));
+        var transform = mine.VariablesShown.First(v => v.title == "transform").parts;
+        var asked = board.GetOrSet(frame, transform, new Vector2(frame.Size.x - 120, frame.Size.y - 60), false, false);
+        Assert.IsNotNull(asked, "a drop on its code asks");
+        CollectionAssert.AreEqual(new[] { "Get transform", "Set transform" }, asked.Shown.Select(o => o.Title));
+        Assert.IsTrue(asked.Pick("Set transform"));
+        frame = board.Frame(system);
+        var made = frame.Views.Values.Last(v => v.Node.Str("k") == "assign");
+        Assert.AreNotEqual(set, made.Id);
+        Assert.AreEqual("transform", made.Q<Button>("changes").text, "Set transform");
+        Assert.IsTrue(board.Nodes.Contains(made.Id));
+        Undo.PerformUndo();
+        // What's only read: a Get alone (the undo read the file again: its code is selected again)
+        board.SelectNode(board.Frame(system), set, false);
+        frame = board.Frame(system);
+        var read = mine.VariablesShown.First(v => v.title == "testFromGraph").parts;
+        asked = board.GetOrSet(frame, read, new Vector2(frame.Size.x - 120, frame.Size.y - 60), false, false);
+        Assert.IsTrue(asked.Shown.First(o => o.Title == "Set testFromGraph").Off, "it's only read here");
+        StringAssert.Contains(GraphSchema.ParamModeInfo("mut").Label, asked.Shown.First(o => o.Title == "Set testFromGraph").Help, "and how to change that");
+        window.ClosePopup(asked);
+        Assert.IsNull(board.GetOrSet(frame, read, new Vector2(frame.Size.x - 120, frame.Size.y - 60), false, true), "Alt: a Set, refused");
+        StringAssert.Contains("taken to be read", window.LastSaid);
+        // Ctrl: a Get at once, where it's dropped
+        var count = GraphDocument.Nodes(board.Frame(system).Graph).Items.Count;
+        board.GetOrSet(board.Frame(system), read, new Vector2(frame.Size.x - 120, frame.Size.y - 60), true, false);
+        frame = board.Frame(system);
+        Assert.AreEqual(count + 1, GraphDocument.Nodes(frame.Graph).Items.Count);
+        var get = frame.Views.Values.Single(v => v.Node.Str("k") == "name" && v.Node.Str("name") == "testFromGraph");
+        Assert.IsTrue(get.ClassListContains("tg-get"));
+        // A local, and elsewhere than its code: said why
+        board.DropVariable(frame, mine.VariablesShown.First(v => v.title == "scale").parts, Panel(new Vector2(-400, -200)), true, false);
+        StringAssert.Contains("drop it in that frame", window.LastSaid);
+        window.Close();
+    }
+
+    // A wire dragged from an input asks what goes there with the variables of the type it takes first
+    [Test]
+    public void AWireFromAnInputListsItsTypesVariablesFirst()
+    {
+        var b = new Body();
+        var count = b.Doc.NewParam("int", "count");
+        count.Set("mode", JValue.Of("mut"));
+        b.Function.Arr("params").Items.Add(b.Doc.NewParam("float", "speed"));
+        b.Function.Arr("params").Items.Add(count);
+        var set = b.N("assign", "op", "=", "target", b.N("name", "name", "count"));
+        b.Run(set);
+        b.Doc.Reindex();
+        var path = Write("FromInput.tidegraph", b.Doc.Text);
+        using var logged = new Logged();
+        var window = TideGraphWindow.Open(path);
+        var frame = window.Board.Frame(b.Function.Wire("id"));
+        Assert.AreEqual("int", frame.Wanted(b.Node(set), new WirePath("value")));
+        var search = window.Board.OpenSearch(frame, new Vector2(100, 200), frame.Views[set].Input("value").Port);
+        var gets = search.Entries.Where(e => e.Reads).Select(e => e.Title).ToList();
+        CollectionAssert.AreEqual(new[] { "Get count", "Get speed" }, gets, "an int's first");
+        Assert.AreEqual("Get count", search.Entries[0].Title);
+        Assert.IsTrue(search.Pick("Get count"));
+        var graph = window.Board.Frame(b.Function.Wire("id")).Graph;
+        var get = GraphDocument.Nodes(graph).Items.Last();
+        Assert.AreEqual("name", get.Str("k"));
+        Assert.AreEqual("count", get.Str("name"));
+        Assert.AreEqual(get.Wire("id"), GraphDocument.NodeIn(graph, set).Wire("value"), "a Get wired in");
+        // The catalog offers a Set of what can be changed, titled by it
+        var steps = window.Board.OpenSearch(window.Board.Frame(b.Function.Wire("id")), new Vector2(400, 60), null);
+        Assert.IsTrue(steps.Entries.Any(e => e.Title == "Set count" && e.Statement));
+        Assert.IsFalse(steps.Entries.Any(e => e.Title == "Set speed"), "what's only read can't be set");
         window.Close();
     }
 
@@ -1768,6 +2179,10 @@ public class GraphTests
             window.Close();
             Assert.Ignore("The window isn't laid out without a graphics device (-nographics): the pointer has nothing to land on. Run it with one, on a desktop of its own.");
         }
+        // The Set on screen, the Gets beside it taking room now
+        window.Reveal(13);
+        board.ClearSelection();
+        yield return GraphShots.Settle(4);
         var text = window.Doc.Text;
         var frame = board.Frame(5);
         var zoom = board.Zoom;
@@ -1778,7 +2193,8 @@ public class GraphTests
         // From its title to 60 left of and 40 above where the frame's nodes start (the file's places start at 0)
         var corner = frame.Origin;
         var by = (new Vector2(corner.x - 60, corner.y - 40) - set.Shown) * zoom;
-        var head = new Vector2(set.worldBound.x + 40, set.worldBound.y + 10);
+        // By its title's word: the name beside it is a button (what it changes)
+        var head = GraphShots.Middle(set.Q<Label>(className: "tg-node-title"));
         var setWas = set.worldBound.position;
         GraphShots.Drag(window, head, head + by);
         yield return GraphShots.Settle(3);
@@ -1791,14 +2207,36 @@ public class GraphTests
         Undo.PerformUndo();
         Assert.AreEqual(text, window.Doc.Text, "one edit, undone");
         yield return GraphShots.Settle(3);
-        // Delete with the pointer on a chip: it's emptied, and the selected node isn't deleted
+        // Delete with the pointer on an input: it's emptied, and the selected node isn't deleted
         frame = board.Frame(5);
         board.SelectNode(frame, 13, false);
-        GraphShots.Mouse(window, EventType.MouseMove, GraphShots.Middle(frame.Views[12].Q("in:rhs").Q("chip")));
+        GraphShots.Mouse(window, EventType.MouseMove, GraphShots.Middle(frame.Views[12].Q("in:rhs").Q<Label>(className: "tg-port-label")));
         GraphShots.Press(window, KeyCode.Delete);
         frame = board.Frame(5);
         Assert.AreEqual(0, GraphDocument.NodeIn(frame.Graph, 12).Wire("rhs"), "Delete empties the input under the pointer");
         Assert.IsNotNull(GraphDocument.NodeIn(frame.Graph, 13), "and deletes nothing selected");
+        Undo.PerformUndo();
+        Assert.AreEqual(text, window.Doc.Text);
+        yield return GraphShots.Settle(4);
+
+        // A data wire under the pointer is lit; a double click on it puts a reroute there, and a right click opens
+        // its menu
+        frame = board.Frame(5);
+        var wire = frame.Wires.Drawn.FirstOrDefault(w => w.Reader == 12 && w.Path.ToString() == "rhs");
+        Assert.IsNotNull(wire, "the wire into the sum is drawn");
+        var on = board.LocalToWorld(board.ToBoard(frame.At + wire.Points[wire.Points.Length / 2]));
+        GraphShots.Mouse(window, EventType.MouseMove, on);
+        Assert.IsNotNull(frame.Wires.Hot, "the wire under the pointer is lit");
+        GraphShots.Click(window, on, 1);
+        var wireMenu = window.Popup as GraphOptionList;
+        Assert.IsNotNull(wireMenu, "a right click on a wire opens its menu");
+        Assert.AreEqual(GraphMenu.RerouteWord, wireMenu.Shown[0].Title);
+        GraphShots.Press(window, KeyCode.Escape);
+        GraphShots.DoubleClick(window, on);
+        var knot = GraphDocument.NodeIn(board.Frame(5).Graph, GraphDocument.NodeIn(board.Frame(5).Graph, 12).Wire("rhs"));
+        Assert.AreEqual("reroute", knot?.Str("k"), "a double click on a wire puts a knot on it");
+        Assert.AreEqual(11, knot.Wire("value"));
+        yield return GraphShots.Take(window, "80-a-reroute-by-a-double-click");
         Undo.PerformUndo();
         Assert.AreEqual(text, window.Doc.Text);
         window.Close();
