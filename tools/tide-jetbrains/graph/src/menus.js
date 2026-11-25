@@ -190,6 +190,7 @@
             if (p.input && !p.exec) {
                 add('Pick a value…', () => f.pickValue(p, row), { name: 'pick' });
                 add('Work it out…', () => f.pickValue(p, row, { work: true }), { name: 'work' });
+                add('Empty it', () => f.emptyInput(p), { name: 'empty', hint: KEY.delete, disabled: !f.wireOf(p), why: 'Nothing is in it' });
             } else if (!p.input && !p.exec) {
                 add('Use it in a new node…', () => G.pickers.nodeSearch(app, f, x, y, { from: p }), { name: 'use' });
             } else if (!p.input && p.exec) {

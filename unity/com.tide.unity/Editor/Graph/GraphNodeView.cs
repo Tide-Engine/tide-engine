@@ -336,6 +336,7 @@ namespace Tide.Editor
             argLabels.Clear();
             argGrowers.Clear();
             localRows.Clear();
+            inputs.Clear();
             titled = null;
         }
 
@@ -349,7 +350,31 @@ namespace Tide.Editor
             chip.style.borderRightColor = edge;
             chip.style.borderTopColor = edge;
             chip.style.borderBottomColor = edge;
-            if (!string.IsNullOrEmpty(type)) chip.tooltip = type + "\nClick to change it.";
+            if (!string.IsNullOrEmpty(type)) chip.tooltip = type + "\n" + ChangeIt;
+        }
+
+        // What a filled input's value says under the pointer
+        internal const string ChangeIt = "Click to change it; × empties it.";
+
+        // The × of a filled input, seen while the pointer is on it: empties it (Delete or Backspace there does too)
+        VisualElement EmptyButton(JValue owner, WirePath path, string label)
+        {
+            var what = string.IsNullOrEmpty(label) ? "it" : $"'{label}'";
+            var b = GraphLook.IconButton("close", $"Empty {what}: what's in it goes, a node wired in stays (Delete does it too)", () => Frame.Empty(owner, path, LabelOf(Window.Checked, owner, path, label)), "tg-empty-x");
+            b.name = "empty";
+            return b;
+        }
+
+        // The inputs drawn on it, by their rows (and what's in them): Delete or Backspace with the pointer on one
+        // empties it
+        readonly Dictionary<VisualElement, (JValue owner, WirePath path, string label)> inputs = new Dictionary<VisualElement, (JValue, WirePath, string)>();
+
+        // Empties the input whose row (or value) holds `target`, when one does and something is in it
+        internal bool EmptyAt(VisualElement target)
+        {
+            for (var e = target; e != null && e != this; e = e.parent)
+                if (inputs.TryGetValue(e, out var input)) return Frame.Empty(input.owner, input.path, input.label);
+            return false;
         }
 
         // What an input is called: an argument by its callee's parameter (the last check's), a single input by the
@@ -419,7 +444,13 @@ namespace Tide.Editor
                 return pick;
             }
             var k = shown.Str("k");
-            if (GraphSchema.Inline(k) == GraphSchema.InlineNumbers) return Numbers(shown, label, at => Open(at));
+            if (GraphSchema.Inline(k) == GraphSchema.InlineNumbers)
+            {
+                var numbers = Numbers(shown, label, at => Open(at));
+                numbers.Add(EmptyButton(owner, path, label));
+                inputs[numbers] = (owner, path, label);
+                return numbers;
+            }
             if (k == "bool" || k == "int" || k == "float" || k == "string" || k == "char" || k == "unary")
             {
                 // A value typed: its own control, and a way to something else
@@ -445,6 +476,8 @@ namespace Tide.Editor
                 var other = GraphLook.IconButton("down", "Pick something else: a name, a field, something worked out", () => Open(box), "tg-on-hover");
                 other.name = "other";
                 box.Add(other);
+                box.Add(EmptyButton(owner, path, label));
+                inputs[box] = (owner, path, label);
                 return box;
             }
             // A name, or a path from one: each part is clicked to change it from there on
@@ -468,7 +501,7 @@ namespace Tide.Editor
             }
             Chips.Add((shown.Wire("id"), chip));
             var note = string.Join("\n", parts.Select(p => p.Str("comment")).Where(c => !string.IsNullOrEmpty(c)));
-            chip.tooltip = (note.Length > 0 ? note + "\n" : "") + "Click to change it.";
+            chip.tooltip = (note.Length > 0 ? note + "\n" : "") + ChangeIt;
             Tint(chip, Frame.TypeAt(shown.Wire("id")), Frame.Board.Light);
             // What it reads is lit with it: the parameter's row, the node that declares the local, its other reads
             var root = parts[0];
@@ -479,7 +512,12 @@ namespace Tide.Editor
                 chip.RegisterCallback<PointerEnterEvent>(_ => Frame.Light(key.name, key.local, true));
                 chip.RegisterCallback<PointerLeaveEvent>(_ => Frame.Light(key.name, key.local, false));
             }
-            return chip;
+            // Its × beside it: the chip's buttons are its parts
+            var with = GraphLook.Row("tg-value-with");
+            with.Add(chip);
+            with.Add(EmptyButton(owner, path, label));
+            inputs[with] = (owner, path, label);
+            return with;
         }
 
         // A vector or a colour made of numbers alone, in the input: the type's own control (the schema's
@@ -896,16 +934,23 @@ namespace Tide.Editor
             {
                 if (e.button != 0 || !e.altKey || Frame.WireAt(owner, emptied) == 0) return;
                 e.StopPropagation();
-                Frame.Edit("Empty " + label, () => Frame.SetWire(owner, emptied, 0, out _));
+                Frame.Empty(owner, emptied, label);
             }, TrickleDown.TrickleDown);
 
+            inputs[row] = (owner, p.Path, label);
             if (!noValue)
             {
                 var value = ValueOf(owner, p.Path, label);
                 if (value != null) row.Add(value);
+                // A wire from a node: its × at the row's end
+                else if (from != 0)
+                {
+                    row.Add(new VisualElement { style = { flexGrow = 1 } });
+                    row.Add(EmptyButton(owner, p.Path, label));
+                }
             }
-            // One of a list that grows: taken away from its row
-            if (p.Group != null && (spec?.Lists.Any(l => l.Key == p.Path.Key) == true || spec?.Map == p.Path.Key || items != null))
+            // One of a list that grows: taken away from its row once it's empty (the × of what's in it empties it)
+            if (from == 0 && p.Group != null && (spec?.Lists.Any(l => l.Key == p.Path.Key) == true || spec?.Map == p.Path.Key || items != null))
             {
                 var port = p;
                 row.Add(new VisualElement { style = { flexGrow = 1 } });

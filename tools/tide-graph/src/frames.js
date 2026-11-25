@@ -108,6 +108,60 @@
             return (Array.isArray(v.params) ? v.params.length : 0) + (Array.isArray(v.payload) ? v.payload.length : 0) + (v.trigger ? 1 : 0) + ('returnType' in v ? 1 : 0);
         }
 
+        // Where the body's (0, 0) is, as estimateSize has it, with the nodes and notes being dragged where they are
+        // now (`places`)
+        originNow() {
+            const g = this.graph;
+            let x0 = 0, y0 = 0, first = true;
+            const take = (id, x, y) => {
+                const p = this.places.get(id);
+                const px = p ? p.x : Number(x) || 0, py = p ? p.y : Number(y) || 0;
+                if (first || px < x0) x0 = px;
+                if (first || py < y0) y0 = py;
+                first = false;
+            };
+            for (const n of g ? Doc.nodes(g) : []) if (this.drawn(n)) take(n.id, n.x, n.y);
+            for (const note of g?.notes || []) take(note.id, note.x, note.y);
+            return this.isValue ? { x: first ? 0 : x0, y: first ? 0 : y0 } : { x: Math.min(0, x0), y: Math.min(0, y0) };
+        }
+
+        // While nodes are dragged: the frame grows toward them on every side. Left and up, its own place on the
+        // board moves by as much as it grows, so what isn't dragged stays where it's seen and the entry stays at its
+        // corner; right and down it grows around them. Gives whether its place changed.
+        followMove() {
+            const o = this.originNow();
+            const dx = o.x - this.origin.x, dy = o.y - this.origin.y;
+            if (dx || dy) {
+                this.origin = o;
+                this.x += dx;
+                this.y += dy;
+                this.el.style.left = this.x + 'px';
+                this.el.style.top = this.y + 'px';
+            }
+            // Its size around them from what was measured (a pin's place on its node doesn't change), without
+            // measuring every pin again on each move
+            let right = 0, bottom = 0;
+            for (const v of this.views.values()) {
+                if (!v.fixed && v.node && v.node.id !== ENTRY && v.node.id !== RESULT) {
+                    v.left = this.dx(v.node);
+                    v.top = this.dy(v.node);
+                    v.el.style.left = v.left + 'px';
+                    v.el.style.top = v.top + 'px';
+                }
+                if (v.w !== undefined) {
+                    right = Math.max(right, v.left + v.w);
+                    bottom = Math.max(bottom, v.top + v.h);
+                }
+            }
+            const w = Math.max(this.isValue ? 300 : MIN_W, right + BOTTOM), h = Math.max(this.isValue ? 130 : MIN_H, bottom + BOTTOM);
+            if (w !== this.size.w || h !== this.size.h) {
+                this.size = { w, h };
+                this.el.style.width = w + 'px';
+                this.body.style.height = h + 'px';
+            }
+            this.drawWires();
+        }
+
         // Where a node is drawn in the body
         dx(n) { return this.nodeX + (this.places.get(n.id)?.x ?? Number(n.x) ?? 0) - this.origin.x; }
         dy(n) { return PAD + (this.places.get(n.id)?.y ?? Number(n.y) ?? 0) - this.origin.y; }
@@ -626,7 +680,7 @@
                 // In the title: a chip to change it by, or "pick…"
                 const dot = el('span.tg-dot' + (objectWire ? '' : '.tg-dot-empty'));
                 const row = el('span.tg-port.tg-in.tg-inline.tg-title-port', { dataset: { port: portKey(objectPort) } }, dot,
-                    objectWire ? this.pathChip(objectPort, objectWire) : this.pickButton(objectPort));
+                    objectWire ? this.pathChip(objectPort, objectWire) : this.pickButton(objectPort), objectWire ? this.emptyButton(objectPort) : null);
                 this.ports.set(portKey(objectPort), { port: objectPort, dot, row, view: record, label: objectPort.label });
                 G.ui.put(header, row);
             }
@@ -686,9 +740,32 @@
             const dot = el('span.tg-dot' + (w ? '' : '.tg-dot-empty'));
             const row = el('div.tg-port.tg-in' + (w && !inline ? '' : '.tg-inline'), { dataset: { port: portKey(p) } },
                 dot, lead || (p.label ? el('span.tg-port-label', { text: p.label }) : null),
-                !w ? this.pickButton(p) : inline ? this.inlineValue(p, w) : null, trail || null);
+                !w ? this.pickButton(p) : inline ? this.inlineValue(p, w) : null, trail || null, w ? this.emptyButton(p) : null);
             this.ports.set(portKey(p), { port: p, dot, row, view: record, label: p.label });
             return row;
+        }
+
+        // The × of a filled input, seen while it's under the pointer: empties it
+        emptyButton(p) {
+            const what = p.label ? `'${p.label}'` : 'it';
+            const b = button('×', () => this.emptyInput(p), `Empty ${what}: what's in it goes, a node wired in stays (Delete does it too)`, 'tg-row-empty');
+            b.dataset.empty = '';
+            return b;
+        }
+
+        // Empties an input, as one edit: a value shown in it (a path's names, a literal) goes with it; a node wired
+        // into it stays where it is, unwired, as Break links leaves it. False when there was nothing in it.
+        emptyInput(p) {
+            const w = p?.input && !p.exec ? this.wireOf(p) : 0;
+            if (!w) return false;
+            const g = this.graph;
+            const shown = this.analysis.folded.has(w);
+            this.app.edit(doc => {
+                this.unwire(doc, p);
+                doc.reindex();
+                if (shown) doc.dropValue(g, w);
+            });
+            return true;
         }
 
         pickButton(p) {
@@ -768,7 +845,7 @@
             nodes.forEach((node, i) => {
                 const text = i === 0 ? doc.valueText(g, node.id) : node.member;
                 if (i > 0) G.ui.put(chip, el('span.tg-path-sep', { text: '.' }));
-                G.ui.put(chip, button(text, e => this.pickValue(p, chip, { from: i }), i === 0 ? 'Pick something else for it' : `Pick another of what ${doc.valueText(g, nodes[i - 1].id)} has`, 'tg-path-part'));
+                G.ui.put(chip, button(text, e => this.pickValue(p, chip, { from: i }), (i === 0 ? 'Click to pick something else for it' : `Click to pick another of what ${doc.valueText(g, nodes[i - 1].id)} has`) + '; × empties it', 'tg-path-part'));
             });
             return chip;
         }
@@ -1259,7 +1336,9 @@
                     }
                     const w = this.wireOf(p);
                     this.unwire(doc, p);
-                    if (w > 0 && !p.exec) old.push(w);
+                    // What was shown in the input goes with it, and a read of a parameter or a local; a node wired
+                    // in stays, unwired
+                    if (w > 0 && !p.exec && (this.analysis.folded.has(w) || port.pin !== undefined || port.local !== undefined)) old.push(w);
                 }
                 doc.reindex();
                 for (const w of old) doc.dropValue(g, w);

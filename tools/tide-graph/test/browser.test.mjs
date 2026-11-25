@@ -21,6 +21,8 @@ import { fileUri, startServer } from './lsp.mjs';
 const browser = findBrowser();
 const schema = JSON.parse(fs.readFileSync(path.join(repo, 'compiler/src/graph_schema.json'), 'utf8'));
 const EMPTY = '{"tidegraph": 1, "nextId": 1, "decls": []}\n';
+// tidec's graph of: system Spin(mut Wobble wobble) { wobble.phase = 1.5 + wobble.frequency; wobble.frequency = wobble.phase; }
+const SPIN = fs.readFileSync(path.join(root, 'test', 'spin.tidegraph'), 'utf8');
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'tide-graph-browser-test-'));
 const skip = !browser && 'no Chrome or Edge (set TIDE_BROWSER)';
 
@@ -561,6 +563,97 @@ describe('the graph editor in a browser', { skip }, () => {
         await p.drag(from, onto, { steps: 10 });
         await p.until(`app.editor.doc.root.decls[1].params.length === 2`, 'the component dragged onto the frame');
         assert.deepEqual((await doc(p)).decls[1].params.map(x => x.type), ['Spring', 'Spring']);
+        assert.deepEqual(b.errors, []);
+    });
+
+    test('a node goes wherever it is dragged, the frame growing toward it; an input is emptied by its ×, by Delete and from its menu', async () => {
+        const p = await openEditor(b, { text: SPIN, schema, scratch });
+        // The board alone, at full size: a move on screen is the same on the board
+        await p.evaluate(`app.open.details = app.open.mygame = false; app.showPanels(); app.renderPanels()`);
+        await p.evaluate(`app.board.zoomAt(1 / app.board.zoom)`);
+        await p.evaluate(`app.reveal(5)`);
+        await p.sleep(100);
+        const rect = selector => p.evaluate(`(() => { const r = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect(); return { x: Math.round(r.left), y: Math.round(r.top), r: Math.round(r.right) }; })()`);
+        const node = id => `.tg-frame .tg-node[data-id="${id}"]`;
+        const port = (id, key) => `${node(id)} .tg-port.tg-in[data-port="${id}|i|d|${key}"]`;
+        const near = (a, c, what) => assert.ok(Math.abs(a.x - c.x) <= 1 && Math.abs(a.y - c.y) <= 1, `${what}: ${JSON.stringify(a)} is ${JSON.stringify(c)}`);
+        const start = p.text;
+        const frame0 = await rect('.tg-frame[data-id="5"]'), entry0 = await rect('.tg-frame .tg-entry');
+        const set0 = await rect(node(13)), plus0 = await rect(node(12)), other0 = await rect(node(18));
+
+        // The first Set, by its title, above and to the left of the entry: it follows the pointer exactly, and the
+        // frame grows that way, its own place moving so nothing else on screen moves
+        const title = await p.center(`${node(13)} .tg-node-title`);
+        const by = { x: entry0.x - set0.x - 150, y: entry0.y - set0.y - 110 };
+        await p.drag(title, { x: title.x + by.x, y: title.y + by.y }, { steps: 12 });
+        await p.until(`app.editor.doc.root.decls[1].x < 380`, 'the frame moved left');
+        await p.sleep(50);
+        near(await rect(node(13)), { x: set0.x + by.x, y: set0.y + by.y }, 'the dragged node where it was dropped');
+        near(await rect(node(12)), plus0, 'the node not dragged where it was');
+        near(await rect(node(18)), other0, 'the other node where it was');
+        const frame1 = await rect('.tg-frame[data-id="5"]'), entry1 = await rect('.tg-frame .tg-entry');
+        assert.ok(frame1.x < frame0.x && frame1.y < frame0.y, `the frame grew left and up: ${JSON.stringify([frame0, frame1])}`);
+        near({ x: entry1.x - frame1.x, y: entry1.y - frame1.y }, { x: entry0.x - frame0.x, y: entry0.y - frame0.y }, 'the entry at the corner');
+        assert.ok((await rect(node(13))).x > entry1.r, 'the node right of the entry');
+        let d = await doc(p);
+        assert.ok(d.decls[1].body.nodes.find(n => n.id === 13).x < 0, 'the node left of where the nodes started');
+        assert.equal(d.decls[1].y, frame1.y - frame0.y, 'the frame up by as much as it grew');
+        // One edit, undone as one
+        await p.evaluate(`app.command('undo')`);
+        assert.equal(p.text, start, 'the move undone with the frame');
+        await p.sleep(50);
+        near(await rect(node(13)), set0, 'back where it was');
+
+        // A filled input's × empties it: the path's nodes go with it
+        const target = await p.center(`${port(13, 'target')} .tg-port-label`);
+        await p.move(target.x, target.y);
+        const x = `${port(13, 'target')} .tg-row-empty`;
+        assert.match(await p.evaluate(`document.querySelector(${JSON.stringify(x)}).title`), /Empty 'what'/);
+        assert.match(await p.evaluate(`document.querySelector(${JSON.stringify(port(13, 'target') + ' .tg-path-part')}).title`), /× empties it/);
+        await p.clickOn(x);
+        await p.until(`!app.editor.doc.get(13).target`, 'the target emptied');
+        d = await doc(p);
+        assert.deepEqual(d.decls[1].body.nodes.filter(n => n.id === 7 || n.id === 8), [], "the path's nodes gone with it");
+        assert.equal(await p.evaluate(`document.querySelector(${JSON.stringify(port(13, 'target') + ' .tg-pick')})?.textContent`), 'pick…');
+        await p.evaluate(`app.command('undo')`);
+        assert.equal(p.text, start, 'emptying undone');
+
+        // Delete with the pointer on a typed value empties it, and what's selected isn't deleted
+        await p.evaluate(`app.editor.selectNodes(app.editor.doc.find(13).slot, [13])`);
+        const lhs = await p.center(`${port(12, 'lhs')} .tg-port-label`);
+        await p.move(lhs.x, lhs.y);
+        await p.key('Delete');
+        await p.until(`!app.editor.doc.get(12).lhs`, 'the typed value emptied by Delete');
+        assert.ok(!(await doc(p)).decls[1].body.nodes.some(n => n.id === 9), 'the literal gone with it');
+        assert.ok(await p.evaluate(`!!app.editor.doc.get(13)`), 'the selected node kept');
+        await p.evaluate(`app.command('undo')`);
+        // ...and Backspace a chip
+        const rhs = await p.center(`${port(12, 'rhs')} .tg-port-label`);
+        await p.move(rhs.x, rhs.y);
+        await p.key('Backspace');
+        await p.until(`!app.editor.doc.get(12).rhs`, 'the chip emptied by Backspace');
+        assert.ok(!(await doc(p)).decls[1].body.nodes.some(n => n.id === 10 || n.id === 11), "the chip's nodes gone with it");
+        await p.evaluate(`app.command('undo')`);
+        assert.equal(p.text, start);
+
+        // A pin's menu: Empty it, after Pick a value… and Work it out…; a node wired in stays where it was, unwired
+        const pin = await p.center(`${port(13, 'value')} .tg-dot`);
+        await p.click(pin.x, pin.y, { button: 'right' });
+        await p.until(`!!document.querySelector('.tg-context [data-name="empty"]')`, "the pin's menu");
+        assert.deepEqual(await p.evaluate(`[...document.querySelectorAll('.tg-context .tg-menu-item')].filter(i => i.dataset.section === '1').map(i => i.querySelector('.tg-menu-label').textContent)`), ['Pick a value…', 'Work it out…', 'Empty it']);
+        await p.evaluate(`document.querySelector('.tg-context [data-name="empty"]').click()`);
+        await p.until(`!app.editor.doc.get(13).value`, 'the wired input emptied');
+        const plus = (await doc(p)).decls[1].body.nodes.find(n => n.id === 12);
+        assert.deepEqual([plus?.x, plus?.y, plus?.lhs, plus?.rhs], [0, 136, 9, 11], 'the node wired in stays as it was');
+        near(await rect(node(12)), plus0, 'and where it was seen');
+        // ...and is off when nothing is in it
+        const pin2 = await p.center(`${port(13, 'value')} .tg-dot`);
+        await p.click(pin2.x, pin2.y, { button: 'right' });
+        await p.until(`!!document.querySelector('.tg-context [data-name="empty"]')`, "the empty pin's menu");
+        assert.ok(await p.evaluate(`document.querySelector('.tg-context [data-name="empty"]').classList.contains('tg-disabled')`), 'off when nothing is in it');
+        await p.key('Escape');
+        await p.evaluate(`app.command('undo')`);
+        assert.equal(p.text, start);
         assert.deepEqual(b.errors, []);
     });
 

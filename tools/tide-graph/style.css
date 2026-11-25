@@ -418,6 +418,9 @@ span.tg-node-input { overflow: hidden; text-overflow: ellipsis; white-space: now
 .tg-row-pick { background: none; border: none; color: var(--tg-muted); cursor: pointer; padding: 0 3px; font-size: 0.85em; line-height: 16px; border-radius: 4px; visibility: hidden; }
 .tg-port:hover .tg-row-pick, .tg-port:focus-within .tg-row-pick { visibility: visible; }
 .tg-row-pick:hover { color: var(--tg-accent); }
+.tg-row-empty { background: none; border: none; color: var(--tg-muted); cursor: pointer; padding: 0 3px; font-size: 1em; line-height: 16px; border-radius: 4px; visibility: hidden; }
+.tg-port:hover > .tg-row-empty, .tg-port:focus-within > .tg-row-empty { visibility: visible; }
+.tg-row-empty:hover { color: var(--tg-error); }
 /* A name or a path of fields, in its type's colour: each part is a button that changes the path from there */
 .tg-path { display: inline-flex; align-items: center; border-radius: 999px; padding: 0 7px 0 6px; line-height: 18px; white-space: nowrap;
   background: color-mix(in srgb, var(--tg-type, var(--tg-muted)) 16%, var(--tg-node-bg)); border: 1px solid color-mix(in srgb, var(--tg-type, var(--tg-muted)) 50%, transparent); }

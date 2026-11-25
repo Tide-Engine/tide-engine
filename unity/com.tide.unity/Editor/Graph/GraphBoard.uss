@@ -226,6 +226,24 @@
     opacity: 1;
 }
 
+/* A filled input's ×: seen while the pointer is on the input */
+.tg-value-with {
+    flex-direction: row;
+    flex-shrink: 0;
+    align-items: center;
+}
+
+.tg-empty-x {
+    opacity: 0;
+}
+
+.tg-port-row:hover .tg-empty-x,
+.tg-value-with:hover .tg-empty-x,
+.tg-pin-value:hover .tg-empty-x,
+.tg-empty-x:focus {
+    opacity: 1;
+}
+
 /* ---- Text edited where it's drawn ---- */
 
 .tg-inline {

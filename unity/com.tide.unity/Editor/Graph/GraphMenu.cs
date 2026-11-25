@@ -240,6 +240,7 @@ namespace Tide.Editor
                     var label = GraphNodeView.LabelOf(board.Window.Checked, owner, p.Path, p.Label);
                     b.Put(Pin, Word("pickValue", "Pick a value…"), null, () => board.PickValue(frame, owner, p.Path, label, pin));
                     b.Put(Pin, Word("workOut", "Work it out…"), null, () => board.WorkOut(frame, owner, p.Path, pin));
+                    b.Put(Pin, Word("emptyIt", "Empty it"), Keys("emptyIt", "Del"), () => frame.Empty(owner, p.Path, label), frame.WireAt(owner, p.Path) == 0);
                 }
             }
             else if (!p.Input && !p.Exec) b.Put(Pin, Word("useIt", "Use it in a new node…"), null, () => board.OpenSearch(frame, Near(), p));

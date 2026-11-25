@@ -1,0 +1,55 @@
+{
+  "tidegraph": 1,
+  "nextId": 19,
+  "decls": [
+    {
+      "kind": "component",
+      "id": 1,
+      "x": 0,
+      "y": 0,
+      "name": "Wobble",
+      "members": [
+        {
+          "kind": "field",
+          "id": 2,
+          "type": "float",
+          "name": "frequency",
+          "default": {
+            "root": 3,
+            "nodes": [
+              {"id": 3, "k": "int", "x": -164, "y": 0, "text": "2"}
+            ]
+          }
+        },
+        {"kind": "field", "id": 4, "type": "float", "name": "phase"}
+      ]
+    },
+    {
+      "kind": "system",
+      "id": 5,
+      "x": 380,
+      "y": 0,
+      "name": "Spin",
+      "params": [
+        {"id": 6, "mode": "mut", "type": "Wobble", "name": "wobble"}
+      ],
+      "body": {
+        "entry": 13,
+        "nodes": [
+          {"id": 7, "k": "name", "x": 292, "y": 136, "name": "wobble"},
+          {"id": 8, "k": "member", "x": 292, "y": 136, "object": 7, "member": "phase"},
+          {"id": 9, "k": "float", "x": 0, "y": 136, "text": "1.5"},
+          {"id": 10, "k": "name", "x": 0, "y": 136, "name": "wobble"},
+          {"id": 11, "k": "member", "x": 0, "y": 136, "object": 10, "member": "frequency"},
+          {"id": 12, "k": "binary", "x": 0, "y": 136, "op": "+", "lhs": 9, "rhs": 11},
+          {"id": 13, "k": "assign", "x": 292, "y": 0, "op": "=", "target": 8, "value": 12, "next": 18},
+          {"id": 14, "k": "name", "x": 600, "y": 136, "name": "wobble"},
+          {"id": 15, "k": "member", "x": 600, "y": 136, "object": 14, "member": "frequency"},
+          {"id": 16, "k": "name", "x": 600, "y": 136, "name": "wobble"},
+          {"id": 17, "k": "member", "x": 600, "y": 136, "object": 16, "member": "phase"},
+          {"id": 18, "k": "assign", "x": 600, "y": 0, "op": "=", "target": 15, "value": 17}
+        ]
+      }
+    }
+  ]
+}

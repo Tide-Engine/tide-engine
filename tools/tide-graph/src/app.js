@@ -971,7 +971,7 @@
                 else if (mod && key === 'a') this.command('selectAll');
                 else if (mod && key === 'f') this.command('find');
                 else if (!mod && e.key === 'F2') this.command('rename');
-                else if (!mod && (key === 'delete' || key === 'backspace')) this.command('delete');
+                else if (!mod && (key === 'delete' || key === 'backspace')) { if (!this.board.emptyInputUnder()) this.command('delete'); }
                 else if (!mod && !e.altKey && key === 'f') this.command('frame');
                 else if (!mod && key === '/') this.command('find');
                 else if (!mod && key === ' ' && !onButton) this.command('search');

@@ -699,7 +699,8 @@ Tidy up, OPTIONS, MORE, Duplicate, Delete; a card's Remove). The design both edi
 - **Everything moves by dragging it.** A node, a card or a frame is dragged by any part that isn't a control: its
   title bar, its kind chip, its name, the space around rows. A click selects; a drag on the empty board draws a
   selection box; Shift or Ctrl adds to the selection; a selection moves, copies and deletes together. A move is
-  an edit (`x`, `y` written, undone like any other). A node stays in its frame (the frame grows to hold it).
+  an edit (`x`, `y` written, undone like any other). A node stays in its frame (the frame grows to hold it:
+  left and up too, below).
 - **Names are renamed by a double click** (or F2, or Rename in the menu): a card's, a frame's, a field's, a
   parameter's, a local's. A single click on a name selects and starts a drag. A new thing still starts with its
   name being typed.
@@ -774,3 +775,24 @@ that doesn't parse isn't checked, so then everything is said to fit.
 - Not there: wires can't be selected in Unity (Alt+click a pin); rows reorder from Details (Earlier/Later), not by
   dragging; Paste is always listed on the web (the clipboard can't be read without asking); My game's drag-out
   has no Unity test.
+
+**Later the same day** (the owner: "it annoys me i cant drag this wherever i want", and of a Set's chips "could we
+allow to clear these fields?"):
+
+- A dragged node follows the pointer anywhere. Left of or above the node area, the frame grows that way: its own
+  place on the board moves by the overshoot, so nothing else on screen moves, and the entry moves with the
+  frame's corner. The nodes' and the frame's places are one "Move" edit. Unity had clamped a node at the area's
+  left and top (`GraphBoard.OnMove`); it's `GraphFrame.Follow` now, and neither the board's placing nor a layout
+  pass runs mid-drag. The web page pushed the other nodes right instead.
+- An input is emptied by the × shown on it under the pointer, by Delete or Backspace with the pointer on it,
+  and by "Empty it" in its pin's menu: what was shown in it (a path's nodes, a literal) goes, a node wired in
+  stays, unwired; one edit, and the input says "pick…" again. The web page's Break links used to delete a node
+  wired in when it was a kind that can be shown in an input; now only what was shown there goes, as in Unity.
+- Tests: `tide_graph_editor` (a Set dragged above and left of the entry; a chip emptied by ×, a value by Delete,
+  a chip by Backspace and a wired input from the menu, each undone), Unity's `ANodeGoesWhereverItsDragged`,
+  `AnInputIsEmptiedByItsXByDeleteAndFromItsMenu` and the pointer test
+  `ThePointerDragsANodeAnywhereAndDeleteEmptiesWhatsUnderIt`, both over `tools/tide-graph/test/spin.tidegraph`.
+  Unity's graph fixtures 51: all pass on the hidden desktop, 49 and the 2 pointer tests skipped under
+  `-nographics`.
+- Not there: a node's input row can't be selected, so Delete works on the input under the pointer; "Empty it"
+  and the × words are each editor's own until the schema has the menu words.

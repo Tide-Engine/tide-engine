@@ -298,7 +298,7 @@ namespace Tide.Editor
                 var wants = new List<(int id, bool frame)>();
                 var blocks = new List<JValue>();
                 Collect(Doc.Root.Arr("decls"), wants, blocks);
-                if (wants.Any(w => !items.ContainsKey(w.id)) || drag == Drag.MoveItems) return;
+                if (wants.Any(w => !items.ContainsKey(w.id)) || drag == Drag.MoveItems || drag == Drag.MoveNodes) return;
                 PlaceAll(wants);
                 Regions(blocks);
                 Cull();
@@ -897,7 +897,10 @@ namespace Tide.Editor
         bool moved;
         GraphFrame boxFrame;      // The frame a box selects nodes of; the board's items when null
         HashSet<int> boxBefore;
-        Vector2 nodeMin;
+        // A drag of nodes: where its frame was and where the frame's (0, 0) was drawn when it started, and where the
+        // dragged ones are going, as the file has places
+        Vector2 nodeFrameAt, nodeOrigin;
+        readonly Dictionary<int, Vector2> nodeTo = new Dictionary<int, Vector2>();
         (GraphFrame frame, Vector2 at, bool any)? rightDown;
 
         // The wire being drawn: the end that stays, and what was wired before it was taken up
@@ -906,6 +909,9 @@ namespace Tide.Editor
         Action wireUndo;           // Unwires what was taken up, when it's dropped on nothing
 
         internal PortView WireFrom => drag == Drag.Wire ? wireFrom : null;
+
+        // Whether a frame's nodes are being dragged
+        internal bool MovingNodesOf(GraphFrame frame) => drag == Drag.MoveNodes && moved && Active == frame;
 
         void Capture(IPointerEvent e)
         {
@@ -989,14 +995,7 @@ namespace Tide.Editor
                 drag = Drag.MoveNodes;
                 moved = false;
                 dragStart = mouse;
-                nodeStart.Clear();
-                nodeMin = Vector2.zero;
-                foreach (var v in frame.Views.Values) nodeMin = Vector2.Min(nodeMin, v.At);
-                foreach (var n in Nodes)
-                {
-                    if (frame.Views.TryGetValue(n, out var nv)) nodeStart[n] = nv.Shown;
-                    else if (frame.Notes.TryGetValue(n, out var note2)) nodeStart[n] = note2.Shown;
-                }
+                StartNodeMove(frame, Nodes);
                 Capture(e);
                 return;
             }
@@ -1079,14 +1078,7 @@ namespace Tide.Editor
                     var d = (mouse - dragStart) / zoom;
                     if (d.sqrMagnitude > 4) moved = true;
                     if (!moved) break;
-                    foreach (var pair in nodeStart)
-                    {
-                        // Not left of or above where the frame's nodes start
-                        var to = Vector2.Max(pair.Value + d, Active.Origin + nodeMin);
-                        if (Active.Views.TryGetValue(pair.Key, out var v)) v.MoveTo(to);
-                        else if (Active.Notes.TryGetValue(pair.Key, out var note)) note.MoveTo(to);
-                    }
-                    Active.Arrange(false);
+                    ShowNodeMove(d);
                     break;
                 }
                 case Drag.MoveItems:
@@ -1158,15 +1150,32 @@ namespace Tide.Editor
         internal void MoveNodesBy(GraphFrame frame, IEnumerable<int> ids, Vector2 by)
         {
             Active = frame;
-            nodeStart.Clear();
-            foreach (var id in ids)
-            {
-                var v = frame.ViewOf(id);
-                if (v == null || nodeStart.ContainsKey(v.Id)) continue;
-                nodeStart[v.Id] = v.Shown;
-                v.MoveTo(v.Shown + by);
-            }
+            StartNodeMove(frame, ids.Select(id => frame.ViewOf(id)?.Id ?? 0).Where(id => id != 0).Distinct().ToList());
+            ShowNodeMove(by);
             CommitNodeMove();
+        }
+
+        // Where a drag of nodes starts: each node's and note's place, its frame's, and where the frame's (0, 0) is
+        void StartNodeMove(GraphFrame frame, IEnumerable<int> ids)
+        {
+            nodeStart.Clear();
+            nodeTo.Clear();
+            nodeFrameAt = frame.At;
+            nodeOrigin = frame.Origin;
+            foreach (var n in ids)
+            {
+                if (frame.Views.TryGetValue(n, out var nv)) nodeStart[n] = nv.Shown;
+                else if (frame.Notes.TryGetValue(n, out var note)) nodeStart[n] = note.Shown;
+            }
+        }
+
+        // The dragged nodes where the pointer has them, anywhere: their frame grows toward them, moving its own
+        // place to grow left or up, so nothing else on screen moves (GraphFrame.Follow)
+        void ShowNodeMove(Vector2 by)
+        {
+            nodeTo.Clear();
+            foreach (var pair in nodeStart) nodeTo[pair.Key] = pair.Value - nodeOrigin + by;
+            Active.Follow(nodeTo);
         }
 
         void CommitNodeMove()
@@ -1175,6 +1184,10 @@ namespace Tide.Editor
             var graph = frame.Graph;
             if (graph == null) return;
             var origin = frame.Origin;
+            // The frame's own place, when it grew left or up toward them: in the same edit (a value's graph has
+            // none of its own, it's beside what it's the value of)
+            var grew = !frame.IsValue && frame.Element != null && frame.At != nodeFrameAt;
+            var frameAt = frame.At;
             var moves = nodeStart.Keys.Where(id => frame.Views.ContainsKey(id)).ToDictionary(id => id, id => frame.Views[id].Shown - origin);
             var notes = nodeStart.Keys.Where(id => frame.Notes.ContainsKey(id)).ToDictionary(id => id, id => frame.Notes[id].Shown - origin);
             Window.Edit("Move", () =>
@@ -1202,7 +1215,14 @@ namespace Tide.Editor
                     note.Set("x", JValue.Of(Mathf.Round(pair.Value.x)), GraphSchema.NoteOrder);
                     note.Set("y", JValue.Of(Mathf.Round(pair.Value.y)), GraphSchema.NoteOrder);
                 }
+                if (grew)
+                {
+                    KeepPlaces();
+                    GraphDocument.SetPlace(frame.Element, frameAt);
+                }
             }, frame.Id);
+            // What's placed around it follows, now the drag's done
+            Resized(frame);
         }
 
         void CommitItemMove()
@@ -1680,6 +1700,14 @@ namespace Tide.Editor
             }
         }
 
+        // Empties the filled input under the pointer, when there is one
+        internal bool EmptyInputUnder()
+        {
+            var under = panel?.Pick(this.LocalToWorld(mouse));
+            var view = GraphLook.Up<GraphNodeView>(under);
+            return view != null && view.EmptyAt(under);
+        }
+
         void OnKey(KeyDownEvent e)
         {
             var target = e.target as VisualElement;
@@ -1689,7 +1717,8 @@ namespace Tide.Editor
             {
                 case KeyCode.Delete:
                 case KeyCode.Backspace:
-                    DeleteSelection();
+                    // With the pointer on a filled input, it's emptied rather than what's selected deleted
+                    if (!EmptyInputUnder()) DeleteSelection();
                     break;
                 case KeyCode.D when action:
                     DuplicateSelection();

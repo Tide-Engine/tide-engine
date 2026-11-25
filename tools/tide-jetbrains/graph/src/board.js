@@ -971,7 +971,7 @@
                 const v = ed.doc.find(id)?.value;
                 if (v) moving.set(id, { x: Number(v.x) || 0, y: Number(v.y) || 0 });
             }
-            this.drag = { kind: 'move', start, frame, moving, moved: false };
+            this.drag = { kind: 'move', start, frame, moving, moved: false, at: { x: frame.x, y: frame.y } };
         }
 
         beginMoveItems(start) {
@@ -1073,13 +1073,9 @@
                 for (const [id, at] of d.moving) {
                     const p = { x: Math.round(at.x + dx / z), y: Math.round(at.y + dy / z) };
                     f.places.set(id, p);
-                    const v = f.views.get(id);
-                    if (v) {
-                        v.el.style.left = f.nodeX + p.x - f.origin.x + 'px';
-                        v.el.style.top = G.frames.PAD + p.y - f.origin.y + 'px';
-                    }
                 }
-                f.drawWires();
+                // Anywhere it's dragged: the frame grows toward it, and moves its own place to grow left or up
+                f.followMove();
             } else if (d.kind === 'move-items') {
                 if (!d.moved && Math.abs(dx) + Math.abs(dy) < 3) return;
                 d.moved = true;
@@ -1171,12 +1167,21 @@
                 const f = d.frame;
                 const places = new Map(f.places);
                 f.places.clear();
+                // The frame's own place, when it grew left or up toward them: in the same edit
+                const grew = !f.isValue && (f.x !== d.at.x || f.y !== d.at.y);
                 this.app.edit(doc => {
                     for (const [id, p] of places) {
                         const v = doc.get(id);
                         if (!v) continue;
                         v.x = p.x;
                         v.y = p.y;
+                    }
+                    if (!grew) return;
+                    this.persistPlaces(doc);
+                    const item = doc.items().find(i => i.id === f.item.id);
+                    if (item) {
+                        this.auto.set(item.id, { x: f.x, y: f.y });
+                        this.setPlace(doc, item, f.x, f.y);
                     }
                 });
                 return;
@@ -1250,6 +1255,15 @@
                 if (d.from.input && !d.from.exec) f.pickValue(d.from, null, { x: e.clientX, y: e.clientY });
                 else G.pickers.nodeSearch(this.app, f, e.clientX, e.clientY, { from: d.from });
             }
+        }
+
+        // Delete or Backspace with the pointer on a filled input empties it (rather than deleting what's selected)
+        emptyInputUnder() {
+            const over = document.elementFromPoint(this.lastPointer.x, this.lastPointer.y);
+            const row = over?.closest?.('.tg-port.tg-in');
+            const f = row && this.frameAt(row);
+            const port = f?.ports.get(row.dataset.port)?.port;
+            return !!port && f.emptyInput(port);
         }
 
         cancel() {

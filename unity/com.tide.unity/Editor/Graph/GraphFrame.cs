@@ -370,6 +370,9 @@ namespace Tide.Editor
         // Where a node at (0, 0) is drawn, in the frame
         internal Vector2 Origin => origin;
 
+        // Where Arrange last put it, by the file's places: while nodes are dragged, Origin moves from it
+        Vector2 arranged;
+
         internal void MarkWires() => wires?.MarkDirtyRepaint();
 
         internal void QueueArrange()
@@ -379,8 +382,42 @@ namespace Tide.Editor
             schedule.Execute(() =>
             {
                 arrangeQueued = false;
-                Arrange();
+                // While its nodes are dragged they're where the drag has them, not where the file does yet
+                Arrange(!Board.MovingNodesOf(this));
             });
+        }
+
+        // While nodes are dragged (`places`: where each dragged one is going, as the file has places): each is shown
+        // there, and the frame grows toward them on every side. Left and up its own place on the board moves by as
+        // much as it grows, so what isn't dragged stays where it's seen and the entry stays at its corner; right and
+        // down it grows around them as Arrange has it.
+        internal void Follow(IReadOnlyDictionary<int, Vector2> places)
+        {
+            if (Level != GraphLevel.Near || nodes == null) return;
+            Vector2 PlaceOf(int id, Vector2 file) => places.TryGetValue(id, out var to) ? to : file;
+            // The least place, as the file has it and as the drag has it: the node area starts where Arrange put the
+            // first, and grows by as much as the second is less
+            Vector2 was = Vector2.zero, min = Vector2.zero;
+            foreach (var pair in Views)
+            {
+                was = Vector2.Min(was, pair.Value.At);
+                min = Vector2.Min(min, PlaceOf(pair.Key, pair.Value.At));
+            }
+            foreach (var pair in Notes)
+            {
+                was = Vector2.Min(was, pair.Value.At);
+                min = Vector2.Min(min, PlaceOf(pair.Key, pair.Value.At));
+            }
+            var now = arranged + (was - min);
+            if (now != origin)
+            {
+                At -= now - origin;
+                origin = now;
+                Place();
+            }
+            foreach (var pair in Views) pair.Value.MoveTo(origin + PlaceOf(pair.Key, pair.Value.At));
+            foreach (var pair in Notes) pair.Value.MoveTo(origin + PlaceOf(pair.Key, pair.Value.At));
+            Arrange(false);
         }
 
         // Puts the entry and the nodes where they go, and sizes the frame around them
@@ -392,13 +429,11 @@ namespace Tide.Editor
             var top = GraphLook.FrameHead + 6;
             if (place)
             {
-                float minX = 0, minY = 0;
-                foreach (var v in Views.Values)
-                {
-                    minX = Mathf.Min(minX, v.At.x);
-                    minY = Mathf.Min(minY, v.At.y);
-                }
-                origin = new Vector2(left - minX, top - minY);
+                // The nodes' and notes' least place is where the node area starts, right of the entry
+                var min = Vector2.zero;
+                foreach (var v in Views.Values) min = Vector2.Min(min, v.At);
+                foreach (var note in Notes.Values) min = Vector2.Min(min, note.At);
+                origin = arranged = new Vector2(left, top) - min;
                 Entry?.MoveTo(new Vector2(GraphLook.FramePad, top));
                 foreach (var v in Views.Values) v.MoveTo(origin + v.At);
                 foreach (var note in Notes.Values) note.MoveTo(origin + note.At);
@@ -818,6 +853,15 @@ namespace Tide.Editor
             var chain = ChainOf(was);
             chain.Remove(now);
             Doc.DeleteNodes(g, chain);
+        }
+
+        // Empties an input, as one edit: what was shown in it goes with it (a path's names, a literal); a node wired
+        // into it stays where it is, unwired, as Break links leaves it. False when nothing was in it.
+        internal bool Empty(JValue owner, WirePath path, string label)
+        {
+            if (Graph == null || WireAt(owner, path) == 0) return false;
+            Edit(string.IsNullOrEmpty(label) ? "Empty it" : "Empty " + label, () => SetWire(owner, path, 0, out _));
+            return true;
         }
 
         // Puts a value in an input: a node's id, or 0 for nothing. What was shown there goes.

@@ -1636,6 +1636,174 @@ public class GraphTests
         window.Close();
     }
 
+    // tidec's graph of: system Spin(mut Wobble wobble) { wobble.phase = 1.5 + wobble.frequency; wobble.frequency =
+    // wobble.phase; } (the web editor's tests have it too). Its frame is 5; the first Set 13, its target the path
+    // 7.8 (wobble.phase), its value the node 12 (1.5 + wobble.frequency: the literal 9, the path 10.11); the
+    // second Set 18.
+    static string SpinFile => File.ReadAllText(Path.Combine(Repository, "tools", "tide-graph", "test", "spin.tidegraph"));
+
+    static void Near(Vector2 expected, Vector2 actual, string what) =>
+        Assert.IsTrue((expected - actual).magnitude < 0.6f, $"{what}: {actual} is {expected}");
+
+    // A node goes wherever it's dragged: left of and above where its frame's nodes start, the frame grows that way,
+    // its own place on the board moving by as much so nothing else moves on screen, and its entry stays at its
+    // corner. The move is one edit, the frame's place with the node's, undone as one.
+    [Test]
+    public void ANodeGoesWhereverItsDragged()
+    {
+        var path = Write("Anywhere.tidegraph", SpinFile);
+        using var logged = new Logged();
+        var window = TideGraphWindow.Open(path);
+        var board = window.Board;
+        var frame = board.Frame(5);
+        Assert.AreEqual(GraphLevel.Near, frame.Level);
+        var text = window.Doc.Text;
+        Vector2 OnBoard(int id) => board.Frame(5).At + board.Frame(5).Views[id].Shown;
+        var frameWas = frame.At;
+        var entryWas = frame.Entry.Shown;
+        var set = OnBoard(13);
+        var plus = OnBoard(12);
+        var other = OnBoard(18);
+        // Past the frame's own corner, by 150 and 110
+        var by = -frame.Views[13].Shown - new Vector2(150, 110);
+        board.MoveNodesBy(frame, new[] { 13 }, by);
+        frame = board.Frame(5);
+        Near(set + by, OnBoard(13), "the node where it's dropped");
+        Near(plus, OnBoard(12), "the node not moved where it was");
+        Near(other, OnBoard(18), "the other node where it was");
+        Assert.Less(frame.At.x, frameWas.x, "the frame grew to the left");
+        Assert.Less(frame.At.y, frameWas.y, "and up");
+        Assert.AreEqual(GraphDocument.PlaceOf(window.Doc.Get(5)), frame.At, "the frame's place is the file's");
+        Near(entryWas, frame.Entry.Shown, "the entry at the frame's corner");
+        Assert.Greater(frame.Views[13].Shown.x, frame.Entry.Shown.x + frame.Entry.SizeNow.x, "the node right of the entry");
+        Assert.Less(GraphDocument.PlaceOf(GraphDocument.NodeIn(frame.Graph, 13)).x, 0, "the node left of where the nodes started");
+        Undo.PerformUndo();
+        Assert.AreEqual(text, window.Doc.Text, "one edit, undone as one");
+        Near(frameWas, board.Frame(5).At, "the frame back where it was");
+        Near(set, OnBoard(13), "the node back where it was");
+        // Right and down it grows as before, and stays where it is (measured again once it's arranged as drawn)
+        board.Frame(5).Arrange();
+        other = OnBoard(18);
+        board.MoveNodesBy(board.Frame(5), new[] { 18 }, new Vector2(300, 200));
+        Assert.AreEqual(frameWas, board.Frame(5).At, "grown right and down, the frame stays");
+        Near(other + new Vector2(300, 200), OnBoard(18), "the node where it's dropped");
+        window.Close();
+    }
+
+    // An input is emptied by its ×, by Delete or Backspace on it, and by Empty it in its pin's menu: what was shown in
+    // it goes with it (a path's names, a literal), a node wired into it stays where it was, unwired; each is one
+    // edit, undone
+    [Test]
+    public void AnInputIsEmptiedByItsXByDeleteAndFromItsMenu()
+    {
+        var path = Write("Empty.tidegraph", SpinFile);
+        using var logged = new Logged();
+        var window = TideGraphWindow.Open(path);
+        var board = window.Board;
+        var text = window.Doc.Text;
+        GraphNodeView View(int id) => board.Frame(5).Views[id];
+        JValue Node(int id) => GraphDocument.NodeIn(board.Frame(5).Graph, id);
+
+        // The ×, on a path: its tooltip says what it does, and so does the chip's
+        var target = View(13).Q("in:target");
+        var x = target.Q<Button>("empty");
+        Assert.IsNotNull(x, "a filled input has its ×");
+        StringAssert.Contains($"Empty '{GraphSchema.PortLabel("target")}'", x.tooltip);
+        StringAssert.Contains("× empties it", target.Q("chip").tooltip);
+        GraphShots.Click(x);
+        Assert.AreEqual(0, Node(13).Wire("target"), "the × empties it");
+        Assert.IsNull(Node(7), "the path's names go with it");
+        Assert.IsNull(Node(8));
+        Assert.IsNotNull(View(13).Q("in:target").Q<Button>("pick"), "it says pick… again");
+        Assert.IsNull(View(13).Q("in:target").Q<Button>("empty"), "an empty input has no ×");
+        Undo.PerformUndo();
+        Assert.AreEqual(text, window.Doc.Text, "undone");
+
+        // Delete or Backspace on an input (what the board does with the pointer there): a typed value, a chip
+        Assert.IsTrue(View(12).EmptyAt(View(12).Q("in:lhs").Q<TextField>("typed")), "Delete on a typed value");
+        Assert.AreEqual(0, Node(12).Wire("lhs"));
+        Assert.IsNull(Node(9), "the literal goes with it");
+        Undo.PerformUndo();
+        Assert.IsTrue(View(12).EmptyAt(View(12).Q("in:rhs").Q("part1")), "Backspace on a part of a path");
+        Assert.AreEqual(0, Node(12).Wire("rhs"));
+        Assert.IsNull(Node(10));
+        Assert.IsNull(Node(11));
+        Assert.IsFalse(View(12).EmptyAt(View(12).Q("in:rhs")), "nothing to empty: Delete deletes what's selected");
+        Undo.PerformUndo();
+        Assert.AreEqual(text, window.Doc.Text);
+
+        // A wired value: its × at the row's end, and Empty it in its pin's menu, after Pick a value… and Work it out…
+        Assert.IsNotNull(View(13).Q("in:value").Q<Button>("empty"), "a wired input has its ×");
+        var menu = GraphMenu.ForPin(View(13).Input("value")).Where(o => !o.Separator).ToList();
+        CollectionAssert.AreEqual(new[] { "Break links", "Pick a value…", "Work it out…", "Empty it" }, menu.Select(o => o.Title));
+        Assert.IsFalse(menu.Last().Off);
+        var placed = GraphDocument.PlaceOf(Node(12));
+        menu.Last().Pick();
+        Assert.AreEqual(0, Node(13).Wire("value"), "Empty it empties it");
+        Assert.IsNotNull(Node(12), "the node wired in stays");
+        Assert.AreEqual(placed, GraphDocument.PlaceOf(Node(12)), "where it was");
+        Assert.AreEqual(9, Node(12).Wire("lhs"), "with what's in it");
+        Assert.IsTrue(GraphMenu.ForPin(View(13).Input("value")).First(o => o.Title == "Empty it").Off, "an empty input's Empty it is off");
+        Undo.PerformUndo();
+        Assert.AreEqual(text, window.Doc.Text);
+        window.Close();
+    }
+
+    // The same with the pointer, through the window (on a desktop of its own: a run with no graphics device lays
+    // nothing out): a node dragged by its title above and to the left of where the frame's nodes start, and Delete
+    // with the pointer on an input
+    [UnityTest]
+    public IEnumerator ThePointerDragsANodeAnywhereAndDeleteEmptiesWhatsUnderIt()
+    {
+        var path = Write("Pointer.tidegraph", SpinFile);
+        using var logged = new Logged();
+        var window = TideGraphWindow.Open(path);
+        GraphShots.Size(window);
+        yield return GraphShots.Settle(6);
+        var board = window.Board;
+        window.ShowPanels(false);
+        yield return GraphShots.Settle(4);
+        if (float.IsNaN(board.layout.width) || board.layout.width <= 0)
+        {
+            window.Close();
+            Assert.Ignore("The window isn't laid out without a graphics device (-nographics): the pointer has nothing to land on. Run it with one, on a desktop of its own.");
+        }
+        var text = window.Doc.Text;
+        var frame = board.Frame(5);
+        var zoom = board.Zoom;
+        var set = frame.Views[13];
+        var plusWas = frame.Views[12].worldBound.position;
+        var entryWas = frame.Entry.worldBound.position;
+        var frameWas = frame.At;
+        // From its title to 60 left of and 40 above where the frame's nodes start (the file's places start at 0)
+        var corner = frame.Origin;
+        var by = (new Vector2(corner.x - 60, corner.y - 40) - set.Shown) * zoom;
+        var head = new Vector2(set.worldBound.x + 40, set.worldBound.y + 10);
+        var setWas = set.worldBound.position;
+        GraphShots.Drag(window, head, head + by);
+        yield return GraphShots.Settle(3);
+        frame = board.Frame(5);
+        Near(setWas + by, frame.Views[13].worldBound.position, "the node under the pointer");
+        Near(plusWas, frame.Views[12].worldBound.position, "the node not dragged where it was");
+        Assert.Less(frame.At.x, frameWas.x, "the frame grew to the left");
+        Assert.Less(frame.At.y, frameWas.y, "and up");
+        Near(entryWas - (frameWas - frame.At) * zoom, frame.Entry.worldBound.position, "the entry at the frame's corner");
+        Undo.PerformUndo();
+        Assert.AreEqual(text, window.Doc.Text, "one edit, undone");
+        yield return GraphShots.Settle(3);
+        // Delete with the pointer on a chip: it's emptied, and the selected node isn't deleted
+        frame = board.Frame(5);
+        board.SelectNode(frame, 13, false);
+        GraphShots.Mouse(window, EventType.MouseMove, GraphShots.Middle(frame.Views[12].Q("in:rhs").Q("chip")));
+        GraphShots.Press(window, KeyCode.Delete);
+        frame = board.Frame(5);
+        Assert.AreEqual(0, GraphDocument.NodeIn(frame.Graph, 12).Wire("rhs"), "Delete empties the input under the pointer");
+        Assert.IsNotNull(GraphDocument.NodeIn(frame.Graph, 13), "and deletes nothing selected");
+        Undo.PerformUndo();
+        Assert.AreEqual(text, window.Doc.Text);
+        window.Close();
+    }
+
     // Names are renamed by a double click, by F2 and by Rename in the menu: a card's, a field's, a frame's, a
     // parameter's, a local's
     [Test]
@@ -1759,7 +1927,7 @@ public class GraphTests
         CollectionAssert.AreEqual(new[] { "Add a node…", "Add a note box", "Add what it needs…" }, menus["a frame"].Where(o => (o.Data as string) == GraphMenu.Add).Select(o => o.Title), "a system's adds");
         Assert.AreEqual("Space", menus["a frame"][0].Detail);
         // A pin's own: break its links, pick what goes in it, work it out
-        CollectionAssert.AreEqual(new[] { "Break links", "Pick a value…", "Work it out…" }, GraphMenu.ForPin(frame.Views[set].Input("target")).Where(o => !o.Separator).Select(o => o.Title));
+        CollectionAssert.AreEqual(new[] { "Break links", "Pick a value…", "Work it out…", "Empty it" }, GraphMenu.ForPin(frame.Views[set].Input("target")).Where(o => !o.Separator).Select(o => o.Title));
         CollectionAssert.AreEqual(new[] { "Break links", "Add what happens next…" }, GraphMenu.ForPin(frame.Views[set].Output("next")).Where(o => !o.Separator).Select(o => o.Title));
         // Copy and paste a field onto the card: another of it, named for itself; Delete from the menu takes it away
         menus["a field"].First(o => o.Title == "Copy").Pick();
