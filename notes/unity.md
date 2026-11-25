@@ -1887,6 +1887,19 @@ graph window that gets focus with no schema or a tidels that gave up does the
 same, for a tide installed outside Unity (`tide upgrade`). Test:
 `GraphLanguageTests.ATideInstalledWhileAWindowIsOpenIsFound`.
 
+**A crash entering Play, not reproduced** (2026-11-25, the owner's playground, D3D12, Enter Play Mode Options
+3, first Play after a package update). Unity's graphics worker faulted in mimalloc collecting blocks other
+threads had freed: a freed block's first 8 bytes held 0x1e0, so something wrote to it after it was freed. The
+minidump has no heap, so not what. No thread was in Tide's or the game's code (Tide's workers idle; the main thread
+waiting on present). The session before it, on the older package, played the same game without crashing.
+89 Play entries on a copy with its Library (hidden desktop, `-force-d3d12`, the same options; fresh editors, the
+graph window open, audio on, a script reload first, and Unity's `-diag-force-debug-allocator`) never crashed.
+Tide's C# writes into Unity's memory only through size-checked copies, and its C uses its own heap. Left: a
+Unity D3D12/allocator bug, or a stray native write that a guarding allocator would catch, so a repeat should
+run with `-diag-force-debug-allocator`. That game's system multiplies a cube's scale every tick and passes 1e38
+within a second (Unity then refuses the Infinity scale). That's the game's own fault. Skipping non-finite
+transforms in `TideRunner` is proposed, not built.
+
 Validation: Unity 6000.6.0f1, scratch Sample with this checkout's package
 (`file:`), TIDE_HIDDEN/batchmode/nographics/noAudio, automatic builds off:
 the package compiles with no C# warnings; VersionTests 13/13 enabled (the
