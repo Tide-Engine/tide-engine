@@ -175,6 +175,7 @@ namespace Tide.Editor
             TideVersions.Refresh();
             if (TideSettings.instance.buildWhileEditing) TideBuildService.Restart();
             foreach (var window in Resources.FindObjectsOfTypeAll<TideVersionsWindow>()) window.Refresh();
+            TideToolchain.SayChanged();
         }
     }
 }

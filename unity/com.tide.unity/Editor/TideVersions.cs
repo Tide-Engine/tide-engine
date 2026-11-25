@@ -572,7 +572,11 @@ namespace Tide.Editor
                 Clean(d);
                 installingVersion = null;
                 if (exe == null) Debug.LogError($"Tide: {why}");
-                else if (TideSettings.instance.buildWhileEditing) TideBuildService.Restart();
+                else
+                {
+                    if (TideSettings.instance.buildWhileEditing) TideBuildService.Restart();
+                    TideToolchain.SayChanged();
+                }
             }
             void Watch()
             {

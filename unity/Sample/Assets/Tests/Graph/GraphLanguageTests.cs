@@ -73,7 +73,7 @@ public class GraphLanguageTests
         if (SystemInfo.graphicsDeviceType == UnityEngine.Rendering.GraphicsDeviceType.Null) LogAssert.ignoreFailingMessages = true;
         foreach (var w in Resources.FindObjectsOfTypeAll<TideGraphWindow>()) w.Close();
         // Graphs of the game in Temp that only one test reads: another's would declare their Ball again
-        foreach (var name in new[] { "Schema.tidegraph", "Layout.tidegraph", "Members.tidegraph", "Types.tidegraph" })
+        foreach (var name in new[] { "Schema.tidegraph", "Layout.tidegraph", "Members.tidegraph", "Types.tidegraph", "Installed.tidegraph" })
         {
             try
             {
@@ -548,6 +548,50 @@ public class GraphLanguageTests
             if (!gone) yield return null;
         }
         Assert.IsTrue(gone, "tidels is shut down");
+    }
+
+    // A tide installed while a window is open (the owner's update: the window asked while the new tide was on its
+    // way, found none, and found it only when opened again): the install says so, and the window finds the schema
+    // and tidels and checks, as it is
+    [UnityTest]
+    public IEnumerator ATideInstalledWhileAWindowIsOpenIsFound()
+    {
+        NeedTidels();
+        var path = WriteGame("Installed.tidegraph", BallGraph);
+        using var logged = new Logged();
+        var kept = GraphSchema.CachePath + ".kept";
+        TideLanguageClient.ShutdownAll();
+        TideGraphWindow window;
+        try
+        {
+            // No tide yet, and no copy of a schema from before
+            TideGraphCommand.TidelsOverride = Path.Combine(Game, "not-tidels.exe");
+            TideGraphCommand.TidecOverride = Path.Combine(Game, "not-tidec.exe");
+            if (File.Exists(kept)) File.Delete(kept);
+            if (File.Exists(GraphSchema.CachePath)) File.Move(GraphSchema.CachePath, kept);
+            GraphSchema.Reload();
+            Assert.IsFalse(GraphSchema.Available, "no tide, no schema");
+            window = TideGraphWindow.Open(path);
+            yield return null;
+            Assert.IsNull(window.Doc, "nothing to edit it with yet");
+        }
+        finally
+        {
+            TideGraphCommand.TidelsOverride = tidels;
+            TideGraphCommand.TidecOverride = tidec;
+            if (File.Exists(kept) && !File.Exists(GraphSchema.CachePath)) File.Move(kept, GraphSchema.CachePath);
+        }
+
+        // Installed: said once, and the open window has it all
+        TideToolchain.SayChanged();
+        Assert.IsTrue(GraphSchema.Available, GraphSchema.Failure);
+        yield return null;
+        Assert.IsNotNull(window.Doc, "the graph is read with the schema");
+        window.CheckSoon(0);
+        yield return null;
+        yield return Checked(window);
+        Assert.IsTrue(window.Checked.Diagnostics.Any(d => d.Id == 13), "checked by tidels, which has the graph");
+        window.Close();
     }
 
     // The schema tidels serves (tide/graphSchema) is the one the editor reads

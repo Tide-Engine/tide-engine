@@ -110,6 +110,30 @@ namespace Tide.Editor
             GraphSchema.Changed -= SchemaChanged;
         }
 
+        // A tide installed or switched while windows were open (an update: the window asked while the new tide was on
+        // its way, and found none): the schema and tidels are looked for again, and every graph is checked again
+        [InitializeOnLoadMethod]
+        static void Hooks() => TideToolchain.Changed += () => LookAgain(true);
+
+        // Coming back to a window that has no schema or whose tidels gave up looks again too (tide may have been
+        // installed outside Unity: `tide upgrade`)
+        void OnFocus()
+        {
+            var client = TideLanguageClient.Shared;
+            if (GraphSchema.Failure != null || (client != null && !client.Usable)) LookAgain(false);
+        }
+
+        static void LookAgain(bool changed)
+        {
+            var client = TideLanguageClient.Shared;
+            if (changed || (client != null && !client.Usable)) TideLanguageClient.ShutdownAll();
+            if (GraphSchema.Failure != null) GraphSchema.Reload(); // Its windows build again (SchemaChanged)
+            foreach (var window in Resources.FindObjectsOfTypeAll<TideGraphWindow>())
+            {
+                if (window != null && window.Doc != null) window.CheckSoon(0);
+            }
+        }
+
         // The graph schema came, or changed (tidels's isn't the one read before): the window builds again with it
         void SchemaChanged()
         {

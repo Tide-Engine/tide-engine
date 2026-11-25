@@ -1876,6 +1876,17 @@ the last build and swapped before).
 Also: `Begin`'s end restarts the build service only with Build while editing
 on (Project Settings' Install started building with it off).
 
+**`TideToolchain.Changed`** (2026-11-25, the owner's report: after an update
+the graph window didn't find tide until it was opened again). What asked for
+tide while the new one was on its way kept the answer: the graph schema's
+failure and the language client's giving up last until something asks again.
+`Begin`'s end (when it installed) and the Versions window's switch, once UPM
+is done, say `Changed`; the graph windows then stop tidels, read the schema
+again if there was none and check again (`TideGraphWindow.LookAgain`). A
+graph window that gets focus with no schema or a tidels that gave up does the
+same, for a tide installed outside Unity (`tide upgrade`). Test:
+`GraphLanguageTests.ATideInstalledWhileAWindowIsOpenIsFound`.
+
 Validation: Unity 6000.6.0f1, scratch Sample with this checkout's package
 (`file:`), TIDE_HIDDEN/batchmode/nographics/noAudio, automatic builds off:
 the package compiles with no C# warnings; VersionTests 13/13 enabled (the

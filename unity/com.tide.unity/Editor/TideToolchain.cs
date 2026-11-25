@@ -46,6 +46,13 @@ namespace Tide.Editor
         // Whether the tide Find gave is the package's own version: its daily look for a newer one says nothing
         public static bool Pinned { get; private set; }
 
+        // A tide was installed, or the package was switched: what found no tide (or found another) looks again, as
+        // the graph windows' schema and language server do. Nothing else says so: a window open through an update
+        // asked while the new tide was still on its way.
+        public static event Action Changed;
+
+        internal static void SayChanged() => Changed?.Invoke();
+
         // The tide command's full path, or null; `where` says how it was found, or what to do. `install`: the
         // package's version may be installed, now in a batch run (a build server), or in the editor once you say so;
         // `wait`: now in the editor too, as a player build waits for it.
