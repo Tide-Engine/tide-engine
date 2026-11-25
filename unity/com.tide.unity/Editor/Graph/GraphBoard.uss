@@ -20,6 +20,31 @@
     flex-shrink: 0;
 }
 
+/* Rows that line up in columns (GraphColumns): a cell's parts in a line, as wide as they are */
+.tg-colrow {
+    flex-direction: row;
+    align-items: center;
+}
+
+.tg-cell {
+    flex-direction: row;
+    align-items: center;
+    flex-shrink: 0;
+}
+
+.tg-cell > * {
+    flex-shrink: 0;
+    flex-grow: 0;
+}
+
+.tg-rows .tg-c3 {
+    overflow: hidden;
+}
+
+.tg-rows .tg-c3 > .tg-row-value {
+    flex-shrink: 1;
+}
+
 .tg-grow {
     flex-grow: 1;
 }
@@ -667,10 +692,6 @@
     border-left-color: var(--tg-warning);
 }
 
-.tg-row > * {
-    margin-right: 6px;
-}
-
 .tg-row > .tg-inline {
     flex-grow: 1;
     flex-basis: 0;
@@ -1163,14 +1184,22 @@
 
 .tg-port-type {
     color: var(--tg-muted);
-    font-size: var(--tg-font-92);
+    font-size: var(--tg-font-port-92);
 }
 
 .tg-value-color {
     width: 26px;
+    min-width: 0;
+    max-width: 26px;
     height: 18px;
     margin: 0;
+    padding: 0;
     flex-shrink: 0;
+}
+
+.tg-value-color > * {
+    min-width: 0;
+    margin: 0;
 }
 
 .tg-value-bool {
@@ -1452,7 +1481,7 @@ Label.tg-get-name {
     padding-right: 0;
 }
 
-.tg-get-row > .tg-port.tg-in > .tg-port-label {
+.tg-get-row > .tg-port.tg-in .tg-port-label {
     font-size: var(--tg-font-get-target);
 }
 
@@ -1553,7 +1582,8 @@ Label.tg-get-name {
     background-color: var(--tg-accent-18);
 }
 
-.tg-entry-sub {
+.tg-entry-sub,
+.tg-entry-query {
     margin-left: 18px;
 }
 

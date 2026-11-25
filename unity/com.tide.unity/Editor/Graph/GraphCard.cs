@@ -621,9 +621,28 @@ namespace Tide.Editor
         // What an empty card says goes in it, and how
         static Label Empty(string what) => GraphLook.Text(GraphSchema.Word("card.rows.empty", "what", (what ?? "").TrimEnd('…').ToLowerInvariant()), "tg-rows-empty");
 
-        // Its rows two pixels apart, as the page's
+        // Its rows two pixels apart, as the page's, in columns: a member's name (and its tag) | its type | its value (a
+        // property's links); a member with code's name, going to its frame | its kind; a choice's or a setting's
+        // name | value
         void SpaceRows()
         {
+            GraphColumns.Box(Rows);
+            foreach (var row in Rows.Children().Where(c => c.ClassListContains("tg-row")).ToList())
+            {
+                var parts = row.Children().ToList();
+                var type = parts.FindIndex(c => c is GraphTypeChip);
+                var code = parts.Count >= 2 && parts[0].ClassListContains("tg-row-tag") && parts[1].ClassListContains("tg-link");
+                // One value (a constant's, an asset's) is no row of columns
+                if (!code && row.Q<GraphName>() == null) continue;
+                GraphColumns.Sort(row, (c, i) =>
+                {
+                    if (c.resolvedStyle.position == Position.Absolute || c.style.position == Position.Absolute) return 0;
+                    if (code) return c.ClassListContains("tg-link") ? 1 : c.ClassListContains("tg-row-tag") ? 2 : 0;
+                    var at = parts.IndexOf(c);
+                    if (type >= 0) return at < type ? 1 : at == type ? 2 : 3;
+                    return c is GraphName || at == 0 ? 1 : 2;
+                });
+            }
             var first = true;
             foreach (var c in Rows.Children())
             {
@@ -694,7 +713,7 @@ namespace Tide.Editor
                 case "field":
                 case "tweak":
                 {
-                    if (kind == "tweak") row.Add(GraphLook.Text(GraphSchema.MemberTitle(kind), "tg-tag"));
+                    if (kind == "tweak") row.Add(GraphLook.Text(GraphSchema.MemberTitle(kind).ToLowerInvariant(), "tg-row-tag"));
                     if (m.Flag("local"))
                     {
                         var info = GraphSchema.KeyInfo("local");
@@ -754,7 +773,7 @@ namespace Tide.Editor
                     // A member with code: its frame is its own, and this row goes to it
                     var link = GraphLook.Labelled("code", Doc.TitleOf(e).Substring(Math.Max(0, Doc.TitleOf(e).IndexOf('.') + 1)), () => Board.Reveal(id), "tg-link");
                     link.tooltip = (GraphSchema.MemberSummary(kind) ?? GraphSchema.MemberTitle(kind)) + ". Go to its code.";
-                    row.Add(GraphLook.Text(GraphSchema.MemberTitle(kind), "tg-tag"));
+                    row.Add(GraphLook.Text(GraphSchema.MemberTitle(kind).ToLowerInvariant(), "tg-row-tag"));
                     row.Add(link);
                     row.Add(new VisualElement { style = { flexGrow = 1 } });
                     var mark = new GraphIcon("warn") { tooltip = "Its code has a problem", style = { color = new StyleColor(new Color(1f, 0.45f, 0.4f)) } };

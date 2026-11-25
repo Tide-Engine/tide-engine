@@ -852,16 +852,25 @@ namespace Tide.Editor
             if (fields.Count > 0)
             {
                 Body = GraphLook.Row("tg-node-fields");
+                GraphColumns.Box(Body);
                 foreach (var f in fields)
                 {
                     var line = GraphLook.Row("tg-field-row");
-                    line.Add(f);
+                    if (f.ClassListContains("tg-field") && f.Q(className: "tg-field-label") != null)
+                    {
+                        // name | control
+                        GraphColumns.Sort(f, (c, i) => c.ClassListContains("tg-field-label") ? 1 : 2);
+                        line.AddToClassList("tg-colrow");
+                        foreach (var cell in f.Children().ToList()) line.Add(cell);
+                    }
+                    else line.Add(f);
                     if (Body.childCount > 0) Body.Add(Gap(2, true));
                     Body.Add(line);
                 }
                 Add(Body);
             }
             var left = GraphLook.Row("tg-col", "tg-col-in");
+            GraphColumns.Box(left);
             var right = GraphLook.Row("tg-col", "tg-col-out");
             var leftRows = new List<VisualElement>();
             // Another argument, item or field is added by a + at the end of the last one's row
@@ -872,7 +881,22 @@ namespace Tide.Editor
             {
                 if (last == null) return;
                 var plus = GroupAdd(last.Value.owner, last.Value.port.Group, true);
-                if (plus != null) lastRow.Add(plus);
+                if (plus != null)
+                {
+                    // In the rest of the row's cells, with its ×
+                    var rest = lastRow.Q(className: "tg-c3");
+                    if (rest == null)
+                    {
+                        rest = new VisualElement { pickingMode = PickingMode.Ignore };
+                        rest.AddToClassList("tg-cell");
+                        rest.AddToClassList("tg-c3");
+                        rest.style.marginLeft = 5;
+                        lastRow.Insert(lastRow.Children().Count(c => c.ClassListContains("tg-cell")), rest);
+                    }
+                    if (rest.childCount > 0) plus.style.marginLeft = 5;
+                    rest.style.display = DisplayStyle.Flex;
+                    rest.Add(plus);
+                }
                 last = null;
             }
             foreach (var (owner, p) in rowInputs)
@@ -1123,19 +1147,21 @@ namespace Tide.Editor
             var pin = Pin(p);
             pin.Connected = from != 0;
             var label = p.Label ?? "";
-            var items = new List<VisualElement> { pin };
-            if (lead != null) items.Add(lead);
+            // Its cells, in the columns of its node's inputs: its pin and name (or the operator in its place), what's in
+            // it, and the rest
+            var items = new List<(VisualElement, int)> { (pin, 1) };
+            if (lead != null) items.Add((lead, 1));
             else if (!string.IsNullOrEmpty(label))
             {
                 var word = GraphLook.Text(label, "tg-port-label");
-                items.Add(word);
+                items.Add((word, 1));
                 if (p.Path.Key == "args" && (owner.Str("k") == "call" || owner.Str("k") == "method")) argLabels.Add((word, owner, p.Path));
             }
-            if (from == 0) items.Add(PickButton(owner, p.Path, label));
-            else if (shown != null) items.Add(InlineValue(owner, p.Path, label, from));
-            items.Add(trail);
-            if (from != 0) items.Add(EmptyButton(owner, p.Path, label));
-            Spaced(row, 5, items);
+            if (from == 0) items.Add((PickButton(owner, p.Path, label), 2));
+            else if (shown != null) items.Add((InlineValue(owner, p.Path, label, from), 2));
+            items.Add((trail, 3));
+            if (from != 0) items.Add((EmptyButton(owner, p.Path, label), 3));
+            GraphColumns.Row(row, items);
             rowLabels[row] = label;
             inputs[row] = (owner, p.Path, label);
             // Alt and a click empties it: what was in it, or its wire
@@ -1881,6 +1907,56 @@ namespace Tide.Editor
                 Body.Add(row);
             }
             if (r.Flag("extern")) Body.Add(GraphLook.Text(GraphSchema.Word("entry.extern", "extern", GraphSchema.KeyInfo("extern").Label), "tg-entry-note"));
+            Columns();
+        }
+
+        // Its rows in columns: how each is taken (and local, verified, previous) | its type (and scene) | its name
+        // (and its default) | its pin
+        void Columns()
+        {
+            // A query's own rows are a box of their own under it
+            var boxes = new List<VisualElement> { Body };
+            VisualElement query = null;
+            foreach (var c in Body.Children().ToList())
+            {
+                if (!c.ClassListContains("tg-entry-sub"))
+                {
+                    query = null;
+                    continue;
+                }
+                if (query == null)
+                {
+                    query = GraphLook.Row("tg-entry-query");
+                    Body.Insert(Body.IndexOf(c), query);
+                    boxes.Add(query);
+                }
+                c.RemoveFromClassList("tg-entry-sub");
+                query.Add(c);
+            }
+            foreach (var box in boxes) Columns(box);
+        }
+
+        void Columns(VisualElement box)
+        {
+            GraphColumns.Box(box);
+            foreach (var row in box.Children().Where(c => c.ClassListContains("tg-entry-row")).ToList())
+            {
+                var parts = row.Children().Where(c => !c.ClassListContains("tg-gap") && !c.ClassListContains("tg-grow")).ToList();
+                var type = parts.FindIndex(c => c is GraphTypeChip || c.ClassListContains("tg-type"));
+                var name = parts.FindIndex(c => c is GraphName || c.ClassListContains("tg-entry-name") || c is TextField);
+                GraphColumns.Sort(row, (c, i) =>
+                {
+                    if (c.ClassListContains("tg-row-more")) return 0;
+                    if (c.ClassListContains("tg-pin")) return 4;
+                    var at = parts.IndexOf(c);
+                    if (c.ClassListContains("tg-mode")) return 1;
+                    if (type >= 0 && at == type) return 2;
+                    if (name >= 0 && at >= name) return 3;
+                    if (type >= 0 && at > type) return 2;
+                    if (type < 0 && name < 0) return 2;
+                    return type >= 0 && at < type ? 1 : 3;
+                });
+            }
         }
 
         // How a row is taken, where it can't be changed: "trigger", "payload", "result"

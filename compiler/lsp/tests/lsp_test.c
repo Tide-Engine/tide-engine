@@ -14407,6 +14407,19 @@ TIDE_TEST(lsp_graphs)
             TIDE_CHECK(json_get(layout, key) && json_int(json_get(layout, key)->items[0], -1) == json_int(json_get(layout, "2")->items[0], 0));
         }
     }
+    // A node is as big as the editor drew it, where it says (`sizes`), and the next statement's values go past
+    // the code an if holds: Wide(), in the if's body, drawn 900 wide, and the return's Two() right of it
+    clear_sent();
+    handle("{\"jsonrpc\":\"2.0\",\"id\":10,\"method\":\"tide/graphLayout\",\"params\":{\"graph\":{\"entry\":1,"
+           "\"sizes\":{\"5\":[900,80]},\"nodes\":["
+           "{\"id\":1,\"k\":\"if\",\"cond\":2,\"then\":3,\"next\":4},{\"id\":2,\"k\":\"call\",\"name\":\"Ready\"},"
+           "{\"id\":3,\"k\":\"eval\",\"value\":5},{\"id\":5,\"k\":\"call\",\"name\":\"Wide\"},"
+           "{\"id\":4,\"k\":\"return\",\"value\":6},{\"id\":6,\"k\":\"call\",\"name\":\"Two\"}]}}}");
+    layout = json_path(json_parse(last_sent(), strlen(last_sent())), "result", NULL);
+    TIDE_CHECK(layout && json_get(layout, "5") && json_get(layout, "6"));
+    if (layout && json_get(layout, "5") && json_get(layout, "6")) {
+        TIDE_CHECK(json_int(json_get(layout, "6")->items[0], 0) >= json_int(json_get(layout, "5")->items[0], 0) + 900);
+    }
     clear_sent();
     lsp_free(&server);
 }

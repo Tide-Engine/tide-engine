@@ -945,3 +945,39 @@ tidels but each drew its own look and said its own words, and no test compared t
 - Not there: the page has no "not saved" marker in its toolbar or View as Tide as a panel (the host's); Unity's
   undo names and some popup texts have no schema words yet; the drawn comparison doesn't run in CI (no graphics
   device there); the light look is compared by pictures only.
+
+## Rows in columns (owner, 2026-11-25)
+
+The owner: "where we display the types on the definitions or usages we should try to align them so they are
+easier to read", then "that applies to almost all rows. if we can, we should align". Built in both editors (my
+picks, Provisional):
+
+- **The rows of a box are columns**: each as wide as its widest cell in that box (measured from that box alone, so
+  a box of short names stays small), left-aligned; a cell with something in it starts `look.sizes.columnGap` (8
+  px) after the column before it; an empty cell takes no room, and a column empty on every row adds nothing; the
+  parts of a cell are 5 px apart. A + button, a problem line or a heading spans the box.
+- Card members: name (and a `tweak` or `local` tag) | type | value; a property's tag and its get/set links where a
+  value goes; a method "Turn" | `method`; enum choices and settings name | value. An entry's and a Takes' rows:
+  mode (with `local`, `verified`, `previous`) | type (with `scene`) | name (with a default) | pin; the trigger,
+  payload, a setter's value and "result" in the same columns; a query's own rows a box of their own, 18 px in; a
+  sample's, with no mode, from the type. A node's inputs and a call's arguments: pin and name (a Set's operator in
+  the name's column) | what's in it | ×, +. A node's own named fields: name | control. My game: name (a nested
+  row's indent inside it) | kind or type | problems. Details: one label column, as wide as the panel's widest
+  label (a closed Advanced's too, so opening it moves nothing), at most 45% of the panel.
+- Left as they were: a Local's title tags, a lambda's parameters (one line), the pickers' lists (types already at
+  the right edge, and a summary line), a constant's or an asset's card, a prefab's rows.
+- Unity lines them up with `GraphColumns.cs` (USS has no grid: a box is measured after layout and its cells'
+  widths set).
+- The drawn files have `columns` (per aligned box of a card or node, where each visible column starts), compared
+  within 4 px; the web's drawn test also fails if a cell is off its column's x (board, My game, Details), and
+  Unity's `ThePanelsRowsLineUp` checks My game and Details.
+
+**Nodes never overlap after a layout** (found by the drawn files): tidec's layout started the next statement
+after the previous one's node, not after the code it holds, so its values lay on an if's body; and its sizes are
+estimates. Now `place_chain` goes on past a statement's bodies, and `tide/graphLayout`'s graph takes `sizes`
+(`{"<id>": [w, h]}`, the editor's drawn sizes, over tidec's estimate); both editors' Tidy up send every node's
+drawn size (`lsp_graphs` checks both). spin, shapes and stars are laid out again with drawn sizes (Tide
+byte-identical), and both drawn tests fail if two nodes of one frame overlap.
+
+Tests: `tide_graph_editor` (model 23, browser 12), docs playground 8, tide-vscode 38, JetBrains 18; tidels_tests
+`lsp_graphs`; Unity's graph fixtures 63 on the hidden desktop, 59 and 4 skipped under `-nographics`.

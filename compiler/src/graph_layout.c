@@ -5,6 +5,7 @@
 
 #include "graph.h"
 
+#include <stdio.h>
 #include <string.h>
 
 enum { NODE_GAP = 40, ROW_GAP = 60, MAX_ROW = 3200 };
@@ -227,7 +228,7 @@ static extent place_chain(layout *l, int id, int x, const int y)
         if (bottom > row_bottom) row_bottom = bottom;
         if (right > e.right) e.right = right;
         if (row_bottom > e.bottom) e.bottom = row_bottom;
-        x = node_x + n->w + NODE_GAP * 2;
+        x = right + NODE_GAP * 2; // Past the code it holds too, which the next statement's values would lie on
         id = n->next;
     }
     return e;
@@ -269,6 +270,8 @@ bool graph_layout_json(const graph_json *g, sb *out)
     const graph_json *root = graph_json_get(g, "root");
     const bool body = !root;
     const graph_json *start = body ? entry : root;
+    const graph_json *sizes = graph_json_get(g, "sizes");
+    if (sizes && sizes->kind != GJ_OBJECT) sizes = NULL;
     graph_layout_node *placed = arena_alloc(sizeof(graph_layout_node) * (size_t)(nodes->count ? nodes->count : 1));
     graph_schema_hold(true);
     for (int i = 0; i < nodes->count; i++) {
@@ -290,6 +293,16 @@ bool graph_layout_json(const graph_json *g, sb *out)
             if (n->items[k]->kind == GJ_STRING && n->items[k]->text.len > widest) widest = n->items[k]->text.len;
         }
         graph_layout_measure(p, widest);
+        // The size an editor drew it at, where it says (`sizes`: {"<id>": [w, h]}), over tidec's estimate
+        char key[16];
+        snprintf(key, sizeof key, "%d", p->id);
+        const graph_json *drawn = sizes ? graph_json_get(sizes, key) : NULL;
+        if (drawn && drawn->kind == GJ_ARRAY && drawn->count == 2 && drawn->items[0]->kind == GJ_NUMBER
+            && drawn->items[1]->kind == GJ_NUMBER && drawn->items[0]->number > 0 && drawn->items[1]->number > 0
+            && drawn->items[0]->number < 100000 && drawn->items[1]->number < 100000) {
+            p->w = (int)drawn->items[0]->number;
+            p->h = (int)drawn->items[1]->number;
+        }
     }
     graph_schema_hold(false);
     graph_layout_place(placed, nodes->count, start && start->kind == GJ_NUMBER ? (int)start->number : 0, body);

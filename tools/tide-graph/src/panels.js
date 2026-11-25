@@ -82,9 +82,12 @@
             const toggle = opens
                 ? button(open ? '▾' : '▸', () => { if (open) this.openVars.delete(key); else this.openVars.add(key); this.render(); }, open ? w('variables.close') : w('variables.open'), 'tg-icon.tg-var-toggle')
                 : el('span.tg-var-toggle');
-            const row = el('div.tg-mygame-item.tg-mygame-var', { dataset: { var: v.text }, style: { paddingLeft: 6 + 14 * depth + 'px' }, title: w(v.type ? 'variables.row.typed' : 'variables.row', { name: v.text, type: v.type }) },
-                toggle, el('span.tg-swatch', { style: { background: typeColor(v.type) || 'var(--tg-muted)' } }),
-                el('span.tg-mygame-name', { text: depth ? v.members.at(-1) : v.text }), el('span.tg-mygame-kind', { text: v.type || '' }));
+            // (A field's row is set in in its name's column, so the column is as wide as that needs)
+            const name = G.ui.cell(1, toggle, el('span.tg-swatch', { style: { background: typeColor(v.type) || 'var(--tg-muted)' } }),
+                el('span.tg-mygame-name', { text: depth ? v.members.at(-1) : v.text }));
+            name.style.paddingLeft = 6 + 14 * depth + 'px';
+            const row = el('div.tg-mygame-item.tg-mygame-var.tg-colrow', { dataset: { var: v.text }, title: w(v.type ? 'variables.row.typed' : 'variables.row', { name: v.text, type: v.type }) },
+                name, G.ui.cell(2, el('span.tg-mygame-kind', { text: v.type || '' })));
             row.addEventListener('pointerdown', e => this.downVar(e, row, f, v));
             // Over it, its Gets on the board light, and where it comes from
             const read = v.start.local !== undefined ? `local:${v.start.local}` : `pin:${v.start.name}`;
@@ -153,7 +156,8 @@
                 }
             });
             this.input = input;
-            const list = el('div.tg-mygame-list');
+            // Its rows line up: name | what it is (a variable's type)
+            const list = el('div.tg-mygame-list.tg-cols');
             this.fill(list);
             box.replaceChildren(
                 el('div.tg-panel-head', null, el('span.tg-panel-title', { text: w('mygame.title') }), el('span.tg-grow'),
@@ -201,10 +205,12 @@
             const name = renamable
                 ? G.ui.nameText(v.name ?? '', x => app.renameDecl(item, x), { className: 'tg-mygame-name', placeholder: w('placeholder.name'), check: G.cards.checkName, fk: `mygame:${v.id}:name`, title: w('mygame.item.tip') })
                 : el('span.tg-mygame-name', { text: entry.title, title: w('mygame.item.go') });
-            const row = el('div.tg-mygame-item' + (ed.picked.has(entry.id) ? '.tg-on' : ''), { dataset: { id: entry.id, kind: v?.kind || '' }, style: depth ? { paddingLeft: 14 + 16 * depth + 'px' } : undefined },
-                el('span.tg-swatch', { style: { background: item?.card ? typeColor(v?.name) || 'var(--tg-data)' : 'var(--tg-behaviour)' } }),
-                name, el('span.tg-mygame-kind', { text: entry.detail }),
-                entry.problems ? el('span.tg-badge.tg-badge-error', { text: String(entry.problems) }) : null);
+            const lead = G.ui.cell(1, el('span.tg-swatch', { style: { background: item?.card ? typeColor(v?.name) || 'var(--tg-data)' : 'var(--tg-behaviour)' } }), name);
+            lead.style.paddingLeft = 14 + 16 * depth + 'px';
+            const row = el('div.tg-mygame-item.tg-colrow' + (ed.picked.has(entry.id) ? '.tg-on' : ''), { dataset: { id: entry.id, kind: v?.kind || '' } },
+                lead,
+                G.ui.cell(2, el('span.tg-mygame-kind', { text: entry.detail })),
+                G.ui.cell(3, entry.problems ? el('span.tg-badge.tg-badge-error', { text: String(entry.problems) }) : null));
             row.addEventListener('pointerdown', e => this.down(e, row, item));
             row.addEventListener('pointermove', e => this.move(e));
             row.addEventListener('pointerup', e => this.up(e));
@@ -304,6 +310,22 @@
             }
             box.dataset.what = what;
             box.replaceChildren(head, body);
+            this.lineUp(body);
+        }
+
+        // Its lines line up: label | control, the labels' column as wide as the widest label in Details, those in a
+        // closed Advanced too (measured as text, since they aren't drawn), so opening it moves nothing
+        lineUp(body) {
+            const labels = [...body.querySelectorAll('.tg-details-label')];
+            if (!labels.length) return;
+            const ctx = (Details.measure ||= document.createElement('canvas').getContext('2d'));
+            let widest = 0;
+            for (const label of labels) {
+                const style = getComputedStyle(label);
+                ctx.font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+                widest = Math.max(widest, ctx.measureText(label.textContent).width);
+            }
+            body.style.setProperty('--tg-details-label', Math.ceil(widest) + 'px');
         }
 
         // -- What Details is made of

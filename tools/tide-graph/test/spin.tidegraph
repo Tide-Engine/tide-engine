@@ -36,18 +36,18 @@
       "body": {
         "entry": 13,
         "nodes": [
-          {"id": 7, "k": "name", "x": 448, "y": 136, "name": "wobble"},
-          {"id": 8, "k": "member", "x": 584, "y": 136, "object": 7, "member": "phase"},
-          {"id": 9, "k": "float", "x": 356, "y": 184, "text": "1.5"},
-          {"id": 10, "k": "name", "x": 0, "y": 184, "name": "wobble"},
-          {"id": 11, "k": "member", "x": 136, "y": 184, "object": 10, "member": "frequency"},
-          {"id": 12, "k": "binary", "x": 356, "y": 184, "op": "+", "lhs": 9, "rhs": 11},
-          {"id": 13, "k": "assign", "x": 584, "y": 0, "op": "=", "target": 8, "value": 12, "next": 18},
-          {"id": 14, "k": "name", "x": 1048, "y": 136, "name": "wobble"},
-          {"id": 15, "k": "member", "x": 1184, "y": 136, "object": 14, "member": "frequency"},
-          {"id": 16, "k": "name", "x": 852, "y": 184, "name": "wobble"},
-          {"id": 17, "k": "member", "x": 988, "y": 184, "object": 16, "member": "phase"},
-          {"id": 18, "k": "assign", "x": 1184, "y": 0, "op": "=", "target": 15, "value": 17}
+          {"id": 7, "k": "name", "x": 406, "y": 91, "name": "wobble"},
+          {"id": 8, "k": "member", "x": 528, "y": 91, "object": 7, "member": "phase"},
+          {"id": 9, "k": "float", "x": 324, "y": 135, "text": "1.5"},
+          {"id": 10, "k": "name", "x": 0, "y": 135, "name": "wobble"},
+          {"id": 11, "k": "member", "x": 122, "y": 135, "object": 10, "member": "frequency"},
+          {"id": 12, "k": "binary", "x": 324, "y": 135, "op": "+", "lhs": 9, "rhs": 11},
+          {"id": 13, "k": "assign", "x": 528, "y": 0, "op": "=", "target": 8, "value": 12, "next": 18},
+          {"id": 14, "k": "name", "x": 956, "y": 91, "name": "wobble"},
+          {"id": 15, "k": "member", "x": 1078, "y": 91, "object": 14, "member": "frequency"},
+          {"id": 16, "k": "name", "x": 780, "y": 135, "name": "wobble"},
+          {"id": 17, "k": "member", "x": 902, "y": 135, "object": 16, "member": "phase"},
+          {"id": 18, "k": "assign", "x": 1078, "y": 0, "op": "=", "target": 15, "value": 17}
         ]
       }
     }

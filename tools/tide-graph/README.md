@@ -20,7 +20,9 @@ which it is, and none of a host's own colours or font are taken), sizes and font
 of its own (the toolbar, the board's hint, menus with their keys, panels, pickers, tooltips, messages) is the schema's
 `words` (`G.w('toast.deleted', { what })`). The font is Inter, shipped in `fonts/` under the SIL Open Font License;
 a host that puts `style.css` in the page inline gives its `url()`s a place (JetBrains as data, the docs as the site's
-assets). `test/drawn/` holds what it draws for three graphs, which Unity's window is checked against too.
+assets). Where the rows of one box have the same parts they're columns, each as wide as its widest cell in that box
+(`.tg-cols` in `style.css`; the look's `columnGap` between them). `test/drawn/` holds what it draws for three graphs,
+which Unity's window is checked against too.
 
 Everything it says and offers comes from the schema tidels serves (`tide/graphSchema`, the compiler's
 `compiler/src/graph_schema.json`, which each host also packages as the schema to start with): the kinds and their

@@ -1787,13 +1787,29 @@ namespace Tide.Editor
 
         internal bool LayoutPending { get; private set; }
 
+        // A frame's graph with each node as big as it's drawn, which tidec takes over its own estimate
+        // (tide/graphLayout's sizes)
+        internal static JValue WithSizes(GraphFrame frame)
+        {
+            var sent = frame.Graph.Clone();
+            var sizes = JValue.NewObject();
+            foreach (var v in frame.Views.Values)
+            {
+                var size = v.layout.size;
+                if (float.IsNaN(size.x) || size.x <= 0) continue;
+                sizes.Set(v.Id.ToString(System.Globalization.CultureInfo.InvariantCulture), JValue.ArrayOf(new[] { JValue.Of(Mathf.Round(size.x)), JValue.Of(Mathf.Round(size.y)) }));
+            }
+            if (sizes.Count > 0) sent.Set("sizes", sizes);
+            return sent;
+        }
+
         // Lays out a frame's nodes as tidec does; without the language server they stay where they are
         public void Tidy(GraphFrame frame)
         {
             var graph = frame.Graph;
             if (graph == null) return;
             LayoutPending = true;
-            TideGraphLanguage.Layout(graph, (layout, why) =>
+            TideGraphLanguage.Layout(WithSizes(frame), (layout, why) =>
             {
                 LayoutPending = false;
                 if (Window == null || frame.parent == null) return;

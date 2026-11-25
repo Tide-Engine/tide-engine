@@ -42,6 +42,7 @@
     --tg-header-padding: 8px;
     --tg-padding: 8px;
     --tg-gap: 4px;
+    --tg-column-gap: 8px;
     --tg-get: 26px;
     --tg-get-padding: 12px;
     --tg-knot: 18px;
@@ -72,6 +73,7 @@
     --tg-font-135: 17.55px;
     --tg-font-port-85: 10.17px;
     --tg-font-port-88: 10.52px;
+    --tg-font-port-92: 11px;
     --tg-font-port-95: 11.36px;
     --tg-font-port-105: 12.56px;
     --tg-font-get-target: 10.29px;

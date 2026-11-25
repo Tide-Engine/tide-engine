@@ -651,7 +651,7 @@ public class GraphLanguageTests
         Assert.Greater(Y(18), Y(16), "what nothing reads on a row below");
         // tidels's layout of the body, as it gives it
         JValue layout = null;
-        TideGraphLanguage.Layout(board.Frame(10).Graph, (l, _) => layout = l);
+        TideGraphLanguage.Layout(GraphBoard.WithSizes(board.Frame(10)), (l, _) => layout = l);
         yield return Until(() => layout != null, "tidels gives the layout");
         foreach (var id in new[] { 12, 13, 15, 16, 17, 18 })
         {

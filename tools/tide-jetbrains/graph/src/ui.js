@@ -41,6 +41,12 @@
         return parent;
     }
 
+    // A row's cell in column `n` (1 to 4) of a box whose rows line up in columns (style.css, .tg-cols): each
+    // column is as wide as its widest cell in the box, and a column empty in every row takes no room
+    function cell(n, ...children) {
+        return el('span.tg-cell.tg-c' + n, null, children);
+    }
+
     function svg(tag, attrs) {
         const e = document.createElementNS('http://www.w3.org/2000/svg', tag);
         for (const [k, v] of Object.entries(attrs || {})) e.setAttribute(k, v);
@@ -519,5 +525,5 @@
         try { localStorage.setItem('tide-graph:' + key, JSON.stringify(value)); } catch {}
     }
 
-    G.ui = { el, put, svg, field, nameText, checkbox, select, button, popup, closePopups, popupOpen, menu, picker, rank, tooltip, toast, typeColor, hslHex, remembered, remember };
+    G.ui = { el, put, cell, svg, field, nameText, checkbox, select, button, popup, closePopups, popupOpen, menu, picker, rank, tooltip, toast, typeColor, hslHex, remembered, remember };
 })(globalThis.TideGraph = globalThis.TideGraph || {});

@@ -48,6 +48,7 @@ namespace Tide.Editor
                         rows.Add(r);
                     }
                     c.Set("rows", JValue.ArrayOf(rows));
+                    c.Set("columns", Columns(item));
                     cards.Add((item.Id, c));
                     continue;
                 }
@@ -135,11 +136,14 @@ namespace Tide.Editor
             }
             foreach (var pin in view.Ports)
             {
+                // Its row (a pin in a row's cells is in its first)
                 var row = pin.parent;
+                if (row != null && row.ClassListContains("tg-cell")) row = row.parent;
                 if (row == null || Up(row, "tg-node-sub") != null) continue;
-                var lead = row.Children().FirstOrDefault(c => c.ClassListContains("tg-op"));
+                var first = row.Children().FirstOrDefault(c => c.ClassListContains("tg-c1")) ?? row;
+                var lead = first.Children().FirstOrDefault(c => c.ClassListContains("tg-op"));
                 var param = entry ? Up(row, "tg-entry-row") : null;
-                var label = lead != null ? Words(lead) : param != null ? Words(param.Q(className: "tg-entry-name")) : Words(row.Children().FirstOrDefault(c => c.ClassListContains("tg-port-label")));
+                var label = lead != null ? Words(lead) : param != null ? Words(param.Q(className: "tg-entry-name")) : Words(first.Children().FirstOrDefault(c => c.ClassListContains("tg-port-label")));
                 var text = param != null ? Words(param.Q<GraphTypeChip>()) : Shown(row, x => x is PortView || x.ClassListContains("tg-port-label") || x.ClassListContains("tg-op") || x.ClassListContains("tg-row-empty") || x.ClassListContains("tg-row-pick") || x.ClassListContains("tg-port-add"));
                 var at = At(pin);
                 rows.Add((at.y, at.x, Row(label, Kind(pin.Port), pin.TypeTint, text)));
@@ -163,8 +167,15 @@ namespace Tide.Editor
                 i = j;
             }
             n.Set("rows", JValue.ArrayOf(ordered));
+            n.Set("columns", Columns(view));
             return n;
         }
+
+        // Its boxes whose rows line up in columns, as they're drawn: where each column with something seen in it
+        // starts, from its left; boxes of two or more
+        static JValue Columns(VisualElement e) => JValue.ArrayOf(e.Query(className: "tg-cols").ToList()
+            .Select(box => GraphColumns.Starts(box, e)).Where(s => s.Count >= 2)
+            .Select(s => JValue.ArrayOf(s.Select(x => JValue.Of(Mathf.Round(x))))));
 
         static string Kind(GraphPort p) => p.Exec ? (p.Input ? "exec-in" : "exec-out") : p.Input ? "in" : "out";
 

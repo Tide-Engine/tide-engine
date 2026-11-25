@@ -65,7 +65,8 @@ bool graph_schema_numbers(str name);
 bool graph_schema_titled(str kind);
 // Where each node goes, from `root`: a body's first statement, or a value's node
 void graph_layout_place(graph_layout_node *nodes, int count, int root, bool body);
-// A graph's JSON ({"entry"|"root", "nodes"}) laid out: {"<id>": [x, y], ...}; false for what isn't a graph
+// A graph's JSON ({"entry"|"root", "nodes"}, and the sizes an editor drew its nodes at, `sizes`: {"<id>": [w, h]},
+// for any) laid out: {"<id>": [x, y], ...}; false for what isn't a graph
 bool graph_layout_json(const graph_json *graph, sb *out);
 
 // A whole file as a board: where each declaration's card or frame goes (and each member's that has code of its

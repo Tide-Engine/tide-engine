@@ -729,14 +729,14 @@
             toast(names.length === 1 ? w('toast.deleted', { what: names[0] }) : w('toast.deletedMany', { count: names.length }), { action: w('toast.undo'), run: () => this.command('undo') });
         }
 
-        // Lays a frame's nodes out as tidec does
+        // Lays a frame's nodes out as tidec does, at the sizes they're drawn at here
         async layoutFrame(id) {
             const f = this.board.frames.get(id);
             const g = f?.graph;
             if (!g) return;
             let places;
             try {
-                places = await this.request('tide/graphLayout', { graph: g });
+                places = await this.request('tide/graphLayout', { graph: { ...g, sizes: f.drawnSizes() } });
             } catch (e) {
                 toast(w('toast.cantTidy', { why: e.message }));
                 return;

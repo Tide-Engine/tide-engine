@@ -222,7 +222,8 @@
         const note = noteOf(app, item);
         if (note) G.ui.put(card, note);
 
-        const rows = el('div.tg-rows');
+        // A card's members, its choices or its settings line up: name | type | value
+        const rows = el('div.tg-rows' + (rk ? '.tg-cols' : ''));
         // Enter in a row goes to the next one, and makes it after the last
         const nextRow = m => () => {
             const list = rowsOf();
@@ -230,7 +231,8 @@
             if (next) { ed.selectRow(item.id, next.id); board.focusSoon(`${next.id}:name`, true); }
             else addRow(m);
         };
-        const rowOf = (m, ...parts) => el('div.tg-row', { dataset: { id: m.id }, title: m.comment || undefined }, parts);
+        const rowOf = (m, ...parts) => el('div.tg-row.tg-colrow', { dataset: { id: m.id }, title: m.comment || undefined }, parts);
+        const cell = G.ui.cell;
         const name = (m, placeholder, extra = {}) => G.ui.nameText(m.name, x => edit(() => { m.name = x; }), { className: 'tg-row-name', placeholder, check: checkName, fk: `${m.id}:name`, ...extra });
 
         if (rk?.kind === 'member') {
@@ -240,48 +242,51 @@
                 const order = mspec?.keys || [];
                 if (m.kind === 'field' || m.kind === 'tweak') {
                     const valueKey = m.kind === 'tweak' ? 'value' : 'default';
+                    // (What it is besides a field, a tweak or local, follows its name)
                     G.ui.put(rows, rowOf(m,
-                        m.kind === 'tweak' ? el('span.tg-row-tag', { text: mspec.title.toLowerCase(), title: mspec.summary }) : null,
-                        m.local ? el('span.tg-row-tag', { text: 'local', title: `${s.keyLabel('local')}: ${s.keyHelp('local')}` }) : null,
-                        name(m, w('placeholder.lower'), { onEnter: nextRow(m) }),
-                        typeChip(app, { type: m.type, at: m.id, own, fk: `${m.id}:type`, onPick: t => edit(d => { set(m, 'type', t, order); delete m[valueKey]; if (m.kind === 'tweak') set(m, 'value', defaultValue(app, d, t), order); }) }),
-                        G.values.control(app, { holder: m, key: valueKey, type: m.type, slot: { owner: m.id, key: valueKey }, order, fk: `${m.id}:value`, required: m.kind === 'tweak', label: s.keyLabel(valueKey), onEnter: nextRow(m) })));
+                        cell(1, name(m, w('placeholder.lower'), { onEnter: nextRow(m) }),
+                            m.kind === 'tweak' ? el('span.tg-row-tag', { text: mspec.title.toLowerCase(), title: mspec.summary }) : null,
+                            m.local ? el('span.tg-row-tag', { text: 'local', title: `${s.keyLabel('local')}: ${s.keyHelp('local')}` }) : null),
+                        cell(2, typeChip(app, { type: m.type, at: m.id, own, fk: `${m.id}:type`, onPick: t => edit(d => { set(m, 'type', t, order); delete m[valueKey]; if (m.kind === 'tweak') set(m, 'value', defaultValue(app, d, t), order); }) })),
+                        cell(3, G.values.control(app, { holder: m, key: valueKey, type: m.type, slot: { owner: m.id, key: valueKey }, order, fk: `${m.id}:value`, required: m.kind === 'tweak', label: s.keyLabel(valueKey), onEnter: nextRow(m) }))));
                 } else if (m.kind === 'property') {
                     const accessors = Array.isArray(m.accessors) ? m.accessors : [];
+                    // A property: its name, its type, and where a field's value is, what it is and its get and set
                     G.ui.put(rows, rowOf(m,
-                        el('span.tg-row-tag', { text: mspec.title.toLowerCase(), title: mspec.summary }),
-                        name(m, w('placeholder.name')),
-                        typeChip(app, { type: m.type, at: m.id, own, fk: `${m.id}:type`, onPick: t => edit(() => set(m, 'type', t, order)) }),
-                        el('span.tg-row-links', null,
+                        cell(1, name(m, w('placeholder.name'))),
+                        cell(2, typeChip(app, { type: m.type, at: m.id, own, fk: `${m.id}:type`, onPick: t => edit(() => set(m, 'type', t, order)) })),
+                        cell(3, el('span.tg-row-tag', { text: mspec.title.toLowerCase(), title: mspec.summary }), el('span.tg-row-links', null,
                             accessors.map(a => button(a.word, () => app.reveal(a.id), w('card.accessor.go', { word: a.word }), 'tg-link')),
                             ['get', 'set'].filter(w => !accessors.some(a => a.word === w)).map(w => button('+ ' + w, () => {
                                 let made;
                                 edit(d => { if (!Array.isArray(m.accessors)) set(m, 'accessors', [], order); made = d.newAccessor(w); m.accessors.push(made); });
                                 if (made) app.reveal(made.id);
-                            }, G.w('card.accessor.add', { word: w }), 'tg-link.tg-link-add')))));
+                            }, G.w('card.accessor.add', { word: w }), 'tg-link.tg-link-add'))))));
                 } else if (mspec?.body) {
                     const title = m.kind === 'operator' ? `operator ${m.op ?? ''}` : m.name ?? mspec.title;
+                    // A member with code: its name, going to its frame, and what it is where a field's type is
                     G.ui.put(rows, rowOf(m,
-                        el('span.tg-row-tag', { text: mspec.title.toLowerCase(), title: mspec.summary }),
-                        button(title + ' →', () => app.reveal(m.id), w('card.code.go'), 'tg-link.tg-row-code')));
+                        cell(1, button(title + ' →', () => app.reveal(m.id), w('card.code.go'), 'tg-link.tg-row-code')),
+                        cell(2, el('span.tg-row-tag', { text: mspec.title.toLowerCase(), title: mspec.summary }))));
                 } else {
+                    // Text of its own (C): what it is, and its first line across the rest of the row
                     G.ui.put(rows, rowOf(m,
-                        el('span.tg-row-tag', { text: (mspec?.title || 'text').toLowerCase(), title: mspec?.summary }),
-                        button(firstLine(m.text || '') || w('card.text.empty'), e => promptText({ x: e.clientX, y: e.clientY, title: mspec?.title || w('card.text.title'), help: mspec?.summary, value: m.text, multiline: true, mono: true,
-                            onDone: text => edit(() => { m.text = text; }) }), w('card.text.tip'), 'tg-link.tg-row-text.tg-mono')));
+                        cell(1, el('span.tg-row-tag', { text: (mspec?.title || 'text').toLowerCase(), title: mspec?.summary })),
+                        el('span.tg-cell.tg-cell-rest', null, button(firstLine(m.text || '') || w('card.text.empty'), e => promptText({ x: e.clientX, y: e.clientY, title: mspec?.title || w('card.text.title'), help: mspec?.summary, value: m.text, multiline: true, mono: true,
+                            onDone: text => edit(() => { m.text = text; }) }), w('card.text.tip'), 'tg-link.tg-row-text.tg-mono'))));
                 }
             }
         } else if (isEnum) {
             for (const m of rowsOf()) {
                 G.ui.put(rows, rowOf(m,
-                    name(m, w('placeholder.name'), { onEnter: nextRow(m) }),
-                    G.values.control(app, { holder: m, key: 'value', type: 'int', slot: { owner: m.id, key: 'value' }, order: s.element('enumMember'), fk: `${m.id}:value`, label: w('card.enum.number'), onEnter: nextRow(m), none: 'auto' })));
+                    cell(1, name(m, w('placeholder.name'), { onEnter: nextRow(m) })),
+                    cell(3, G.values.control(app, { holder: m, key: 'value', type: 'int', slot: { owner: m.id, key: 'value' }, order: s.element('enumMember'), fk: `${m.id}:value`, label: w('card.enum.number'), onEnter: nextRow(m), none: 'auto' }))));
             }
         } else if (rk?.kind === 'entry') {
             for (const m of rowsOf()) {
                 G.ui.put(rows, rowOf(m,
-                    name(m, w('placeholder.lower'), { onEnter: nextRow(m) }),
-                    G.values.control(app, { holder: m, key: 'value', type: null, slot: { owner: m.id, key: 'value' }, order: s.element('entry'), fk: `${m.id}:value`, required: true, onEnter: nextRow(m) })));
+                    cell(1, name(m, w('placeholder.lower'), { onEnter: nextRow(m) })),
+                    cell(3, G.values.control(app, { holder: m, key: 'value', type: null, slot: { owner: m.id, key: 'value' }, order: s.element('entry'), fk: `${m.id}:value`, required: true, onEnter: nextRow(m) }))));
             }
         }
         // An empty card says what goes in it, and how

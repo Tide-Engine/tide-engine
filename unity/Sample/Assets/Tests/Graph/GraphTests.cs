@@ -1576,7 +1576,7 @@ public class GraphTests
         // A drag on the space beside a row moves the card too; a click there selects the row
         var row = board.Card(cardId).Q("row" + hits.Wire("id"));
         var fieldName = row.Q<GraphName>("name" + hits.Wire("id")).Q<Label>();
-        var beside = new Vector2(fieldName.worldBound.xMax + 14, row.worldBound.center.y);
+        var beside = new Vector2(fieldName.worldBound.xMax + 4, row.worldBound.center.y);
         GraphShots.Click(window, beside);
         Assert.AreEqual(hits.Wire("id"), board.Row, "a click on a row selects it");
         cardWas = GraphDocument.PlaceOf(window.Doc.Get(cardId));
@@ -2281,6 +2281,12 @@ public class GraphTests
                 File.WriteAllText(Path.Combine(folder, json), GraphDrawn.Write(drawn), new UTF8Encoding(false));
                 var want = GraphJson.Parse(File.ReadAllText(Path.Combine(Repository, "tools", "tide-graph", "test", "drawn", json)));
                 differ.AddRange(Differences(drawn, want, name));
+                // No two nodes of one frame overlap
+                var boxes = drawn.Arr("nodes").Items.Select(x => (id: (int)x.Get("id").Number, frame: (int)x.Get("frame").Number, r: new Rect((float)x.Arr("box").Items[0].Number, (float)x.Arr("box").Items[1].Number, (float)x.Arr("box").Items[2].Number, (float)x.Arr("box").Items[3].Number))).ToList();
+                for (var i = 0; i < boxes.Count; i++)
+                    for (var j = i + 1; j < boxes.Count; j++)
+                        if (boxes[i].frame == boxes[j].frame && boxes[i].r.Overlaps(boxes[j].r))
+                            differ.Add($"{name}: nodes {boxes[i].id} and {boxes[j].id} overlap: {boxes[i].r}, {boxes[j].r}");
                 // Its pictures, in dark and in light, as it was drawn: at zoom 1, from its top left
                 var shot = Path.GetFileNameWithoutExtension(name);
                 board.AllNear = false;
@@ -2326,6 +2332,44 @@ public class GraphTests
         Assert.Fail($"The package's dark look isn't the schema's: {now} is what it should be");
     }
 
+    // The panels' rows line up: in My game, each column's cells start at one x (a nested row's indent is inside its
+    // name); in Details, the labels are one column, as wide as the widest. Laid out only with a graphics device.
+    [UnityTest]
+    public IEnumerator ThePanelsRowsLineUp()
+    {
+        if (SystemInfo.graphicsDeviceType == UnityEngine.Rendering.GraphicsDeviceType.Null) Assert.Ignore("Nothing is laid out with no graphics device");
+        NeedTidec();
+        var path = Write("spin.tidegraph", SpinFile);
+        var window = TideGraphWindow.Open(path);
+        GraphShots.Size(window);
+        window.ShowPanels(true);
+        window.ShowMyGame(true);
+        window.ShowDetails(true);
+        yield return GraphShots.Settle(6);
+        // (a field of Wobble: its name, its type, its value, its options)
+        window.Board.SelectRow(window.Board.Card(1), window.Doc.Get(1).Arr("members").Items[0].Wire("id"));
+        yield return GraphShots.Settle(8);
+        var mine = window.MyGame.Q(className: "tg-cols");
+        Assert.IsNotNull(mine, "My game's list is in columns");
+        var columns = new Dictionary<int, List<float>>();
+        foreach (var cell in mine.Query(className: "tg-cell").ToList())
+        {
+            if (cell.resolvedStyle.display == DisplayStyle.None || cell.childCount == 0 || cell.Children().All(c => c.ClassListContains("tg-indent"))) continue;
+            var n = Enumerable.Range(1, 3).First(i => cell.ClassListContains("tg-c" + i));
+            if (!columns.TryGetValue(n, out var xs)) columns[n] = xs = new List<float>();
+            xs.Add(cell.worldBound.x + cell.resolvedStyle.paddingLeft);
+        }
+        Assert.GreaterOrEqual(columns.Count, 2, "a name and a kind");
+        foreach (var pair in columns) Assert.LessOrEqual(pair.Value.Max() - pair.Value.Min(), 0.5f, $"My game's column {pair.Key} starts at one x: {string.Join(", ", pair.Value)}");
+        var labels = window.Details.Query<Label>(className: "tg-details-label").ToList().Where(l => !l.parent.ClassListContains("tg-details-line") && l.resolvedStyle.display != DisplayStyle.None && l.worldBound.width > 0).ToList();
+        Assert.Greater(labels.Count, 1, "Details has labelled rows");
+        Assert.LessOrEqual(labels.Max(l => l.worldBound.x) - labels.Min(l => l.worldBound.x), 0.5f, "Details' labels start at one x");
+        Assert.LessOrEqual(labels.Max(l => l.worldBound.width) - labels.Min(l => l.worldBound.width), 0.5f, "and are one width");
+        var values = labels.Select(l => l.parent.IndexOf(l) + 1 < l.parent.childCount ? l.parent[l.parent.IndexOf(l) + 1] : null).Where(v => v != null && v.worldBound.width > 0).ToList();
+        Assert.LessOrEqual(values.Max(v => v.worldBound.x) - values.Min(v => v.worldBound.x), 0.5f, "what each says starts at one x");
+        window.Close();
+    }
+
     // A check that answers with nothing: no types, no calls' parameters, as when no language server is running
     sealed class Unchecked : ITideGraphChecker
     {
@@ -2355,9 +2399,14 @@ public class GraphTests
                 var b = c.Arr("box").Items.Select(v => v.Number).ToArray();
                 if (a.Length != 4 || a.Where((v, i) => Math.Abs(v - b[i]) > 4).Any())
                     yield return $"{name}: {key} {Id(x)}'s box [{string.Join(",", a)}], not [{string.Join(",", b)}]";
+                // Where columns start, within 4 px too
+                var cols = x.Arr("columns")?.Items ?? new List<JValue>();
+                var colsWant = c.Arr("columns")?.Items ?? new List<JValue>();
+                if (c.Get("columns") != null && (cols.Count != colsWant.Count || cols.Where((box, i) => box.Items.Count != colsWant[i].Items.Count || box.Items.Where((v, j) => Math.Abs(v.Number - colsWant[i].Items[j].Number) > 4).Any()).Any()))
+                    yield return $"{name}: {key} {Id(x)}'s columns {GraphJson.Write(x.Get("columns"))}, not {GraphJson.Write(c.Get("columns"))}";
                 foreach (var field in c.Keys)
                 {
-                    if (field == "box") continue;
+                    if (field == "box" || field == "columns") continue;
                     var mineText = GraphJson.Write(x.Get(field) ?? JValue.Null());
                     var theirText = GraphJson.Write(c.Get(field));
                     if (mineText != theirText) yield return $"{name}: {key} {Id(x)}'s {field} {mineText}, not {theirText}";

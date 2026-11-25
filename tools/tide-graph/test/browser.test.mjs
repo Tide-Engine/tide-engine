@@ -105,19 +105,53 @@ function writeDrawn(d) {
     return `{\n  "graph": ${JSON.stringify(d.graph)},\n${['frames', 'cards', 'nodes', 'wires'].map(list).join(',\n')}\n}\n`;
 }
 
-// What an editor drew against what it should have: every box within 4 px, everything else exactly
+// What an editor drew against what it should have: every box and every column's place within 4 px, everything
+// else exactly
 function compareDrawn(have, want, name) {
-    const near = (a, c, what) => assert.ok(a.length === 4 && a.every((v, i) => Math.abs(v - c[i]) <= 4), `${name}: ${what}'s box ${JSON.stringify(a)}, not ${JSON.stringify(c)}`);
+    const near = (a, c, what) => assert.ok(a.length === c.length && a.every((v, i) => Math.abs(v - c[i]) <= 4), `${name}: ${what} ${JSON.stringify(a)}, not ${JSON.stringify(c)}`);
     for (const key of ['frames', 'cards', 'nodes']) {
         assert.deepEqual(have[key].map(x => x.id), want[key].map(x => x.id), `${name}: the ${key}`);
         have[key].forEach((x, i) => {
             const c = want[key][i];
-            near(x.box, c.box, `${key.slice(0, -1)} ${x.id}`);
-            assert.deepEqual({ ...x, box: null }, { ...c, box: null }, `${name}: ${key.slice(0, -1)} ${x.id}`);
+            near(x.box, c.box, `${key.slice(0, -1)} ${x.id}'s box`);
+            assert.equal(x.columns?.length, c.columns?.length, `${name}: ${key.slice(0, -1)} ${x.id}'s boxes of columns`);
+            x.columns?.forEach((xs, j) => near(xs, c.columns[j], `${key.slice(0, -1)} ${x.id}'s columns`));
+            assert.deepEqual({ ...x, box: null, columns: null }, { ...c, box: null, columns: null }, `${name}: ${key.slice(0, -1)} ${x.id}`);
         });
     }
     assert.deepEqual(have.wires, want.wires, `${name}: the wires`);
 }
+
+// The nodes of one frame drawn over each other, as pairs of ids
+const overlapping = `(() => {
+    const bad = [];
+    for (const f of app.board.frames.values()) {
+        const boxes = [...f.views].filter(([id, v]) => typeof id === 'number' && !v.note && v.el?.isConnected).map(([id, v]) => [id, v.el.getBoundingClientRect()]);
+        for (let i = 0; i < boxes.length; i++) {
+            for (let j = i + 1; j < boxes.length; j++) {
+                const [a, r] = boxes[i], [c, q] = boxes[j];
+                if (r.left < q.right && q.left < r.right && r.top < q.bottom && q.top < r.bottom) bad.push(a + '/' + c);
+            }
+        }
+    }
+    return bad;
+})()`;
+
+// Each box whose rows line up (.tg-cols): the columns whose cells don't all start at one x, and Details' controls
+// when they don't
+const misaligned = `(() => {
+    const bad = [];
+    const xs = cells => new Set(cells.filter(c => c.childNodes.length && c.getClientRects().length).map(c => Math.round(c.getBoundingClientRect().left)));
+    for (const box of document.querySelectorAll('.tg-cols')) {
+        for (let k = 1; k <= 4; k++) {
+            const at = xs([...box.querySelectorAll(':scope > .tg-colrow > .tg-c' + k)]);
+            if (at.size > 1) bad.push((box.closest('[data-id]')?.dataset.id ?? box.className) + ' column ' + k + ': ' + [...at].join(', '));
+        }
+    }
+    const controls = xs([...document.querySelectorAll('.tg-details-line > .tg-details-control')]);
+    if (controls.size > 1) bad.push('Details: ' + [...controls].join(', '));
+    return bad;
+})()`;
 
 describe('the graph editor in a browser', { skip }, () => {
     let b;
@@ -680,7 +714,7 @@ describe('the graph editor in a browser', { skip }, () => {
         await p.evaluate(`document.querySelector('.tg-context [data-name="empty"]').click()`);
         await p.until(`!app.editor.doc.get(13).value`, 'the wired input emptied');
         const plus = (await doc(p)).decls[1].body.nodes.find(n => n.id === 12);
-        assert.deepEqual([plus?.x, plus?.y, plus?.lhs, plus?.rhs], [356, 184, 9, 11], 'the node wired in stays as it was');
+        assert.deepEqual([plus?.x, plus?.y, plus?.lhs, plus?.rhs], [324, 135, 9, 11], 'the node wired in stays as it was');
         near(await rect(node(12)), plus0, 'and where it was seen');
         // ...and is off when nothing is in it
         const pin2 = await p.center(`${port(13, 'value')} .tg-dot`);
@@ -978,7 +1012,7 @@ describe('the graph editor in a browser', { skip }, () => {
     });
 
     // What the page drew for the fixtures, in dark at zoom 1, against the files every graph editor checks itself against
-    // (test/drawn/README.md): TIDE_GRAPH_DRAWN_WRITE=1 writes them
+    // (test/drawn/README.md): TIDE_GRAPH_DRAWN_WRITE=1 writes them. Every box's rows are in columns, My game's too.
     test('what it draws for spin, shapes and stars is what test/drawn has: boxes within 4 px, words and colours exactly', async () => {
         const fixtures = [['spin.tidegraph', path.join(root, 'test', 'spin.tidegraph')], ['shapes.tidegraph', path.join(root, 'test', 'shapes.tidegraph')], ['stars.tidegraph', path.join(repo, 'docs', 'playground', 'stars.tidegraph')]];
         const writing = process.env.TIDE_GRAPH_DRAWN_WRITE === '1';
@@ -995,8 +1029,14 @@ describe('the graph editor in a browser', { skip }, () => {
                 fs.writeFileSync(expected, writeDrawn(drawn));
                 continue;
             }
+            assert.deepEqual(await p.evaluate(overlapping), [], `${name}: no node over another`);
             const want = JSON.parse(fs.readFileSync(expected, 'utf8'));
             compareDrawn(drawn, want, name);
+            assert.deepEqual(await p.evaluate(misaligned), [], `${name}: every column at one x`);
+            const system = await p.evaluate(`app.editor.doc.root.decls.find(d => d.kind === 'system').id`);
+            await p.evaluate(`app.open.details = app.open.mygame = true; app.showPanels(); app.editor.pick([${system}]); app.renderPanels()`);
+            await p.until(`document.querySelectorAll('.tg-mygame-list > .tg-colrow').length > 1 && !!document.querySelector('.tg-details-line')`, 'the panels');
+            assert.deepEqual(await p.evaluate(misaligned), [], `${name}: My game's and Details' columns at one x`);
         }
     });
 
@@ -1213,6 +1253,8 @@ describe('the graph editor in a browser', { skip }, () => {
             const before = (await doc(p)).decls[1].body.nodes.map(n => [n.x, n.y]);
             await p.evaluate(`app.layoutFrame(${(await doc(p)).decls[1].id})`);
             await p.until(`JSON.stringify(app.editor.doc.root.decls[1].body.nodes.map(n => [n.x, n.y])) !== ${JSON.stringify(JSON.stringify(before))}`, 'the nodes laid out');
+            await p.sleep(100);
+            assert.deepEqual(await p.evaluate(overlapping), [], 'laid out at the sizes drawn: no node over another');
             await p.evaluate(`app.layoutBoard()`);
             await p.until(`app.editor.doc.root.decls[0].x === 0 && app.editor.doc.root.decls[1].x === 380`, 'the board laid out: data on the left, code beside it');
             // View as Tide is behind the board's menu, and sends the Tide to the host

@@ -77,7 +77,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .tg-mygame-item.tg-on { background: var(--tg-select); }
 .tg-mygame-name { overflow: hidden; text-overflow: ellipsis; font-weight: 600; min-width: 0; }
 .tg-mygame-item .tg-renaming { flex: 1; font-weight: 600; }
-.tg-mygame-kind { color: var(--tg-muted); font-size: 0.88em; margin-left: auto; }
+.tg-mygame-kind { color: var(--tg-muted); font-size: 0.88em; overflow: hidden; text-overflow: ellipsis; }
 .tg-mygame-none { color: var(--tg-muted); padding: 2px 14px 4px; font-size: 0.92em; }
 /* The code in hand's Variables: each dragged onto it to Get or Set it, opening to its fields */
 .tg-mygame-of { text-transform: none; letter-spacing: 0; font-weight: 600; color: var(--tg-text); overflow: hidden; text-overflow: ellipsis; max-width: 120px; }
@@ -96,7 +96,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .tg-details-title .tg-details-help { flex-basis: 100%; }
 .tg-details-section { display: flex; flex-direction: column; gap: 6px; }
 .tg-details-heading { color: var(--tg-muted); font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.06em; margin-top: 2px; }
-.tg-details-line { display: grid; grid-template-columns: 92px minmax(0, 1fr); align-items: center; gap: 2px 8px; }
+.tg-details-line { display: grid; grid-template-columns: min(var(--tg-details-label, 92px), 45%) minmax(0, 1fr); align-items: center; gap: 2px var(--tg-column-gap); }
 .tg-details-label { color: var(--tg-muted); }
 .tg-details-control { display: flex; align-items: center; gap: 6px; min-width: 0; flex-wrap: wrap; }
 .tg-details-line > .tg-details-help { grid-column: 2; }
@@ -347,7 +347,7 @@ span.tg-node-input { overflow: hidden; text-overflow: ellipsis; white-space: now
 .tg-port:hover .tg-row-pick, .tg-port:focus-within .tg-row-pick { visibility: visible; }
 .tg-row-pick:hover { color: var(--tg-accent); }
 .tg-row-empty { background: none; border: none; color: var(--tg-muted); cursor: pointer; padding: 0 3px; font-size: 1em; line-height: 16px; border-radius: 4px; visibility: hidden; }
-.tg-port:hover > .tg-row-empty, .tg-port:focus-within > .tg-row-empty { visibility: visible; }
+.tg-port:hover > .tg-row-empty, .tg-port:focus-within > .tg-row-empty, .tg-port:hover > .tg-cell > .tg-row-empty, .tg-port:focus-within > .tg-cell > .tg-row-empty { visibility: visible; }
 .tg-row-empty:hover { color: var(--tg-error); }
 /* A name or a path of fields, in its type's colour: each part is a button that changes the path from there */
 .tg-path { display: inline-flex; align-items: center; border-radius: 999px; padding: 0 7px 0 6px; line-height: 18px; white-space: nowrap;
@@ -441,10 +441,8 @@ span.tg-node-input { overflow: hidden; text-overflow: ellipsis; white-space: now
 .tg-entry-row { display: flex; align-items: center; gap: 6px; min-height: var(--tg-entry-row); padding: 0 0 0 4px; border-radius: 6px 0 0 6px; }
 .tg-entry-row:hover { background: color-mix(in srgb, var(--tg-text) 5%, transparent); }
 .tg-entry-row.tg-has-error { background: color-mix(in srgb, var(--tg-error) 14%, transparent); box-shadow: inset 2px 0 0 var(--tg-error); }
-.tg-entry-sub { margin-left: 18px; }
 .tg-entry-name { flex: 1 1 auto; min-width: 30px; }
 .tg-entry-row .tg-row-remove { margin-right: 0; }
-.tg-entry-filter { padding-right: 8px; }
 .tg-entry-result { border-top: 1px dashed var(--tg-border); margin-top: 4px; padding-top: 2px; border-radius: 0; }
 .tg-entry-note { color: var(--tg-muted); padding: 4px 8px; }
 .tg-entry-rows > .tg-add-row { margin-left: 2px; }
@@ -574,3 +572,42 @@ span.tg-node-input { overflow: hidden; text-overflow: ellipsis; white-space: now
 .tg-help-rows { display: grid; grid-template-columns: minmax(180px, auto) 1fr; gap: 4px 18px; }
 .tg-help-row { display: contents; }
 .tg-help-keys { color: var(--tg-muted); }
+
+/* Where the rows of one box have the same parts, the parts are columns (the look's about): each column is as wide as
+   its widest cell in the box, left-aligned, and a cell with something in it starts the column gap after the column
+   before it, so an empty cell takes no room and a column empty in every row adds nothing. Anything else in the box
+   (a + button, a problem, a heading) spans it. */
+.tg-cols { display: grid; column-gap: 0; align-content: start; }
+.tg-cols > * { grid-column: 1 / -1; }
+.tg-cols > .tg-colrow { display: grid; grid-template-columns: subgrid; column-gap: 0; align-items: center; }
+.tg-cols > .tg-add-row, .tg-cols > .tg-port-add { justify-self: start; }
+.tg-cell { display: inline-flex; align-items: center; gap: 5px; min-width: 0; }
+.tg-cell:empty { display: none; }
+.tg-c1 { grid-column: 1; }
+.tg-c2 { grid-column: 2; }
+.tg-c3 { grid-column: 3; }
+.tg-c4 { grid-column: 4; }
+.tg-cols > .tg-colrow > .tg-cell:not(.tg-c1):not(:empty) { margin-left: var(--tg-column-gap); }
+.tg-cols > .tg-colrow > .tg-cell-rest { grid-column: 2 / -1; margin-left: var(--tg-column-gap); }
+/* A card's members: name | type | value */
+.tg-rows.tg-cols { grid-template-columns: fit-content(50%) max-content minmax(0, 1fr); row-gap: 2px; }
+.tg-rows.tg-cols .tg-c1 .tg-row-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-right: 0; }
+.tg-rows .tg-c1 > .tg-row-code { padding-left: 6px; }
+.tg-rows.tg-cols .tg-c3 { overflow: hidden; }
+.tg-rows.tg-cols .tg-value { justify-content: flex-start; }
+.tg-rows.tg-cols .tg-value .tg-input { text-align: left; }
+.tg-rows.tg-cols .tg-value-axis { text-align: left !important; }
+/* An entry's parameters: mode | type | name | pin */
+.tg-entry-rows.tg-cols { grid-template-columns: max-content max-content minmax(0, 1fr) max-content; }
+.tg-entry-rows.tg-cols .tg-c3 .tg-entry-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tg-entry-rows .tg-c4 { justify-self: end; }
+.tg-entry-rows.tg-entry-subrows { margin-left: 18px; padding: 0; }
+/* A node's inputs: its pin and name | what's in it | the rest (its ×, a + for another) */
+.tg-col-in.tg-cols { display: grid; grid-template-columns: max-content max-content max-content; row-gap: var(--tg-row-gap); }
+/* A node's own fields: what each is called | its control */
+.tg-node-fields.tg-cols { display: grid; grid-template-columns: max-content max-content; row-gap: 2px; }
+/* My game: name | what it is | its problems (a field's row set in in its name's column) */
+.tg-mygame-list.tg-cols { grid-template-columns: fit-content(70%) minmax(0, 1fr) max-content; }
+.tg-mygame-list.tg-cols > .tg-mygame-item { padding-left: 0; }
+.tg-mygame-list .tg-c1 { gap: 8px; }
+.tg-mygame-var .tg-c1 { gap: 6px; }

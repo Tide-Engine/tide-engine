@@ -138,7 +138,7 @@ namespace Tide.Editor
             foreach (var percent in new[] { 80, 82, 85, 86, 88, 90, 92, 93, 95, 105, 110, 115, 135 })
                 sb.Append("    --tg-font-").Append(percent).Append(": ").Append((font * percent / 100f).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)).Append("px;\n");
             // What's in a port's row, in em of the port's 0.92em: --tg-font-port-<percent>
-            foreach (var percent in new[] { 85, 88, 95, 105 })
+            foreach (var percent in new[] { 85, 88, 92, 95, 105 })
                 sb.Append("    --tg-font-port-").Append(percent).Append(": ").Append((font * 0.92f * percent / 100f).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)).Append("px;\n");
             // A Get's Target, 0.86em of a port's 0.92em
             sb.Append("    --tg-font-get-target: ").Append((font * 0.92f * 0.86f).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)).Append("px;\n");

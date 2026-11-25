@@ -237,7 +237,7 @@
     {"control": "choice", "of": "enum", "help": "One of an enum's choices"}
   ],
   "look": {
-    "about": "How the graph editors draw, the same in each: every colour (dark and light; a host only says which), every size in pixels at zoom 1, and the font, which each editor ships. headers: a node's title bar by its category's name, and the entry's. types: a pin's and a wire's colour by its value's type; a type not listed gets a hue of its name (h = h * 31 + each UTF-16 unit, unsigned 32-bit, hue h mod 360, with typeHue's saturation and lightness). A wire with no type known takes its source node's category colour.",
+    "about": "How the graph editors draw, the same in each: every colour (dark and light; a host only says which), every size in pixels at zoom 1, and the font, which each editor ships. headers: a node's title bar by its category's name, and the entry's. types: a pin's and a wire's colour by its value's type; a type not listed gets a hue of its name (h = h * 31 + each UTF-16 unit, unsigned 32-bit, hue h mod 360, with typeHue's saturation and lightness). A wire with no type known takes its source node's category colour. Where the rows of one box have the same parts (a card's members, an entry's parameters, a node's inputs and its own fields, My game's list, Details' lines), each part is a column, left-aligned, as wide as its widest cell in that box: a cell with something in it starts columnGap after the end of the column before it, and a column empty in every row takes no room.",
     "font": {"family": "Inter", "files": {"regular": "Inter-Regular.ttf", "bold": "Inter-Bold.ttf"}, "license": "LICENSE.txt", "code": "ui-monospace, Consolas, monospace"},
     "colors": {
       "board": {"dark": "#1e1f22", "light": "#f4f5f7"},
@@ -287,7 +287,7 @@
     "sizes": {
       "font": 13, "small": 11, "lineHeight": 1.35, "titleWeight": 700,
       "row": 20, "rowGap": 1, "pin": 11, "pinBorder": 2, "categoryBar": 3,
-      "radius": 8, "frameRadius": 14, "cardRadius": 10, "header": 24, "headerPadding": 8, "padding": 8, "gap": 4,
+      "radius": 8, "frameRadius": 14, "cardRadius": 10, "header": 24, "headerPadding": 8, "padding": 8, "gap": 4, "columnGap": 8,
       "get": 26, "getPadding": 12, "knot": 18, "knotBody": 14, "knotPin": 8,
       "frameHead": 48, "framePad": 16, "frameBottom": 40, "entryWidth": 320, "entryGap": 60, "entryRow": 30,
       "card": 300, "cardRow": 26, "cardHead": 48, "grid": 24

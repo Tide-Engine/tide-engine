@@ -598,12 +598,29 @@
                 walk(e);
                 return parts.filter(Boolean).join(' ');
             };
+            // Each box of rows lined up in columns in it (a card's rows, the entry's and a query's own, a node's
+            // fields and its inputs): where each column with something seen in it starts, from its left (what's
+            // seen only under the pointer, an input's ×, a +, isn't)
+            const hoverOnly = '.tg-row-empty, .tg-port-add, .tg-value-more, .tg-row-remove';
+            const seen = cell => [...cell.childNodes].some(x => (x.nodeType === 3 ? x.textContent.trim() : x.nodeType === 1 && !x.matches(hoverOnly)));
+            const columns = e => {
+                const left = e.getBoundingClientRect().left;
+                return [...e.querySelectorAll('.tg-cols')].map(c => {
+                    const xs = [];
+                    for (let k = 1; k <= 4; k++) {
+                        const cell = [...c.querySelectorAll(`:scope > .tg-colrow > .tg-c${k}`)].find(x => seen(x) && x.getClientRects().length);
+                        if (cell) xs.push(Math.round((cell.getBoundingClientRect().left - left) / z));
+                    }
+                    return xs;
+                }).filter(xs => xs.length > 1);
+            };
             const out = { graph, frames: [], cards: [], nodes: [], wires: [] };
             for (const [id, c] of this.cards) {
                 const head = c.el.querySelector('.tg-card-head');
                 out.cards.push({
                     id, box: box(c.el), chip: words(head?.querySelector('.tg-chip')), title: words(head?.querySelector('.tg-name')),
                     rows: [...c.el.querySelectorAll('.tg-row')].map(r => ({ label: words(r.querySelector('.tg-row-name')), shown: words(r.querySelector('.tg-type-name')) || null })),
+                    columns: columns(c.el),
                 });
             }
             const pinOf = p => (p.exec ? (p.input ? 'exec-in' : 'exec-out') : p.input ? 'in' : 'out');
@@ -617,9 +634,9 @@
                     const at = e => { const r = e.getBoundingClientRect(); return { y: Math.round((r.top + r.height / 2) / z / 6), x: r.left / z }; }; // (rows 6 px apart are one row)
                     for (const p of f.ports.values()) {
                         if (p.view !== record || p.row.closest('.tg-node-sub')) continue;
-                        const lead = p.row.querySelector(':scope > .tg-op');
+                        const lead = p.row.querySelector(':scope > .tg-c1 > .tg-op');
                         const param = entry ? p.row.closest('.tg-entry-row') : null;
-                        const label = lead ? words(lead) : param ? words(param.querySelector('.tg-entry-name')) : words(p.row.querySelector(':scope > .tg-port-label'));
+                        const label = lead ? words(lead) : param ? words(param.querySelector('.tg-entry-name')) : words(p.row.querySelector(':scope > .tg-c1 > .tg-port-label, :scope > .tg-port-label'));
                         const text = param ? words(param.querySelector('.tg-type')) : shown(p.row, x => x.matches('.tg-dot, .tg-port-label, .tg-op, .tg-row-empty, .tg-row-pick, .tg-port-add'));
                         rows.push({ ...at(p.dot), row: { label, pin: pinOf(p.port), color: p.port.exec ? null : hex(p.dot.style.backgroundColor), shown: text || null } });
                     }
@@ -644,7 +661,7 @@
                     out.nodes.push({
                         id: entry ? id : nid, frame: id, box: box(e), shape,
                         header: header ? hex(getComputedStyle(header).backgroundColor) : null,
-                        title, rows: rowsOf(v, entry),
+                        title, rows: rowsOf(v, entry), columns: columns(e),
                     });
                 }
                 // The wires, as drawWires draws them: data from a node's value, arrows from a statement's outputs

@@ -319,7 +319,9 @@
                 this.ports.set(portKey(port), { port, dot, row, view: record });
             }
             G.ui.put(view, head);
-            const rows = el('div.tg-entry-rows');
+            // What it takes lines up: mode | type | name | pin
+            const rows = el('div.tg-entry-rows.tg-cols');
+            const cell = G.ui.cell;
             const pinOf = (name, type) => {
                 const port = { node: ENTRY, input: false, exec: false, pin: name, label: name, type };
                 const dot = el('span.tg-dot');
@@ -335,9 +337,9 @@
                 const t = v.trigger;
                 const torder = s.element('trigger');
                 const lang = app.lang;
-                G.ui.put(rows, el('div.tg-entry-row', { dataset: { row: 'trigger' } },
-                    el('span.tg-mode.tg-mode-fixed', { text: s.keyLabel('trigger').toLowerCase() }),
-                    t.changed
+                G.ui.put(rows, el('div.tg-entry-row.tg-colrow', { dataset: { row: 'trigger' } },
+                    cell(1, el('span.tg-mode.tg-mode-fixed', { text: s.keyLabel('trigger').toLowerCase() })),
+                    cell(2, t.changed
                         ? field(t.type ?? '', x => edit(() => { t.type = x; }), { className: 'tg-input.tg-entry-name', placeholder: 'Component.field', fk: `${v.id}:trigger`, title: W('entry.changed.tip') })
                         : G.cards.typeChip(app, {
                             type: t.type, kinds: ['event'], details: ['event'], fk: `${v.id}:trigger`, placeholder: W('entry.event'),
@@ -355,20 +357,20 @@
                                     if (old) d.renamePin(g, old, t.name);
                                 }
                             }),
-                        }),
-                    G.ui.nameText(t.name ?? '', rename(t, t.name), { className: 'tg-entry-name', placeholder: W('placeholder.lower'), check: G.cards.checkName, fk: `${v.id}:trigger-name` }),
-                    t.name ? pinOf(t.name, t.changed ? undefined : t.type) : null));
+                        })),
+                    cell(3, G.ui.nameText(t.name ?? '', rename(t, t.name), { className: 'tg-entry-name', placeholder: W('placeholder.lower'), check: G.cards.checkName, fk: `${v.id}:trigger-name` })),
+                    cell(4, t.name ? pinOf(t.name, t.changed ? undefined : t.type) : null)));
             }
             // A command's values
             if (order.includes('payload')) {
                 const list = Array.isArray(v.payload) ? v.payload : [];
                 const porder = s.element('payload');
                 for (const p of list) {
-                    G.ui.put(rows, el('div.tg-entry-row', { dataset: { id: p.id } },
-                        el('span.tg-mode.tg-mode-fixed', { text: s.keyLabel('payload').toLowerCase() }),
-                        G.cards.typeChip(app, { type: p.type, at: p.id, own, fk: `${p.id}:type`, onPick: t => edit(() => set(p, 'type', t, porder)) }),
-                        G.ui.nameText(p.name ?? '', rename(p, p.name), { className: 'tg-entry-name', placeholder: W('placeholder.lower'), check: G.cards.checkName, fk: `${p.id}:name` }),
-                        p.name ? pinOf(p.name, p.type) : null));
+                    G.ui.put(rows, el('div.tg-entry-row.tg-colrow', { dataset: { id: p.id } },
+                        cell(1, el('span.tg-mode.tg-mode-fixed', { text: s.keyLabel('payload').toLowerCase() })),
+                        cell(2, G.cards.typeChip(app, { type: p.type, at: p.id, own, fk: `${p.id}:type`, onPick: t => edit(() => set(p, 'type', t, porder)) })),
+                        cell(3, G.ui.nameText(p.name ?? '', rename(p, p.name), { className: 'tg-entry-name', placeholder: W('placeholder.lower'), check: G.cards.checkName, fk: `${p.id}:name` })),
+                        cell(4, p.name ? pinOf(p.name, p.type) : null)));
                 }
                 G.ui.put(rows, button(`+ ${s.keyLabel('payload').toLowerCase()}…`, e => G.pickers.typePicker(app, {
                     anchor: e.currentTarget, title: s.keyLabel('payload'),
@@ -385,20 +387,20 @@
             }
             // What it takes
             if (item.accessor) {
-                if (v.word === 'set') G.ui.put(rows, el('div.tg-entry-row', null, el('span.tg-mode.tg-mode-fixed', { text: s.keyLabel('value').toLowerCase() }),
-                    el('span.tg-type.tg-type-fixed', null, el('span.tg-type-dot', { style: { background: typeColor(item.property?.type) } }), item.property?.type ?? ''),
-                    el('span.tg-entry-name.tg-muted', { text: 'value' }), pinOf('value', item.property?.type)));
+                if (v.word === 'set') G.ui.put(rows, el('div.tg-entry-row.tg-colrow', null, cell(1, el('span.tg-mode.tg-mode-fixed', { text: s.keyLabel('value').toLowerCase() })),
+                    cell(2, el('span.tg-type.tg-type-fixed', null, el('span.tg-type-dot', { style: { background: typeColor(item.property?.type) } }), item.property?.type ?? '')),
+                    cell(3, el('span.tg-entry-name.tg-muted', { text: 'value' })), cell(4, pinOf('value', item.property?.type))));
             } else if (order.includes('params')) {
                 const list = Array.isArray(v.params) ? v.params : [];
-                for (const p of list) G.ui.put(rows, this.paramRow(v, list, p, 0, pinOf, rename, own));
+                for (const p of list) G.ui.put(rows, this.paramRow(v, list, p, pinOf, rename, own));
                 G.ui.put(rows, button(s.addRow(v.kind, !!item.member), e => G.pickers.needsPicker(app, item, { anchor: e.currentTarget }),
                     W('entry.needs.tip'), 'tg-add-row'));
             }
             // What it gives back
             if (order.includes('returnType')) {
-                G.ui.put(rows, el('div.tg-entry-row.tg-entry-result', { dataset: { row: 'result' } },
-                    el('span.tg-mode.tg-mode-fixed', { text: s.keyLabel('returnType').toLowerCase() }),
-                    G.cards.typeChip(app, { type: v.returnType, at: v.id, own, allow: { void: true }, fk: `${v.id}:returnType`, onPick: t => edit(() => set(v, 'returnType', t, order)) })));
+                G.ui.put(rows, el('div.tg-entry-row.tg-entry-result.tg-colrow', { dataset: { row: 'result' } },
+                    cell(1, el('span.tg-mode.tg-mode-fixed', { text: s.keyLabel('returnType').toLowerCase() })),
+                    cell(2, G.cards.typeChip(app, { type: v.returnType, at: v.id, own, allow: { void: true }, fk: `${v.id}:returnType`, onPick: t => edit(() => set(v, 'returnType', t, order)) }))));
             }
             if (v.extern) G.ui.put(rows, el('div.tg-entry-note', { text: W('entry.extern', { extern: s.keyLabel('extern') }) }));
             G.ui.put(view, rows);
@@ -406,8 +408,9 @@
             this.views.set(ENTRY, record);
         }
 
-        // A parameter's row: how it's taken, its type, its name, its pin; a filter's has no name and no pin
-        paramRow(routine, list, p, depth, pinOf, rename, own) {
+        // A parameter's row: how it's taken, its type, its name, its pin; a filter's has no name and no pin. A query's
+        // own (what the entities it goes through have) are a box of their own beneath it, lined up among themselves.
+        paramRow(routine, list, p, pinOf, rename, own, depth = 0) {
             const app = this.app;
             const s = this.schema;
             const porder = routine.kind === 'sample' ? s.element('sampleParam') : s.element('param');
@@ -436,10 +439,12 @@
                 ], { anchor: e.currentTarget, title: W('details.mode') });
             };
             const words = ['local', 'verified', 'previous'].filter(k => p[k]).map(k => el('span.tg-row-tag', { text: k, title: s.keyLabel(k) }));
-            const row = el('div.tg-entry-row' + (filter ? '.tg-entry-filter' : '') + (depth ? '.tg-entry-sub' : ''), { dataset: { id: p.id }, title: p.comment || undefined },
-                routine.kind === 'sample' ? null : button(s.modeLabel(mode), modes, W('entry.mode.tip', { help: s.modeHelp(mode) || W('details.mode') }), 'tg-mode'),
-                words,
-                p.ownership ? el('span.tg-type.tg-type-fixed', { text: 'ownership' })
+            const cell = G.ui.cell;
+            // (A sample's take no mode: its type is its first column)
+            const sample = routine.kind === 'sample';
+            const row = el('div.tg-entry-row.tg-colrow' + (filter ? '.tg-entry-filter' : ''), { dataset: { id: p.id }, title: p.comment || undefined },
+                sample ? null : cell(1, button(s.modeLabel(mode), modes, W('entry.mode.tip', { help: s.modeHelp(mode) || W('details.mode') }), 'tg-mode'), words),
+                cell(sample ? 1 : 2, sample ? words : null, p.ownership ? el('span.tg-type.tg-type-fixed', { text: 'ownership' })
                     : mode === 'query' ? null
                         : G.cards.typeChip(app, { type: p.type, at: p.id, own, fk: `${p.id}:type`, onPick: t => edit(d => {
                             const old = p.name, was = p.type;
@@ -451,18 +456,18 @@
                                 d.renamePin(g, old, next);
                             }
                         }) }),
-                p.scene ? el('span.tg-row-tag', { text: 'scene' }) : null,
-                filter ? el('span.tg-grow') : G.ui.nameText(p.name ?? '', rename(p, p.name), { className: 'tg-entry-name', placeholder: W('placeholder.lower'), check: G.cards.checkName, fk: `${p.id}:name` }),
-                p.default ? button('= …', () => app.openValue({ owner: p.id, key: 'default' }, p, 'default', porder, p.type), s.keyLabel('default'), 'tg-row-tag.tg-row-tag-button') : null,
-                !filter && p.name && depth === 0 ? pinOf(p.name, mode === 'query' ? undefined : p.type) : null);
+                    p.scene ? el('span.tg-row-tag', { text: 'scene' }) : null),
+                filter ? null : cell(sample ? 2 : 3, G.ui.nameText(p.name ?? '', rename(p, p.name), { className: 'tg-entry-name', placeholder: W('placeholder.lower'), check: G.cards.checkName, fk: `${p.id}:name` }),
+                    p.default ? button('= …', () => app.openValue({ owner: p.id, key: 'default' }, p, 'default', porder, p.type), s.keyLabel('default'), 'tg-row-tag.tg-row-tag-button') : null),
+                !filter && p.name && depth === 0 ? cell(4, pinOf(p.name, mode === 'query' ? undefined : p.type)) : null);
             if (mode !== 'query') return row;
             // A query's own: what the entities it goes through have
             const inner = Array.isArray(p.query) ? p.query : [];
-            return [row, inner.map(q => this.paramRow(routine, inner, q, depth + 1, pinOf, rename, own)),
+            return [row, el('div.tg-entry-rows.tg-entry-subrows.tg-cols', null, inner.map(q => this.paramRow(routine, inner, q, pinOf, rename, own, depth + 1)),
                 button(W('entry.query.add'), e => G.pickers.typePicker(app, {
                     anchor: e.currentTarget, kinds: ['component'], details: ['component'], ask: () => app.lang.completionInParams(routine), title: W('entry.query.title'),
                     onPick: type => edit(d => { if (!Array.isArray(p.query)) set(p, 'query', [], porder); p.query.push(d.newParam(type, G.pickers.nameFor(type))); }),
-                }), W('entry.query.tip'), 'tg-add-row.tg-entry-sub')];
+                }), W('entry.query.tip'), 'tg-add-row'))];
         }
 
         // A value's result: where its value is wired
@@ -714,14 +719,19 @@
                 G.ui.put(view, row);
             }
             if (shown.comment || n.comment) G.ui.put(view, el('div.tg-node-comment', { text: n.comment || shown.comment, title: n.comment || shown.comment }));
-            if (fields.length) G.ui.put(view, el('div.tg-node-fields', null, fields.map(f => el('div.tg-field-row', null, f))));
-            const left = el('div.tg-col.tg-col-in'), right = el('div.tg-col.tg-col-out');
+            // Its own fields line up: what each is called | its control (one that's called nothing, or a list of
+            // its own, a lambda's parameters, spans the box)
+            const fieldRow = f => (f.matches('.tg-field') && f.querySelector('.tg-field-label')
+                ? el('div.tg-field-row.tg-colrow', null, G.ui.cell(1, f.querySelector('.tg-field-label')), G.ui.cell(2, [...f.childNodes]))
+                : el('div.tg-field-row', null, f));
+            if (fields.length) G.ui.put(view, el('div.tg-node-fields.tg-cols', null, fields.map(fieldRow)));
+            const left = el('div.tg-col.tg-col-in.tg-cols'), right = el('div.tg-col.tg-col-out');
             // Another argument, item or field is added by a + at the end of the last one's row
             let group = null, last = null, lastRow = null;
             const addMore = () => {
                 if (!last) return;
                 const more = this.groupAdd(shown, last, true);
-                if (more) G.ui.put(lastRow, more);
+                if (more) G.ui.put(lastRow.rest, more);
                 last = null;
             };
             for (const p of rowInputs) {
@@ -813,14 +823,16 @@
 
         // An input's row: its name (or `lead` in its place: an operator's choice), then what's in it. A number, a
         // tick or text is edited there; a name or a path is a chip; a wire from a node ends at its pin; nothing yet
-        // is "pick…".
+        // is "pick…". On a node its inputs line up: pin and name | what's in it | the rest (`row.rest`).
         inputRow(p, record, lead, trail) {
             const w = this.wireOf(p);
             const inline = !!w && this.analysis.folded.has(w);
             const dot = el('span.tg-dot' + (w ? '' : '.tg-dot-empty'));
-            const row = el('div.tg-port.tg-in' + (w && !inline ? '' : '.tg-inline'), { dataset: { port: portKey(p) } },
-                dot, lead || (p.label ? el('span.tg-port-label', { text: p.label }) : null),
-                !w ? this.pickButton(p) : inline ? this.inlineValue(p, w) : null, trail || null, w ? this.emptyButton(p) : null);
+            const rest = G.ui.cell(3, trail || null, w ? this.emptyButton(p) : null);
+            const row = el('div.tg-port.tg-in.tg-colrow' + (w && !inline ? '' : '.tg-inline'), { dataset: { port: portKey(p) } },
+                G.ui.cell(1, dot, lead || (p.label ? el('span.tg-port-label', { text: p.label }) : null)),
+                G.ui.cell(2, !w ? this.pickButton(p) : inline ? this.inlineValue(p, w) : null), rest);
+            row.rest = rest;
             this.ports.set(portKey(p), { port: p, dot, row, view: record, label: p.label });
             return row;
         }
@@ -1600,6 +1612,17 @@
                 this.el.style.width = w + 'px';
                 this.body.style.height = h + 'px';
             }
+        }
+
+        // Each of its nodes' sizes as it's drawn, at zoom 1, for tidec's layout (tide/graphLayout's `sizes`:
+        // {"<id>": [w, h]}); drawn near first when it isn't
+        drawnSizes() {
+            if (this.mode !== 'near') this.render('near');
+            this.measure();
+            const ids = new Set(this.graph ? Doc.nodes(this.graph).map(n => n.id) : []);
+            const out = {};
+            for (const [id, v] of this.views) if (ids.has(id) && v.w > 0 && v.h > 0) out[id] = [Math.round(v.w), Math.round(v.h)];
+            return out;
         }
 
         // A port's place in the body, or null

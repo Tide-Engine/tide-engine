@@ -11,7 +11,8 @@ say what was drawn for the fixtures, and each editor's tests check what it draws
 | `stars.json` | `docs/playground/stars.tidegraph` |
 
 The web editor writes them: `TIDE_GRAPH_DRAWN_WRITE=1 node --test --test-name-pattern=drawn tools/tide-graph/test/browser.test.mjs`.
-Without the variable the test checks the page against them. A box may be 4 px off; everything else must be the same.
+Without the variable the test checks the page against them. A box and a column's place may be 4 px off; everything
+else must be the same.
 
 ## The format
 
@@ -22,11 +23,12 @@ file is its top left), every card and frame drawn near:
 {"graph": "<the fixture's file name>",
  "frames": [{"id": <declaration id>, "box": [x, y, w, h], "chip": "System", "title": "Spin"}],
  "cards":  [{"id": <declaration id>, "box": [x, y, w, h], "chip": "Component", "title": "Wobble",
-             "rows": [{"label": "frequency", "shown": "float"}]}],
+             "rows": [{"label": "frequency", "shown": "float"}], "columns": [[13, 95, 157]]}],
  "nodes":  [{"id": <node id>, "frame": <declaration id>, "box": [x, y, w, h], "shape": "node" | "get" | "knot" | "entry",
              "header": "#rrggbb" | null, "title": ["Set phase"],
              "rows": [{"label": "Target" | "", "pin": "in" | "out" | "exec-in" | "exec-out" | "none",
-                       "color": "#rrggbb" | null, "shown": "<text shown in it>" | null}]}],
+                       "color": "#rrggbb" | null, "shown": "<text shown in it>" | null}],
+             "columns": [[3, 34]]}],
  "wires":  [{"from": [<node or declaration id>, "<port>"], "to": [<node id>, "<port path>"], "color": "#rrggbb"}]}
 ```
 
@@ -48,6 +50,21 @@ file is its top left), every card and frame drawn near:
   known, and for an arrow). `shown` is what's in it: a number, text (without its quotes), `true`/`false` for a tick, a chip as
   one word (`Phase.Running`), a vector's numbers joined by spaces, `pick…` for nothing yet; `null` for a wire or an output. The
   entry's rows are what it takes: `label` its name, `shown` its type.
+- `columns` are the boxes of a card or a node whose rows line up in columns, in the order they're drawn, and for each
+  where its columns start: x from the card's or node's left. Only columns with something seen in them count (an
+  input's ×, seen under the pointer, doesn't), and only boxes with two or more. The boxes and their columns:
+  - a card's members: name (and a tweak's or a local's tag after it) | type | value (a property's tag and its get
+    and set; a member with code is its name, going to its frame, with its kind where the type is); an enum's choices
+    and a settings card's are name | value;
+  - the entry's parameters: mode (and `local`, `verified`, `previous` after it) | type (and `scene`) | name (and its
+    default) | pin; the event of a handler, a command's payload, a set's value and the result (`result void`) are
+    rows of the same columns; a query's own are a box of their own under it;
+  - a node's inputs: pin and name (or the operator in its place, a Set's `=`) | what's in it | the rest (its ×);
+  - a node's own fields with a name: name | control.
+
+  A column is as wide as its widest cell in that box, and its cells are left-aligned. A cell with something in it
+  starts the look's `columnGap` (8 px) after the end of the column before it; an empty cell takes no room, so a column
+  empty in every row adds nothing, not even the gap. The parts within a cell are 5 px apart.
 - A data wire goes `from` a node's `value` `to` the input's path (`args.0`, `object`, `target`); one an input's value
   is shown in isn't drawn, nor the wire from a call to the statement it's drawn as. An arrow goes `from` a statement's
   exec output (`next`, `then`, `body`) `to` the statement it runs, port `in`; the entry's is `[frame id, "start"]`.

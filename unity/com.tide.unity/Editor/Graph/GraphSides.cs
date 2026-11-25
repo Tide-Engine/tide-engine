@@ -53,6 +53,19 @@ namespace Tide.Editor
         {
             name = "details";
             Fill();
+            RegisterCallback<GeometryChangedEvent>(_ => AlignLabels());
+        }
+
+        // Its labels are one column, as the page's: as wide as its widest (an Advanced one too, closed or not), and
+        // no wider than 45% of the panel
+        void AlignLabels()
+        {
+            var labels = this.Query<Label>(className: "tg-details-label").ToList().Where(l => l.parent != null && !l.parent.ClassListContains("tg-details-line")).ToList();
+            if (labels.Count == 0 || float.IsNaN(layout.width)) return;
+            var widest = labels.Max(l => l.MeasureTextSize(l.text, 0, MeasureMode.Undefined, 0, MeasureMode.Undefined).x);
+            var width = Mathf.Ceil(Mathf.Min(widest, layout.width * 0.45f));
+            foreach (var l in labels)
+                if (Mathf.Abs(l.resolvedStyle.width - width) > 0.5f) l.style.width = width;
         }
 
         protected override void Close() => Window.ShowDetails(false);
@@ -569,6 +582,28 @@ namespace Tide.Editor
 
     sealed class GraphMyGame : GraphDock
     {
+        // A row's cells, in the list's columns: its name (a nested one's indent inside it) | its kind or its type |
+        // its problems
+        static VisualElement Cells(VisualElement row, float left)
+        {
+            var padding = row.style.paddingLeft.keyword == StyleKeyword.Undefined ? row.style.paddingLeft.value.value : left;
+            row.style.paddingLeft = left;
+            if (padding > left)
+            {
+                var indent = new VisualElement { pickingMode = PickingMode.Ignore, style = { width = padding - left, flexShrink = 0 } };
+                indent.AddToClassList("tg-indent");
+                row.Insert(0, indent);
+            }
+            var parts = row.Children().ToList();
+            var spacer = parts.FindIndex(c => c.GetType() == typeof(VisualElement) && c.childCount == 0 && !c.GetClasses().Any() && c.style.flexGrow.value > 0);
+            return GraphColumns.Sort(row, (c, i) =>
+            {
+                if (c.ClassListContains("tg-badge")) return 3;
+                var at = parts.IndexOf(c);
+                return spacer >= 0 && at > spacer ? 2 : 1;
+            });
+        }
+
         readonly TextField query;
         readonly VisualElement list;
         readonly List<(int id, string title)> shown = new List<(int, string)>();
@@ -599,6 +634,7 @@ namespace Tide.Editor
             }, TrickleDown.TrickleDown);
             Insert(1, query);
             list = new VisualElement();
+            GraphColumns.Box(list);
             Body.Add(list);
             Fill();
         }
@@ -802,7 +838,7 @@ namespace Tide.Editor
         {
             var row = GraphLook.Row("tg-option", "tg-mine-row", "tg-mine-var");
             row.name = "var:" + path;
-            row.style.paddingLeft = 6 + depth * 14;
+            row.style.paddingLeft = 10 + depth * 14;
             variables.Add((path, parts));
             if (opens)
             {
@@ -824,7 +860,7 @@ namespace Tide.Editor
             row.RegisterCallback<PointerEnterEvent>(_ => frame.Light(root.Kind == "local" ? null : root.Name, root.Kind == "local" ? root.Ref : 0, true));
             row.RegisterCallback<PointerLeaveEvent>(_ => frame.Light(root.Kind == "local" ? null : root.Name, root.Kind == "local" ? root.Ref : 0, false));
             DragsVariable(row, frame, parts, path);
-            return row;
+            return Cells(row, 10);
         }
 
         // A click goes to where it comes from (the entry's row, the node that declares a local); a drag carries a
@@ -950,7 +986,7 @@ namespace Tide.Editor
             row.tooltip = GraphSchema.Word(name != null ? "mygame.item.tip" : "mygame.item.go");
             Drags(row, id, title, e);
             shown.Add((id, title));
-            return row;
+            return Cells(row, 10);
         }
 
         // Whether dragging it out does something: a component or a singleton onto a frame's entry is something that
