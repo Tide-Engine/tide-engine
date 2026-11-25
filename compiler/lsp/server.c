@@ -1697,6 +1697,14 @@ static void document_request(lsp_server *s, const char *method, const json *id, 
             analysis_graph_calls(&g);
         } else if (strcmp(method, "tide/graphNames") == 0) {
             analysis_graph_names(&g);
+        } else if (strcmp(method, "tide/graphOperators") == 0) {
+            // Which operators take a value of a type, and one of "other" (or of the type) on the right
+            analysis_set_graph_operators_probe(d->uri, json_str(json_path(params, "type", NULL)), json_str(json_path(params, "other", NULL)));
+            s->analyzed = false;
+            analyze(s, d->uri);
+            analysis_graph_operators(&g);
+            analysis_set_graph_probe(NULL, 0, false);
+            s->analyzed = false;
         } else if (strcmp(method, "tide/graphMembers") == 0) {
             // What a node's value has: the game read again with a '.' after the node, and completion there; and the
             // node's type, read first with the node written and no '.'. The next request reads the graph as it is
@@ -1914,6 +1922,7 @@ static bool is_document_request(const char *method)
         "textDocument/prepareCallHierarchy", "textDocument/rangeFormatting", "textDocument/selectionRange",
         "tide/graphText", "tide/graphTypes", "tide/graphCalls", "tide/graphNames", "tide/graphCompletion", "tide/graphHover", "tide/graphSignatureHelp",
         "tide/graphMembers",
+        "tide/graphOperators",
     };
     for (size_t i = 0; i < sizeof methods / sizeof methods[0]; i++) {
         if (strcmp(method, methods[i]) == 0) return true;

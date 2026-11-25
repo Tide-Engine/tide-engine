@@ -1789,6 +1789,17 @@ static int probe_offset = -1;
 static bool probe_dot; // The '.' after it: without, the node is only written where nothing reads it, for its type
 static const char *probe_type; // ...or a type's name, for what a value of it has where no node has one yet
 static bool probe_named;       // ...or what the name itself has: an enum's choices, a namespace's functions
+static bool probe_operators;   // ...or which operators take a value of the type (and one of probe_other on the right)
+static const char *probe_other;
+
+// An operator probe's statements: one operator each, on a line of its own, and the lines of what's before them
+typedef struct operator_line {
+    const char *group, *op;
+    int line;
+} operator_line;
+static operator_line probe_op_lines[48];
+static int probe_op_count;
+static int probe_op_file = -1, probe_op_head; // The file, and the line of the probe's function (its body's first two)
 
 // Its Tide with a function after it that takes a value of the type and reads it with a '.', where completion goes on
 static void probe_graph_type(afile *f)
@@ -1805,6 +1816,56 @@ static void probe_graph_type(afile *f)
     sb_put(&text, ";\n}\n");
     f->src.text = text.data;
     f->src.len = text.len;
+}
+
+static bool type_text(const char *type)
+{
+    if (!type || !*type) return false;
+    for (const char *c = type; *c; c++) { // A type's text and no more code than that
+        if (!isalnum((unsigned char)*c) && !strchr("_<>,.?[] ", *c)) return false;
+    }
+    return true;
+}
+
+// Its Tide with a function after it that has a statement for each of the schema's operators, each on a line of its
+// own: `c op= b;` (`c++;`), `_ = a op b;`, `_ = op a;`. An operator is taken where its line has no error
+static void probe_graph_operators(afile *f, const int file)
+{
+    probe_op_count = 0;
+    probe_op_file = -1;
+    const char *other = probe_other && *probe_other ? probe_other : probe_type;
+    if (!type_text(probe_type) || !type_text(other)) return;
+    source schema_src = {.path = "<graph schema>"};
+    schema_src.text = graph_schema_text(&schema_src.len);
+    const graph_json *ops = graph_json_get(graph_json_parse(&schema_src), "operators");
+    if (!ops) return;
+    int line = 1;
+    for (size_t k = 0; k < f->src.len; k++) line += f->src.text[k] == '\n';
+    sb text = {0};
+    sb_putn(&text, f->src.text, f->src.len);
+    sb_printf(&text, "\nvoid _graphOperators(%s _graphA, %s _graphB)\n{\n    mut var _graphC = _graphA;\n", probe_type, other);
+    probe_op_head = line + 1; // The function's line; its '{' and the copy are the next two
+    line += 4;
+    static const char *const groups[] = {"assign", "binary", "unary"};
+    for (int g = 0; g < 3; g++) {
+        const graph_json *list = graph_json_get(ops, groups[g]);
+        for (int i = 0; list && list->kind == GJ_ARRAY && i < list->count; i++) {
+            const graph_json *item = list->items[i];
+            if (item->kind == GJ_OBJECT) item = graph_json_get(item, "op");
+            if (!item || item->kind != GJ_STRING || probe_op_count >= (int)(sizeof probe_op_lines / sizeof *probe_op_lines)) continue;
+            const char *op = str_to_cstr(item->text);
+            const bool step = g == 0 && (strcmp(op, "++") == 0 || strcmp(op, "--") == 0);
+            if (step) sb_printf(&text, "    _graphC%s;\n", op);
+            else if (g == 0) sb_printf(&text, "    _graphC %s _graphB;\n", op);
+            else if (g == 1) sb_printf(&text, "    _ = _graphA %s _graphB;\n", op);
+            else sb_printf(&text, "    _ = %s_graphA;\n", op);
+            probe_op_lines[probe_op_count++] = (operator_line){step ? "step" : groups[g], op, line++};
+        }
+    }
+    sb_put(&text, "}\n");
+    f->src.text = text.data;
+    f->src.len = text.len;
+    probe_op_file = file;
 }
 
 // Its Tide with a '.' just after the node's text, which completion goes on from as after `value.` in a .tide file
@@ -1833,6 +1894,8 @@ void analysis_set_graph_probe(const char *uri, const int node, const bool dot)
     probe_node = node;
     probe_dot = dot;
     probe_type = NULL;
+    probe_operators = false;
+    probe_other = NULL;
     probe_offset = -1;
 }
 
@@ -1841,6 +1904,47 @@ void analysis_set_graph_type_probe(const char *uri, const char *type, const bool
     analysis_set_graph_probe(uri, 0, false);
     probe_type = type;
     probe_named = named;
+}
+
+void analysis_set_graph_operators_probe(const char *uri, const char *type, const char *other)
+{
+    analysis_set_graph_probe(uri, 0, false);
+    probe_type = type;
+    probe_other = other;
+    probe_operators = true;
+    probe_op_count = 0;
+    probe_op_file = -1;
+}
+
+void analysis_graph_operators(jbuf *out)
+{
+    if (probe_op_file < 0 || probe_op_count == 0) {
+        jb_put(out, "null");
+        return;
+    }
+    bool wrong[48] = {0};
+    for (int i = 0; i < A.diags.count; i++) {
+        const diagnostic *d = &A.diags.items[i];
+        if (d->severity != DIAG_ERROR || d->at.file != probe_op_file || d->at.line < probe_op_head) continue;
+        if (d->at.line <= probe_op_head + 2) { // The type isn't one there, or a value of it can't be copied
+            jb_put(out, "null");
+            return;
+        }
+        for (int k = 0; k < probe_op_count; k++) wrong[k] |= probe_op_lines[k].line == d->at.line;
+    }
+    static const char *const groups[] = {"assign", "step", "binary", "unary"};
+    jb_put(out, "{");
+    for (int g = 0; g < 4; g++) {
+        jb_printf(out, "%s\"%s\":[", g ? "," : "", groups[g]);
+        int written = 0;
+        for (int k = 0; k < probe_op_count; k++) {
+            if (wrong[k] || strcmp(probe_op_lines[k].group, groups[g]) != 0) continue;
+            if (written++) jb_put(out, ",");
+            jb_string(out, probe_op_lines[k].op);
+        }
+        jb_put(out, "]");
+    }
+    jb_put(out, "}");
 }
 
 int analysis_graph_probe_offset(void)
@@ -1932,6 +2036,8 @@ void analysis_run(const analysis_file *given, const int given_count)
             if (!graph_lower_with(&f->src, probed ? probe_node : 0)) {
                 f->src.text = "";
                 f->src.len = 0;
+            } else if (probed && probe_operators) {
+                probe_graph_operators(f, i);
             } else if (probed && probe_type) {
                 probe_graph_type(f);
             } else if (probed && probe_dot) {

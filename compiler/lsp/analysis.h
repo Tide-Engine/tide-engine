@@ -137,3 +137,8 @@ void analysis_graph_node_type(int node, jbuf *out);
 // reads yet. The same offset and the same reset after.
 // `named`: what the name itself has, after `Name.`: an enum's choices, a namespace's functions and constants.
 void analysis_set_graph_type_probe(const char *uri, const char *type, bool named);
+// Which operators take a value of `type` (with one of `other` on the right, or of `type` when NULL): the graph read
+// with a function after it that uses each, then analysis_graph_operators. The same reset after.
+void analysis_set_graph_operators_probe(const char *uri, const char *type, const char *other);
+// {"assign": [...], "step": [...], "binary": [...], "unary": [...]}, or null when the type isn't one there
+void analysis_graph_operators(jbuf *out);

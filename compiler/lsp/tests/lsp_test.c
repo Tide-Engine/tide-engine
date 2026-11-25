@@ -14338,6 +14338,17 @@ TIDE_TEST(lsp_graphs)
     // ...and what a name itself has: a namespace's functions
     TIDE_CHECK(offers(request_at(uri, "tide/graphMembers", 0, 0, "\"name\":\"Math\""), "Max"));
     TIDE_CHECK(!offers(request_at(uri, "tide/graphMembers", 0, 0, "\"type\":\"Score s) { } void F(\""), "points"));
+    // Which operators take a value of a type: a vector by a number, a component only set, an int stepped, no type null
+#define GRAPH_OPERATORS(of) request_at(uri, "tide/graphOperators", 0, 0, of)
+    TIDE_CHECK(has(GRAPH_OPERATORS("\"type\":\"float3\",\"other\":\"float\""), "\"assign\":[\"+=\",\"-=\",\"*=\",\"/=\"]"));
+    TIDE_CHECK(has(GRAPH_OPERATORS("\"type\":\"float3\",\"other\":\"float\""), "\"binary\":[\"+\",\"-\",\"*\",\"/\"]"));
+    TIDE_CHECK(has(GRAPH_OPERATORS("\"type\":\"Score\",\"other\":\"float\""), "\"assign\":[],\"step\":[],\"binary\":[]"));
+    TIDE_CHECK(has(GRAPH_OPERATORS("\"type\":\"Score\""), "\"assign\":[\"=\"],\"step\":[]"));
+    TIDE_CHECK(has(GRAPH_OPERATORS("\"type\":\"int\""), "\"step\":[\"++\",\"--\"]"));
+    TIDE_CHECK(has(GRAPH_OPERATORS("\"type\":\"int\""), "\"<<=\"") && has(GRAPH_OPERATORS("\"type\":\"int\""), "\"~\""));
+    TIDE_CHECK(has(GRAPH_OPERATORS("\"type\":\"Nothing\""), "\"result\":null"));
+    TIDE_CHECK(has(GRAPH_OPERATORS("\"type\":\"int) { } void F(\""), "\"result\":null"));
+#undef GRAPH_OPERATORS
     // ...and the graph as it is again after
     TIDE_CHECK(has(request_at(uri, "tide/graphText", 0, 0, ""), "score.points += Bonus(3);"));
     // The file's JSON is no Tide to ask about by its places

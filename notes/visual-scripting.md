@@ -359,7 +359,8 @@ JetBrains, one web editor). What they'd otherwise each implement is tidec's, ser
 - `tidels_tests` `lsp_graphs`: diagnostics with the node, and the four requests; members of a type by name (the
   game's, the engine's, and nothing for text that's more than a type); a graph with holes: each on its node with
   its port (and index), the unknown call beside them still said, no `_graphHole` in any message, its Tide and
-  an unread node's members still answered; `tide/graphCalls` for a built-in (`Math.Max`: a, b) and a function of
+  an unread node's members still answered; `tide/graphOperators` (a `float3` by a `float`, a component, an `int`'s
+steps and bits, `null` for an unknown type and for text that's more than a type); `tide/graphCalls` for a built-in (`Math.Max`: a, b) and a function of
   the game's (names and types); a layout with a worked-out value left of its statement and a number where its
   reader is.
 - The Sample's EditMode `GraphLanguageTests` (tidels and tidec of this checkout's build, or `TIDE_TIDELS`,
@@ -682,3 +683,62 @@ component, no `returnType` on a system); members' `summary`, `once`; `keyInfo`, 
 every declaration but a namespace, of members with code, and of accessors. tidec: `graph_layout_board`
 (`graph_layout.c`), which the converter places every card and frame with, and `graph_schema_hold`, which reads the
 schema once for many nodes.
+
+**Round three: like Blueprint** (owner, 2026-11-25, after building a system in the Unity window that scales a
+transform by a component's `frequency`). What went wrong, in the owner's words and pictures: a node
+(`transform . localScale`) sat on top of the Set node, and neither it nor any node could be moved; "they overlap,
+i can barely link and its very unclear that I can even link it"; the Set ended as `transform *= frequency`
+("operator '*' can't be used with Transform and float") because nothing stopped it; on a component's card "i kept
+adding a new field by accident", "it barely has any space to click and drag without doing something; the name
+should likely be a double click to rename everywhere, the only place I can drag it is on the top left chip"; the
+card's menu ("This machine only", "Work out its starting value…", "Add an attribute…", "Note…", Move up/down,
+Duplicate, Remove) "is daunting and im not sure even I understand it all"; "we should take inspiration from
+unreals blueprint system"; "right click menus are a mess and have no consistency" (a frame's menu had Add a node,
+Tidy up, OPTIONS, MORE, Duplicate, Delete; a card's Remove). The design both editors build (my picks, Provisional):
+
+- **Everything moves by dragging it.** A node, a card or a frame is dragged by any part that isn't a control: its
+  title bar, its kind chip, its name, the space around rows. A click selects; a drag on the empty board draws a
+  selection box; Shift or Ctrl adds to the selection; a selection moves, copies and deletes together. A move is
+  an edit (`x`, `y` written, undone like any other). A node stays in its frame (the frame grows to hold it).
+- **Names are renamed by a double click** (or F2, or Rename in the menu): a card's, a frame's, a field's, a
+  parameter's, a local's. A single click on a name selects and starts a drag. A new thing still starts with its
+  name being typed.
+- **Nothing is placed on top of anything.** What the editor places (a new node, a pasted one, one "Work it out…"
+  made, a frame or card added) goes into free space near where it was asked for. A node shown in an input is
+  never drawn as a node as well.
+- **Pins are always there.** Every input has its pin at its left, hollow when empty and filled when something's
+  in it (a value, a chip, a wire); every value its pin at its right; exec pins are arrows. A simple value stays in
+  the input beside its pin. A pin under the pointer says what it is and "drag to connect". While a wire is
+  dragged, the pins it can go to are lit and the others dimmed (by type where known; unknown fits); dropped on
+  an input it fills it (replacing what was there); dropped on empty space it opens the node search for what fits
+  there, like Blueprint's context-sensitive actions (with "Show everything"). Wires are easy to hit; Alt+click on
+  a pin breaks its links.
+- **One menu, the same everywhere.** A right click on a thing and its "…" button open the same menu, in the same
+  order for every kind of thing, leaving out what doesn't apply: (1) what can be added to it ("Add a field",
+  "Add a method"; a frame's "Add a node… Space"), (2) Rename F2, (3) Cut, Copy, Paste, Duplicate, Delete with their
+  keys, (4) Note…. The same words everywhere ("Delete", never "Remove"). Options, attributes and a worked-out
+  starting value aren't in menus: they're in Details. A right click on an empty board or an empty part of a frame
+  opens the add search for that place; on a pin: Break links, Pick a value…, Work it out….
+- **Details** (Blueprint's Details panel), docked on the right, for what's selected: its name, type and starting
+  value; its kind's options as ticks, each with its help written under it (`modifierInfo`); "Advanced", closed,
+  for the rest (packages can replace it, replaces another, written in C, attributes); its note. With nothing
+  selected, the file's (namespace, uses). It can be closed and stays as left.
+- **My game** (Blueprint's My Blueprint panel), docked on the left, in place of Contents: the file's
+  declarations by the schema's groups, a "+" on each group's heading that adds one of its kinds, a click pans to
+  it, a double click renames. Dragged out: a component or singleton onto a frame's entry adds it as a need; a
+  function into a frame makes its call; a constant onto an input fills it.
+- **A card's rows have room**, and its "+" is a button on its title bar ("Add a field"), not a row under the last
+  one; Enter in a row still makes the next.
+- **Only what's valid in a Set.** "What" offers what can be changed (a parameter taken as "changes", a local, a
+  field of one of those), not what's only read; the operator offers only operators valid for the target's type
+  and the value's (`tide/graphOperators`, below); "Work it out…"'s operators likewise.
+
+**`tide/graphOperators`** (2026-11-25): `{"type": "float3", "other": "float"}` gives `{"assign": ["=", "+=",
+...], "step": ["++", "--"], "binary": ["+", "*", "==", ...], "unary": ["-"]}`: which of the schema's operators the
+checker takes for a value of `type`, with a value of `other` (of `type` when it's left out) on the right. tidels
+reads the graph with a function after it whose statements each use one operator, and leaves out each one with an
+error on its line (`mut var _graphC = _graphA;` then `_graphC op= _graphB;`, `_graphC++;`, `_ = _graphA op _graphB;`,
+`_ = op _graphA;`). `null` when the type itself isn't known there, or isn't a type's text (then offer them all).
+A Set whose value isn't picked yet asks without `other`; with one, `=` is there only if the value fits (`float3`
+with a `float`: `+=`, `-=`, `*=`, `/=`, no `=`). A component (`Score`) gets `=` alone, with a `float` nothing. A graph
+that doesn't parse isn't checked, so then everything is said to fit.
