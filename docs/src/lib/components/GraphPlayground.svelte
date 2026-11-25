@@ -14,6 +14,8 @@
     const editorFiles = import.meta.glob<string>(['../../../../tools/tide-graph/src/*.js', '../../../../tools/tide-graph/style.css'],
         { query: '?raw', import: 'default' });
     const EDITOR = '../../../../tools/tide-graph/';
+    // Its font (Inter, shipped with it): the style is put in the page inline, so its url()s are the site's places
+    const editorFonts = import.meta.glob<string>('../../../../tools/tide-graph/fonts/*.ttf', { query: '?url', import: 'default', eager: true });
 
     let automatic = $state(true);
     let status = $state('Edit the graph, then press Play to see your changes.');
@@ -83,18 +85,10 @@
         editorFrame?.contentWindow?.postMessage({ tideGraph: message }, location.origin);
     }
 
-    // The site's colours, as the editor's (its theme message, as JetBrains sends)
+    // Whether the site is dark or light: the editor's colours and font are its own (the graph schema's look), the
+    // same as in the editors
     function sendTheme() {
-        const css = getComputedStyle(document.documentElement);
-        const v = (name: string) => css.getPropertyValue(name).trim();
-        toEditor({
-            type: 'theme', dark: theme.dark, font: v('--font'), colors: {
-                bg: v('--bg'), panel: v('--bg-alt'), fg: v('--text-1'), muted: v('--text-2'), border: v('--divider'),
-                accent: v('--brand-1'), select: v('--brand-soft'), hover: v('--bg-soft'), 'input-bg': v('--bg'),
-                'input-border': v('--border'), 'node-bg': v('--bg-elv'), 'node-border': v('--border'),
-                error: v('--danger'), warning: v('--warning'), mark: v('--brand-soft'), mono: v('--mono'),
-            },
-        });
+        toEditor({ type: 'theme', dark: theme.dark });
     }
 
     // The editor's page: its style and scripts, then the frame's side of the host
@@ -107,6 +101,7 @@
         };
         const [styles, scripts] = await Promise.all([Promise.all(files.styles.map(read)), Promise.all(files.scripts.map(read))]);
         const inline = (text: string) => text.replace(/<\/(script|style)/gi, '<\\/$1');
+        const withFonts = (css: string) => css.replace(/url\("(fonts\/[^"]+)"\)/g, (all, name) => (editorFonts[EDITOR + name] ? `url("${new URL(editorFonts[EDITOR + name], location.href)}")` : all));
         // The page is the board, whatever the frame's size: its own styles make a narrow one (a phone's) the
         // board alone, with its lists opening over it
         const glue = `(function () {
@@ -119,7 +114,7 @@
 })();`;
         return `<!doctype html><html lang="en" class="${theme.dark ? 'tg-dark' : 'tg-light'}"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>Tide graph</title>
-${styles.map(s => `<style>${inline(s)}</style>`).join('\n')}</head><body>
+${styles.map(s => `<style>${inline(withFonts(s))}</style>`).join('\n')}</head><body>
 ${scripts.map(s => `<script>${inline(s)}<\/script>`).join('\n')}
 <script>${glue}<\/script></body></html>`;
     }

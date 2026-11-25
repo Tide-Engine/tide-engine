@@ -15,7 +15,7 @@ namespace Tide.Editor
         protected readonly VisualElement Body;
         readonly Label title;
 
-        protected GraphDock(TideGraphWindow window, string heading, bool left)
+        protected GraphDock(TideGraphWindow window, string heading, string closeTip, bool left)
         {
             Window = window;
             AddToClassList("tg-dock");
@@ -24,7 +24,7 @@ namespace Tide.Editor
             var head = GraphLook.Row("tg-side-head");
             title = GraphLook.Text(heading, "tg-side-title");
             head.Add(title);
-            var close = GraphLook.IconButton("close", "Close (the bar's button opens it again)", Close);
+            var close = GraphLook.IconButton("close", closeTip, Close);
             close.name = "close";
             head.Add(close);
             Add(head);
@@ -49,7 +49,7 @@ namespace Tide.Editor
     {
         static bool advancedOpen; // As the user left it, for the session
 
-        public GraphDetails(TideGraphWindow window) : base(window, "Details", false)
+        public GraphDetails(TideGraphWindow window) : base(window, GraphSchema.Word("details.title"), GraphSchema.Word("details.close"), false)
         {
             name = "details";
             Fill();
@@ -74,7 +74,7 @@ namespace Tide.Editor
             else if (board.Chosen.Count + board.Nodes.Count > 1)
             {
                 Showing = "many";
-                Body.Add(GraphLook.Text($"{board.Chosen.Count + board.Nodes.Count} things are selected. Pick one to see its details.", "tg-empty"));
+                Body.Add(GraphLook.Text(GraphSchema.Word("details.many", "count", (board.Chosen.Count + board.Nodes.Count).ToString()), "tg-empty"));
             }
             else File();
         }
@@ -140,7 +140,7 @@ namespace Tide.Editor
 
         Foldout Advanced()
         {
-            var f = new Foldout { text = "Advanced", value = advancedOpen };
+            var f = new Foldout { text = GraphSchema.Word("details.advanced"), value = advancedOpen };
             f.name = "advanced";
             f.AddToClassList("tg-details-advanced");
             f.RegisterValueChangedCallback(e =>
@@ -220,29 +220,29 @@ namespace Tide.Editor
                 var info = GraphSchema.KeyInfo("typeParams");
                 var said = string.Join(", ", Strings(v.Arr("typeParams")));
                 var b = GraphLook.Plain(() => item.AskGeneric(e), "tg-link");
-                b.text = said.Length > 0 ? said : "none";
+                b.text = said.Length > 0 ? said : GraphSchema.Word("details.none");
                 Line(info.Label, b, info.Help, advanced.contentContainer);
                 if (said.Length > 0)
                 {
                     var rules = GraphLook.Plain(() => item.AskRules(e, null), "tg-link");
-                    rules.text = (v.Arr("where")?.Items.Count ?? 0) > 0 ? string.Join("; ", v.Arr("where").Items.Select(r => r.Str("param") + ": " + string.Join(", ", Strings(r.Arr("rules"))))) : "none";
+                    rules.text = (v.Arr("where")?.Items.Count ?? 0) > 0 ? string.Join("; ", v.Arr("where").Items.Select(r => r.Str("param") + ": " + string.Join(", ", Strings(r.Arr("rules"))))) : GraphSchema.Word("details.none");
                     Line(GraphSchema.KeyInfo("where").Label, rules, GraphSchema.KeyInfo("where").Help, advanced.contentContainer);
                 }
             }
             if (GraphSchema.HasKey(kind, member, "fails"))
             {
                 var info = GraphSchema.KeyInfo("fails");
-                Line(info.Label, new GraphTypeChip(v.Str("fails"), "It can't fail", Window.Light, from => Board.PickType(new GraphTypeRequest { Title = info.Label, Current = v.Str("fails"), Infer = "It can't fail" }, from,
+                Line(info.Label, new GraphTypeChip(v.Str("fails"), GraphSchema.Word("details.fails.none"), Window.Light, from => Board.PickType(new GraphTypeRequest { Title = info.Label, Current = v.Str("fails"), Infer = GraphSchema.Word("details.fails.none") }, from,
                     type => Window.Edit(info.Label, () => v.SetString("fails", type, order), item.Id))), info.Help, advanced.contentContainer);
             }
             if (GraphSchema.HasKey(kind, member, "backing"))
             {
                 var info = GraphSchema.KeyInfo("backing");
-                Line(info.Label, new GraphTypeChip(v.Str("backing"), "int (the usual)", Window.Light, from => Board.PickType(new GraphTypeRequest { Title = info.Label, Current = v.Str("backing"), Infer = "int (the usual)", NoBuilders = true, Only = t => GraphValues.IsWhole(t.Name) }, from,
+                Line(info.Label, new GraphTypeChip(v.Str("backing"), GraphSchema.Word("details.backing.none"), Window.Light, from => Board.PickType(new GraphTypeRequest { Title = info.Label, Current = v.Str("backing"), Infer = GraphSchema.Word("details.backing.none"), NoBuilders = true, Only = t => GraphValues.IsWhole(t.Name) }, from,
                     type => Window.Edit(info.Label, () => v.SetString("backing", type, order), item.Id))), info.Help, advanced.contentContainer);
             }
             if (kind == "scene" && !member)
-                Tick("Nothing of its own", "A scene that's only a name: scene Arena;", v.Get("members") != null && v.Get("members").Kind == JKind.Null, () => Window.Edit("Scene", () =>
+                Tick(GraphSchema.Word("details.sceneEmpty"), GraphSchema.Word((v.Arr("members")?.Items.Count ?? 0) > 0 ? "details.sceneEmpty.has" : "details.sceneEmpty.help"), v.Get("members") != null && v.Get("members").Kind == JKind.Null, () => Window.Edit("Scene", () =>
                 {
                     if (v.Get("members") != null && v.Get("members").Kind == JKind.Null) v.Set("members", JValue.NewArray(), order);
                     else v.Set("members", JValue.Null(), order);
@@ -250,9 +250,9 @@ namespace Tide.Editor
             if (advanced.contentContainer.childCount > 0) Body.Add(advanced);
             if (item is GraphFrame frame && frame.Graph != null)
             {
-                var tidy = GraphLook.Labelled(null, "Tidy up its nodes", () => Board.Tidy(frame), "tg-link");
+                var tidy = GraphLook.Labelled(null, GraphSchema.Word("details.tidy"), () => Board.Tidy(frame), "tg-link");
                 tidy.name = "tidy";
-                tidy.tooltip = "Lays its nodes out again, as tidec does";
+                tidy.tooltip = GraphSchema.Word("details.tidy.tip");
                 Body.Add(tidy);
             }
             if (GraphDocument.OrderOf(e).Contains("comment")) Note(e, order, item.Id);
@@ -299,7 +299,7 @@ namespace Tide.Editor
             var verified = GraphSchema.KeyInfo("verified");
             Tick(verified.Label, verified.Help, t?.Flag("verified") ?? false, () => Window.Edit(verified.Label, () => Made().SetFlag("verified", !(Made().Flag("verified")), GraphSchema.TriggerOrder), item.Id), null, "verified");
             var changed = t?.Flag("changed") ?? false;
-            Tick("A field's change, not an event", "Hears a component's field changing: Changed<Health.current>", changed, () => Window.Edit("Change", () => Made().SetFlag("changed", !changed, GraphSchema.TriggerOrder), item.Id), null, "changed");
+            Tick(GraphSchema.Word("details.changed"), GraphSchema.Word("details.changed.help"), changed, () => Window.Edit("Change", () => Made().SetFlag("changed", !changed, GraphSchema.TriggerOrder), item.Id), null, "changed");
         }
 
         // Its attributes, each changed or taken away by a click, and one more added
@@ -338,7 +338,7 @@ namespace Tide.Editor
                     title = GraphSchema.MemberTitle(kind);
                     help = GraphSchema.MemberSummary(kind);
                     break;
-                case GraphRole.EnumMember: title = "Choice"; break;
+                case GraphRole.EnumMember: title = GraphSchema.Word("details.choice"); break;
                 case GraphRole.Entry: title = GraphSchema.DeclTitle("settings"); break;
                 case GraphRole.Param: title = GraphSchema.KeyInfo("params").Label; break;
                 case GraphRole.Payload: title = GraphSchema.KeyInfo("payload").Label; break;
@@ -369,7 +369,7 @@ namespace Tide.Editor
                 how = GraphLook.Plain(() => frame.OpenModes(how, e.List, v), "tg-word");
                 how.text = info.Label;
                 how.name = "mode";
-                Line("Taken", how, info.Help);
+                Line(GraphSchema.Word("details.mode"), how, info.Help);
             }
             if (v.Has("type") || kind == "field" || kind == "tweak" || kind == "property")
             {
@@ -388,9 +388,9 @@ namespace Tide.Editor
                 {
                     Board.OpenValue(slot);
                 }, "tg-link");
-                work.text = "Work it out…";
+                work.text = GraphSchema.Word("menu.work");
                 work.name = "work-out";
-                work.tooltip = "A small graph, for more than a number or a text";
+                work.tooltip = GraphSchema.Word("details.work.tip");
                 box.Add(work);
                 if (v.Get(key) != null)
                 {
@@ -430,7 +430,7 @@ namespace Tide.Editor
                     Tick(info.Label, info.Help, v.Flag(flag), () => Window.Edit(info.Label, () => v.SetFlag(f, !v.Flag(f), o), item.Id), info.Advanced ? advanced.contentContainer : null, flag);
                 }
                 if (filter)
-                    Tick("Owning it, not having a component", "Only (or never) the entities this machine's player owns", v.Flag("ownership"), () => Window.Edit("Ownership", () =>
+                    Tick(GraphSchema.Word("details.ownership"), GraphSchema.Word("details.ownership.help"), v.Flag("ownership"), () => Window.Edit("Ownership", () =>
                     {
                         var on = !v.Flag("ownership");
                         v.SetFlag("ownership", on, o);
@@ -444,15 +444,17 @@ namespace Tide.Editor
             {
                 var at = e.List.Items.IndexOf(v);
                 var place = GraphLook.Row("tg-tags");
-                var up = GraphLook.Labelled(null, "Earlier", () => Window.Edit("Move up", () => GraphFrame.Swap(e.List, at, at - 1), item.Id), "tg-link");
+                var up = GraphLook.Labelled(null, GraphSchema.Word("details.earlier"), () => Window.Edit("Move up", () => GraphFrame.Swap(e.List, at, at - 1), item.Id), "tg-link");
                 up.name = "earlier";
+                up.tooltip = GraphSchema.Word("details.earlier.tip");
                 up.SetEnabled(at > 0);
-                var down = GraphLook.Labelled(null, "Later", () => Window.Edit("Move down", () => GraphFrame.Swap(e.List, at, at + 1), item.Id), "tg-link");
+                var down = GraphLook.Labelled(null, GraphSchema.Word("details.later"), () => Window.Edit("Move down", () => GraphFrame.Swap(e.List, at, at + 1), item.Id), "tg-link");
                 down.name = "later";
+                down.tooltip = GraphSchema.Word("details.later.tip");
                 down.SetEnabled(at < e.List.Items.Count - 1);
                 place.Add(up);
                 place.Add(down);
-                Line("Order", place, null, advanced.contentContainer);
+                Line(GraphSchema.Word("details.order"), place, null, advanced.contentContainer);
             }
             if (advanced.contentContainer.childCount > 0) Body.Add(advanced);
             if (order.Contains("comment")) Note(e, order, item.Id);
@@ -468,7 +470,7 @@ namespace Tide.Editor
             var spec = GraphSchema.Spec(shown.Str("k"));
             // A variable's or a field's read is a Get, as Blueprint calls it
             var get = view.Call == null && GraphNodeView.IsGet(shown.Str("k"));
-            Head(get ? GraphBoard.GetWord : spec?.Title ?? shown.Str("k"), "Behaviour", get ? "Its value: one Get can be wired to any number of inputs." : spec?.Help);
+            Head(get ? GraphBoard.GetWord : spec?.Title ?? shown.Str("k"), "Behaviour", get ? GraphSchema.Word("menu.get.summary") : spec?.Help);
             var advanced = Advanced();
             foreach (var v in view.Call != null ? new[] { view.Call, view.Node } : new[] { view.Node })
             {
@@ -489,18 +491,18 @@ namespace Tide.Editor
                     var target = v;
                     var types = GraphLook.Row("tg-tags");
                     foreach (var t in GraphLists.Strings(v.Arr("typeArgs"))) types.Add(GraphLook.Text(t, "tg-tag"));
-                    var add = GraphLook.Labelled("plus", "a type…", () => Board.PickType(new GraphTypeRequest { Title = "Type argument", Generic = Doc.TypeParamsAt(frame.Slot.Owner) }, view, type => frame.Edit("Type argument", () =>
+                    var add = GraphLook.Labelled("plus", GraphSchema.Word("details.add"), () => Board.PickType(new GraphTypeRequest { Title = GraphSchema.Word("details.typeArg"), Generic = Doc.TypeParamsAt(frame.Slot.Owner) }, view, type => frame.Edit("Type argument", () =>
                     {
                         var args = GraphLists.Strings(target.Arr("typeArgs")).ToList();
                         args.Add(type);
                         target.Set("typeArgs", JValue.Strings(args), order);
                     })), "tg-link");
                     types.Add(add);
-                    Line("Type arguments", null, "For a call that names its types: Get<Health>()", advanced.contentContainer).Add(types);
+                    Line(GraphSchema.Word("details.typeArgs"), null, "For a call that names its types: Get<Health>()", advanced.contentContainer).Add(types);
                     if ((v.Arr("args")?.Items.Count ?? 0) > 0)
                     {
                         var names = GraphLook.Plain(() => frame.AskArgNames(view, target), "tg-link");
-                        names.text = v.Arr("argNames") != null ? string.Join(", ", GraphLists.Strings(v.Arr("argNames")).Select(x => x.Length > 0 ? x : "_")) : "none";
+                        names.text = v.Arr("argNames") != null ? string.Join(", ", GraphLists.Strings(v.Arr("argNames")).Select(x => x.Length > 0 ? x : "_")) : GraphSchema.Word("details.none");
                         Line("Argument names", names, "A call that says which input is which: crit: true", advanced.contentContainer);
                     }
                 }
@@ -517,10 +519,10 @@ namespace Tide.Editor
         {
             Showing = "file";
             var doc = Doc;
-            Head("This file", "More", "Select something on the board to see its details here.");
-            var space = Text("Namespace", doc.Root.Str("namespace"), typed => Window.Edit("Namespace", () => doc.Root.SetString("namespace", GraphLook.DottedName(typed), GraphSchema.RootOrder)), "no namespace");
+            Head(GraphSchema.Word("details.file"), "More", GraphSchema.Word("details.file.hint"));
+            var space = Text(GraphSchema.Word("details.namespace"), doc.Root.Str("namespace"), typed => Window.Edit("Namespace", () => doc.Root.SetString("namespace", GraphLook.DottedName(typed), GraphSchema.RootOrder)), GraphSchema.Word("details.none"));
             space.name = "namespace";
-            Body.Add(GraphLook.Text("The namespace everything in this file is in. Leave it empty for none.", "tg-details-help"));
+            Body.Add(GraphLook.Text(GraphSchema.Word("details.namespace.help"), "tg-details-help"));
             var used = doc.Root.Arr("using");
             var list = GraphLook.Row("tg-tags");
             for (var i = 0; used != null && i < used.Items.Count; i++)
@@ -536,7 +538,7 @@ namespace Tide.Editor
                 b.tooltip = "Stop using it";
                 list.Add(b);
             }
-            var uses = Line("Uses", null, "The namespaces whose names it uses without spelling them out.");
+            var uses = Line(GraphSchema.Word("details.uses"), null, GraphSchema.Word("menu.uses.summary"));
             uses.Add(list);
             var add = new TextField();
             add.AddToClassList("tg-details-text");
@@ -571,13 +573,13 @@ namespace Tide.Editor
         readonly VisualElement list;
         readonly List<(int id, string title)> shown = new List<(int, string)>();
 
-        public GraphMyGame(TideGraphWindow window) : base(window, "My game", true)
+        public GraphMyGame(TideGraphWindow window) : base(window, GraphSchema.Word("mygame.title"), GraphSchema.Word("mygame.close"), true)
         {
             name = "my-game";
             query = new TextField();
             query.AddToClassList("tg-search");
             query.name = "find";
-            query.textEdition.placeholder = "Find… (Ctrl+F)";
+            query.textEdition.placeholder = GraphSchema.Word("mygame.filter");
             query.RegisterValueChangedCallback(e =>
             {
                 e.StopPropagation();
@@ -661,17 +663,20 @@ namespace Tide.Editor
                 var words = GraphLook.Text(group.Title.ToUpperInvariant(), "tg-section-title");
                 words.tooltip = group.Summary;
                 heading.Add(words);
+                // How many it has, as the page says it
+                var all = rows.Count(r => r.group == group.Name && r.depth == 0);
+                if (all > 0) heading.Add(GraphLook.Text(all.ToString(), "tg-section-count"));
                 heading.Add(new VisualElement { style = { flexGrow = 1 } });
                 var g = group;
                 Button add = null;
-                add = GraphLook.IconButton("plus", $"Add to {group.Title}: {string.Join(", ", GraphSchema.DeclKinds.Where(k => GraphSchema.DeclGroup(k) == g.Name).Select(GraphSchema.DeclTitle))}", () => AddOf(g, add));
+                add = GraphLook.IconButton("plus", GraphSchema.Word("mygame.addTo", "group", group.Title, "summary", group.Summary), () => AddOf(g, add));
                 add.name = "add:" + group.Name;
                 heading.Add(add);
                 list.Add(heading);
-                if (of.Count == 0) list.Add(GraphLook.Text(group.Summary + ". The + adds one.", "tg-empty"));
+                if (of.Count == 0) list.Add(GraphLook.Text(GraphSchema.Word("mygame.empty", "summary", (group.Summary ?? "").ToLowerInvariant()), "tg-empty"));
                 foreach (var r in of) list.Add(Row(r.id, r.title, r.kind, r.depth, r.e));
             }
-            if (typed.Length > 0 && shown.Count == 0) list.Add(GraphLook.Text($"Nothing here is called '{query.value.Trim()}'.", "tg-empty"));
+            if (typed.Length > 0 && shown.Count == 0) list.Add(GraphLook.Text(GraphSchema.Word("mygame.noMatch"), "tg-empty"));
         }
 
         // ---------------------------------------------------------------------------------------------------------
@@ -689,7 +694,7 @@ namespace Tide.Editor
         // What it lists of the selected code's variables, in order: the tests' view of it
         internal IReadOnlyList<(string title, List<GraphFrame.Part> parts)> VariablesShown => variables;
         internal GraphFrame VariablesOf => variablesOf;
-        internal const string VariablesTitle = "Variables";
+        internal static string VariablesTitle => GraphSchema.Word("variables.title");
 
         // The selection moved: the variables are those of the code it's in now
         internal void Selected()
@@ -725,14 +730,13 @@ namespace Tide.Editor
             }
             var heading = GraphLook.Row("tg-section", "tg-mine-group");
             var words = GraphLook.Text(VariablesTitle.ToUpperInvariant(), "tg-section-title");
-            words.tooltip = "What the selected code has: what it takes and its locals. Drag one onto its code to get or set it.";
+            words.tooltip = GraphSchema.Word("variables.tip");
             heading.Add(words);
             heading.name = "variables";
-            if (frame != null) heading.Add(GraphLook.Text(frame.Title, "tg-option-detail", "tg-mine-of"));
             list.Add(heading);
             if (frame == null)
             {
-                list.Add(GraphLook.Text("Select some code to see what it has: what it takes and its locals.", "tg-empty"));
+                list.Add(GraphLook.Text(GraphSchema.Word("variables.noFrame"), "tg-empty"));
                 return;
             }
             frame.Classify();
@@ -744,9 +748,12 @@ namespace Tide.Editor
                 if (frame.Reads.ContainsKey(name) || all.Any(p => p.Kind == "local" && p.Name == name)) continue;
                 all.Add(new GraphFrame.Part { Kind = "local", Ref = local.Wire("id"), Name = name, Type = !string.IsNullOrEmpty(local.Str("type")) ? local.Str("type") : TypeOfLocal(frame, local) });
             }
+            heading.Add(GraphLook.Text(all.Count.ToString(), "tg-section-count"));
+            heading.Add(new VisualElement { style = { flexGrow = 1 } });
+            heading.Add(GraphLook.Text(frame.Title, "tg-option-detail", "tg-mine-of"));
             if (all.Count == 0)
             {
-                list.Add(GraphLook.Text("It takes nothing and has no locals yet.", "tg-empty"));
+                list.Add(GraphLook.Text(GraphSchema.Word("variables.none"), "tg-empty"));
                 return;
             }
             foreach (var part in all) Variable(frame, new List<GraphFrame.Part> { part }, typed, 0);
@@ -783,7 +790,7 @@ namespace Tide.Editor
                             if (parent != null) Fill();
                         });
                     });
-                list.Add(GraphLook.Text("Asking what it has…", "tg-empty", "tg-mine-asking"));
+                list.Add(GraphLook.Text(GraphSchema.Word("variables.asking"), "tg-empty", "tg-mine-asking"));
                 return;
             }
             foreach (var f in fields.Where(m => !m.Callable && m.Kind != TideGraphLanguage.KindKeyword && m.Kind != TideGraphLanguage.KindSnippet))
@@ -799,7 +806,7 @@ namespace Tide.Editor
             variables.Add((path, parts));
             if (opens)
             {
-                var arrow = GraphLook.IconButton(isOpen ? "down" : "right", isOpen ? "Close its fields" : "Open it to its fields", () => Open(path, !isOpen), "tg-mine-arrow");
+                var arrow = GraphLook.IconButton(isOpen ? "down" : "right", GraphSchema.Word(isOpen ? "variables.close" : "variables.open"), () => Open(path, !isOpen), "tg-mine-arrow");
                 arrow.name = "open";
                 row.Add(arrow);
             }
@@ -811,7 +818,7 @@ namespace Tide.Editor
             row.Add(new VisualElement { style = { flexGrow = 1 }, pickingMode = PickingMode.Ignore });
             row.Add(GraphLook.Text(type ?? "", "tg-option-detail"));
             var changeable = frame.Changeable(parts);
-            row.tooltip = $"{path}{(string.IsNullOrEmpty(type) ? "" : ": " + type)}\nDrag it onto its code to get or set it (Ctrl: a Get, Alt: a Set), or onto an input to wire a Get of it in." + (changeable ? "" : "\nIt's only read here: it can't be set.");
+            row.tooltip = GraphSchema.Word(string.IsNullOrEmpty(type) ? "variables.row" : "variables.row.typed", "name", path, "type", type) + (changeable ? "" : "\n" + GraphSchema.Word("why.read", "name", path));
             // What it reads is lit on the board under the pointer
             var root = parts[0];
             row.RegisterCallback<PointerEnterEvent>(_ => frame.Light(root.Kind == "local" ? null : root.Name, root.Kind == "local" ? root.Ref : 0, true));
@@ -852,8 +859,10 @@ namespace Tide.Editor
                     var at = ghost.parent.WorldToLocal(ev.position);
                     ghost.style.left = at.x + 12;
                     ghost.style.top = at.y + 6;
-                    ghost.text = ev.actionKey || ev.ctrlKey ? $"{GraphBoard.GetWord} {path}" : ev.altKey ? $"{GraphBoard.SetWord} {path}" : path;
+                    ghost.text = ev.actionKey || ev.ctrlKey ? GraphSchema.Word("menu.get", "name", path) : ev.altKey ? GraphSchema.Word("menu.set", "name", path) : path;
                 }
+                // Where it can go is lit while it's over it
+                if (dragging) ghost?.EnableInClassList("tg-mine-ghost--ok", Window.Board?.LightDrop(frame, ev.position) == true);
             });
             row.RegisterCallback<PointerUpEvent>(ev =>
             {
@@ -862,6 +871,7 @@ namespace Tide.Editor
                 if (row.HasPointerCapture(ev.pointerId)) row.ReleasePointer(ev.pointerId);
                 ghost?.RemoveFromHierarchy();
                 ghost = null;
+                Window.Board?.LightDrop(null, null);
                 ev.StopPropagation();
                 if (dragging)
                 {
@@ -922,25 +932,34 @@ namespace Tide.Editor
             row.Add(new VisualElement { style = { flexGrow = 1 }, pickingMode = PickingMode.Ignore });
             row.Add(GraphLook.Text(kind, "tg-option-detail"));
             var item = Window.Board?.Item(id);
-            if (item != null && Window.Board.HasProblems(item)) row.Add(new GraphIcon("warn") { style = { color = new StyleColor(new Color(1f, 0.45f, 0.4f)), marginLeft = 6 }, tooltip = "It has a problem" });
-            row.tooltip = "Click to go to it, double-click to rename it" + (Dragged(e) != null ? ", drag it out: " + Dragged(e) : "");
+            // How many problems it has, as its title bar says it: the errors in red, else the warnings in amber
+            if (item != null && Window.Board.HasProblems(item))
+            {
+                var said = item.Carries().SelectMany(Window.Board.Problems).Distinct().ToList();
+                var errors = said.Count(d => d.Severity == "error");
+                var count = errors > 0 ? errors : said.Count(d => d.Severity == "warning");
+                if (count > 0)
+                {
+                    var badge = GraphLook.Text(count.ToString(), "tg-badge");
+                    badge.EnableInClassList("tg-badge--warning", errors == 0);
+                    badge.style.marginLeft = 6;
+                    badge.tooltip = GraphSchema.Word(errors > 0 ? (errors == 1 ? "status.problem" : "status.problems") : count == 1 ? "status.warning" : "status.warnings", "count", count.ToString());
+                    row.Add(badge);
+                }
+            }
+            row.tooltip = GraphSchema.Word(name != null ? "mygame.item.tip" : "mygame.item.go");
             Drags(row, id, title, e);
             shown.Add((id, title));
             return row;
         }
 
-        // What dragging it out does, in words; null for what does nothing
-        static string Dragged(GraphElement e)
+        // Whether dragging it out does something: a component or a singleton onto a frame's entry is something that
+        // code needs, a function into a frame a call of it, a constant onto an input what goes in it
+        static bool Draggable(GraphElement e)
         {
-            if (e.Role != GraphRole.Decl) return null;
-            switch (e.Value.Str("kind"))
-            {
-                case "component":
-                case "singleton": return "onto a frame's entry, it's something that code needs";
-                case "function": return "into a frame, it's a call of it";
-                case "const": return "onto an input, it's what goes in it";
-                default: return null;
-            }
+            if (e.Role != GraphRole.Decl) return false;
+            var kind = e.Value.Str("kind");
+            return kind == "component" || kind == "singleton" || kind == "function" || kind == "const";
         }
 
         // A click goes to it; a drag carries it out onto the board
@@ -969,7 +988,7 @@ namespace Tide.Editor
             row.RegisterCallback<PointerMoveEvent>(ev =>
             {
                 if (!down) return;
-                if (!dragging && ((Vector2)ev.position - start).sqrMagnitude > 36 && Dragged(e) != null)
+                if (!dragging && ((Vector2)ev.position - start).sqrMagnitude > 36 && Draggable(e))
                 {
                     dragging = true;
                     ghost = GraphLook.Text(title, "tg-mine-ghost");

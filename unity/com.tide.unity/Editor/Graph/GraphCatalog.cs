@@ -42,7 +42,7 @@ namespace Tide.Editor
     // Sets of what a graph's code takes and of its locals, as Blueprint's context menu has them
     sealed class GraphCatalog : ITideGraphSearch
     {
-        public const string VariablesGroup = "Variables";
+        public static string VariablesGroup => GraphSchema.Word("variables.title");
 
         public IEnumerable<GraphSearchEntry> Entries(GraphSearchContext c)
         {
@@ -57,9 +57,10 @@ namespace Tide.Editor
             foreach (var v in variables)
             {
                 var (name, type, local, r) = v;
+                var getWord = GraphSchema.Word("title.get", "name", name);
                 var get = local
-                    ? Node(VariablesGroup, "Get " + name, "local", "get local read variable " + name, type, n => n.Set("ref", JValue.Of(r), GraphSchema.NodeOrder("local")), true)
-                    : Node(VariablesGroup, "Get " + name, "name", "get parameter name read variable " + name, type, n => n.Set("name", JValue.Of(name), GraphSchema.NodeOrder("name")), true);
+                    ? Node(VariablesGroup, getWord, "local", "get local read variable " + name, type, n => n.Set("ref", JValue.Of(r), GraphSchema.NodeOrder("local")), true)
+                    : Node(VariablesGroup, getWord, "name", "get parameter name read variable " + name, type, n => n.Set("name", JValue.Of(name), GraphSchema.NodeOrder("name")), true);
                 get.Variable = name;
                 get.Type = type;
                 yield return get;
@@ -72,7 +73,7 @@ namespace Tide.Editor
                     if (!c.Frame.Changeable(local ? null : name, local ? r : 0)) continue;
                     yield return new GraphSearchEntry
                     {
-                        Group = VariablesGroup, Title = "Set " + name, Keywords = "set assign change variable " + name, Detail = type, Statement = true, Variable = name, Type = type, Priority = 1,
+                        Group = VariablesGroup, Title = GraphSchema.Word("menu.set", "name", name), Keywords = "set assign change variable " + name, Detail = type, Statement = true, Variable = name, Type = type, Priority = 1,
                         Make = (doc, graph, at) =>
                         {
                             var set = doc.AddNode(graph, "assign", at.x, at.y);

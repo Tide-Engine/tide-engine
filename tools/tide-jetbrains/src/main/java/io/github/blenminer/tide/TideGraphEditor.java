@@ -9,8 +9,6 @@ import com.intellij.openapi.actionSystem.AnActionEvent;
 import com.intellij.openapi.actionSystem.CustomShortcutSet;
 import com.intellij.openapi.actionSystem.IdeActions;
 import com.intellij.openapi.editor.Document;
-import com.intellij.openapi.editor.colors.EditorColorsManager;
-import com.intellij.openapi.editor.colors.EditorColorsScheme;
 import com.intellij.openapi.fileEditor.FileDocumentManager;
 import com.intellij.openapi.fileEditor.FileEditor;
 import com.intellij.openapi.fileEditor.FileEditorLocation;
@@ -28,8 +26,6 @@ import com.intellij.ui.jcef.JBCefApp;
 import com.intellij.ui.jcef.JBCefBrowser;
 import com.intellij.ui.jcef.JBCefBrowserBase;
 import com.intellij.ui.jcef.JBCefJSQuery;
-import com.intellij.util.ui.JBUI;
-import com.intellij.util.ui.UIUtil;
 import org.cef.browser.CefBrowser;
 import org.cef.browser.CefFrame;
 import org.cef.handler.CefLoadHandlerAdapter;
@@ -37,13 +33,13 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import javax.swing.JComponent;
-import java.awt.Color;
 import java.awt.GraphicsEnvironment;
 import java.beans.PropertyChangeListener;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
 
 // .tidegraph files in Tide's graph editor (tools/tide-graph, a web page, the same as VS Code's) in JCEF. The document
@@ -144,7 +140,7 @@ public final class TideGraphEditor extends UserDataHolderBase implements FileEdi
         final JsonObject files = JsonParser.parseString(resource("files.json")).getAsJsonObject();
         final StringBuilder html = new StringBuilder("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
             + "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">");
-        for (final var style : files.getAsJsonArray("styles")) html.append("<style>").append(resource(style.getAsString())).append("</style>");
+        for (final var style : files.getAsJsonArray("styles")) html.append("<style>").append(withFonts(resource(style.getAsString()), files)).append("</style>");
         html.append("</head><body>");
         for (final var script : files.getAsJsonArray("scripts")) {
             html.append("<script>").append(resource(script.getAsString()).replace("</script", "<\\/script")).append("</script>");
@@ -153,6 +149,22 @@ public final class TideGraphEditor extends UserDataHolderBase implements FileEdi
             + "TideGraph.start({ post: function (m) { var s = JSON.stringify(m);"
             + " if (window.tideHostPost) window.tideHostPost(s); else window.tideHostQueue.push(s); } });</script>");
         return html.append("</body></html>").toString();
+    }
+
+    // A style inline has no folder for its url()s: the fonts it names (files.json's fonts) are put in it as data
+    static @NotNull String withFonts(@NotNull String css, @NotNull JsonObject files) {
+        if (!files.has("fonts")) return css;
+        for (final var font : files.getAsJsonArray("fonts")) {
+            final String name = font.getAsString();
+            if (!name.endsWith(".ttf") || !css.contains("url(\"" + name + "\")")) continue;
+            try (InputStream in = TideGraphEditor.class.getResourceAsStream("/tide-graph/" + name)) {
+                if (in == null) throw new IllegalStateException("The plugin is missing the graph editor's " + name);
+                css = css.replace("url(\"" + name + "\")", "url(\"data:font/ttf;base64," + Base64.getEncoder().encodeToString(in.readAllBytes()) + "\")");
+            } catch (IOException e) {
+                throw new IllegalStateException(e);
+            }
+        }
+        return css;
     }
 
     private static @NotNull String resource(@NotNull String name) {
@@ -164,34 +176,13 @@ public final class TideGraphEditor extends UserDataHolderBase implements FileEdi
         }
     }
 
-    // The IDE's colours and font, for the page's variables
+    // Whether the IDE is dark or light: the page's own colours and font are the graph schema's (its look), the same
+    // in every host
     static @NotNull JsonObject theme() {
-        final EditorColorsScheme scheme = EditorColorsManager.getInstance().getGlobalScheme();
-        final JsonObject colors = new JsonObject();
-        colors.addProperty("bg", css(scheme.getDefaultBackground()));
-        colors.addProperty("panel", css(UIUtil.getPanelBackground()));
-        colors.addProperty("fg", css(UIUtil.getLabelForeground()));
-        colors.addProperty("muted", css(UIUtil.getContextHelpForeground()));
-        colors.addProperty("border", css(JBColor.border()));
-        colors.addProperty("accent", css(JBUI.CurrentTheme.Focus.focusColor()));
-        colors.addProperty("select", css(UIUtil.getListSelectionBackground(true)));
-        colors.addProperty("hover", css(JBUI.CurrentTheme.List.Hover.background(true)));
-        colors.addProperty("input-bg", css(UIUtil.getTextFieldBackground()));
-        colors.addProperty("input-fg", css(UIUtil.getTextFieldForeground()));
-        colors.addProperty("node-bg", css(UIUtil.getPanelBackground()));
-        colors.addProperty("mono", "'" + scheme.getEditorFontName() + "', monospace");
         final JsonObject m = new JsonObject();
         m.addProperty("type", "theme");
         m.addProperty("dark", !JBColor.isBright());
-        m.add("colors", colors);
-        m.addProperty("font", "'" + UIUtil.getLabelFont().getFamily() + "', system-ui, sans-serif");
-        m.addProperty("fontSize", UIUtil.getLabelFont().getSize());
         return m;
-    }
-
-    private static String css(@Nullable Color c) {
-        if (c == null) return "transparent";
-        return String.format("rgba(%d, %d, %d, %.3f)", c.getRed(), c.getGreen(), c.getBlue(), c.getAlpha() / 255.0);
     }
 
     @Override

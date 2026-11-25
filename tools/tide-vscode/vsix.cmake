@@ -81,7 +81,7 @@ file(COPY "${SYNTAX}/syntaxes/tide.tmLanguage.json" DESTINATION "${stage}/extens
 # The graph editor's page: the files its files.json lists, which src/graph.js reads
 file(READ "${GRAPH}/files.json" graph_files)
 set(graph_list "files.json")
-foreach(group styles scripts)
+foreach(group styles fonts scripts)
     string(JSON count LENGTH "${graph_files}" ${group})
     math(EXPR last "${count} - 1")
     foreach(i RANGE ${last})

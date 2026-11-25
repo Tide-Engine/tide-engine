@@ -15,8 +15,20 @@ namespace Tide.Editor
     {
         public const string StylePath = "Packages/com.tide.unity/Editor/Graph/GraphBoard.uss";
 
-        public const float CardWidth = 300, CardRow = 26, CardHead = 48, CardGap = 40;
-        public const float FrameHead = 36, FramePad = 12, FrameBottom = 24, FrameGap = 80, LaneGap = 80, EntryGap = 60, EntryWidth = 320;
+        // The look's sizes of cards and frames (the schema's, as tidec's layout has them), and the gaps tidec leaves
+        // between what it places on the board
+        public static float CardWidth => GraphSchema.Size("card", 300);
+        public static float CardRow => GraphSchema.Size("cardRow", 26);
+        public static float CardHead => GraphSchema.Size("cardHead", 48);
+        public static float FrameHead => GraphSchema.Size("frameHead", 48);
+        public static float FramePad => GraphSchema.Size("framePad", 16);
+        public static float FrameBottom => GraphSchema.Size("frameBottom", 40);
+        public static float EntryGap => GraphSchema.Size("entryGap", 60);
+        public static float EntryWidth => GraphSchema.Size("entryWidth", 320);
+        public const float CardGap = 40, FrameGap = 80, LaneGap = 80;
+        // The least a frame is, as the page draws one: room right of its entry to say what to do, and below it to drop
+        // a first wire in (a value's frame, which has no entry, its own)
+        public const float FrameRoomRight = 330, FrameLeast = 190, ValueFrameWidth = 300, ValueFrameHeight = 130;
         // Where an item draws all of itself, only its name, or nothing
         public const float FarZoom = 0.38f;
 
@@ -27,25 +39,246 @@ namespace Tide.Editor
 
         public static Font Mono => mono ? mono : mono = Font.CreateDynamicFontFromOSFont(new[] { "Consolas", "Menlo", "DejaVu Sans Mono", "Courier New" }, 12);
 
-        // What's painted, not styled: a theme's colours
+        // ---------------------------------------------------------------------------------------------------------
+        // The look: the schema's (GraphSchema.Look), the same as every editor's. GraphBoard.uss lays things out and
+        // takes its colours and sizes from these variables, made from the schema for dark or light.
+
+        // The look's colours, in the theme the board is drawn in, for what's painted rather than styled
         public sealed class Palette
         {
-            public Color Grid, GridStrong, Exec, Drag, Outline, FarNode, PinRim;
+            public bool Light;
+            public Color Board, Grid, Text, Muted, Accent, Exec, Wire, Node, NodeBorder, Error, Warning, Shadow;
+            public Color Get(string name) => GraphSchema.Look(name, Light);
         }
 
-        static readonly Palette dark = new Palette
-        {
-            Grid = new Color(1, 1, 1, 0.03f), GridStrong = new Color(1, 1, 1, 0.06f), Exec = new Color(0.93f, 0.93f, 0.93f), Drag = new Color(1f, 0.78f, 0.25f),
-            Outline = new Color(1, 1, 1, 0.25f), FarNode = new Color(1, 1, 1, 0.16f), PinRim = new Color(0.1f, 0.1f, 0.1f),
-        };
+        static readonly Palette[] palettes = new Palette[2];
+        static JValue paletteOf;
 
-        static readonly Palette light = new Palette
+        public static Palette Of(bool light)
         {
-            Grid = new Color(0, 0, 0, 0.03f), GridStrong = new Color(0, 0, 0, 0.06f), Exec = new Color(0.16f, 0.16f, 0.16f), Drag = new Color(0.78f, 0.42f, 0f),
-            Outline = new Color(0, 0, 0, 0.35f), FarNode = new Color(0, 0, 0, 0.2f), PinRim = new Color(0.95f, 0.95f, 0.95f),
-        };
+            if (paletteOf != (GraphSchema.Available ? GraphSchema.Json : null))
+            {
+                palettes[0] = palettes[1] = null;
+                paletteOf = GraphSchema.Available ? GraphSchema.Json : null;
+            }
+            var i = light ? 1 : 0;
+            if (palettes[i] != null) return palettes[i];
+            Color C(string name) => GraphSchema.Available ? GraphSchema.Look(name, light) : Color.magenta;
+            return palettes[i] = new Palette
+            {
+                Light = light, Board = C("board"), Grid = C("grid"), Text = C("text"), Muted = C("muted"), Accent = C("accent"), Exec = C("exec"), Wire = C("wire"),
+                Node = C("node"), NodeBorder = C("nodeBorder"), Error = C("error"), Warning = C("warning"), Shadow = C("shadow"),
+            };
+        }
 
-        public static Palette Of(bool lightTheme) => lightTheme ? light : dark;
+        // A size of the look's, in pixels at zoom 1
+        public static float Size(string name) => GraphSchema.Size(name);
+
+        // `a` over `b` as CSS's color-mix(in srgb, a p, b) makes it: a share p of a, the rest of b
+        public static Color Mix(Color a, float p, Color b)
+        {
+            var alpha = a.a * p + b.a * (1 - p);
+            if (alpha <= 0) return Color.clear;
+            Color Pre(Color c) => new Color(c.r * c.a, c.g * c.a, c.b * c.a, c.a);
+            var pa = Pre(a);
+            var pb = Pre(b);
+            return new Color((pa.r * p + pb.r * (1 - p)) / alpha, (pa.g * p + pb.g * (1 - p)) / alpha, (pa.b * p + pb.b * (1 - p)) / alpha, alpha);
+        }
+
+        // A colour with a share of its alpha: color-mix(in srgb, c p, transparent)
+        public static Color Fade(Color c, float p) => new Color(c.r, c.g, c.b, c.a * p);
+
+        // The variables the board's sheet is drawn with, from the schema: each colour of the look as --tg-<name>
+        // (kebab case, as the page's), the entry's title as --tg-head-entry, each size as --tg-<name> in pixels (the
+        // font's as --tg-font-size, the grid's as --tg-grid-size), and the mixes of them the page's sheet makes with
+        // color-mix, which USS hasn't
+        static readonly StyleSheet[] lookSheets = new StyleSheet[2];
+        static JValue lookSheetsOf;
+
+        public static StyleSheet LookSheet(bool light)
+        {
+            if (!GraphSchema.Available) return null;
+            if (lookSheetsOf != GraphSchema.Json)
+            {
+                lookSheets[0] = lookSheets[1] = null;
+                lookSheetsOf = GraphSchema.Json;
+            }
+            var i = light ? 1 : 0;
+            if (lookSheets[i] != null) return lookSheets[i];
+            var made = ScriptableObject.CreateInstance<StyleSheet>();
+            made.hideFlags = HideFlags.HideAndDontSave;
+            if (Import(made, LookText(light))) return lookSheets[i] = made;
+            UnityEngine.Object.DestroyImmediate(made);
+            // Without a way to make one, the dark look as the package has it: the window is usable, if not in light
+            return lookSheets[i] = AssetDatabase.LoadAssetAtPath<StyleSheet>(DarkLookPath);
+        }
+
+        // The dark look's variables as a file of the package's, for a Unity that can't make a sheet from text: a
+        // test keeps it the same as LookText(false) makes from the schema
+        public const string DarkLookPath = "Packages/com.tide.unity/Editor/Graph/GraphLookDark.uss";
+
+        // Whether the sheets are made from the schema here, or the package's dark one is used instead
+        public static bool LookMade => importable;
+
+        // The look's variables as USS text, for dark or light
+        public static string LookText(bool light)
+        {
+            var sb = new StringBuilder(".tg-look {\n");
+            void Var(string name, Color c) => sb.Append("    --tg-").Append(name).Append(": ").Append(Css(c)).Append(";\n");
+            foreach (var name in GraphSchema.LookColors) Var(Kebab(name), GraphSchema.Look(name, light));
+            Var("head-entry", GraphSchema.Parse(GraphSchema.HeaderHex("entry", light)) ?? Color.clear);
+            foreach (var name in GraphSchema.Sizes)
+            {
+                if (name == "lineHeight" || name == "titleWeight") continue;
+                var px = GraphSchema.Size(name).ToString(System.Globalization.CultureInfo.InvariantCulture) + "px";
+                sb.Append("    --tg-").Append(name == "font" ? "font-size" : name == "grid" ? "grid-size" : Kebab(name)).Append(": ").Append(px).Append(";\n");
+            }
+            // The page's sizes of text in em, of the look's font size (USS has no em): --tg-font-<percent>
+            var font = GraphSchema.Size("font", 13);
+            foreach (var percent in new[] { 80, 82, 85, 86, 88, 90, 92, 93, 95, 105, 110, 115, 135 })
+                sb.Append("    --tg-font-").Append(percent).Append(": ").Append((font * percent / 100f).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)).Append("px;\n");
+            // What's in a port's row, in em of the port's 0.92em: --tg-font-port-<percent>
+            foreach (var percent in new[] { 85, 88, 95, 105 })
+                sb.Append("    --tg-font-port-").Append(percent).Append(": ").Append((font * 0.92f * percent / 100f).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)).Append("px;\n");
+            // A Get's Target, 0.86em of a port's 0.92em
+            sb.Append("    --tg-font-get-target: ").Append((font * 0.92f * 0.86f).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)).Append("px;\n");
+            // A line of the page's text: its font size by the look's line height
+            sb.Append("    --tg-line: ").Append((font * GraphSchema.Size("lineHeight", 1.35f)).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)).Append("px;\n");
+            Color L(string name) => GraphSchema.Look(name, light);
+            // The page's color-mix()es
+            Var("text-5", Fade(L("text"), 0.05f));
+            Var("text-7", Fade(L("text"), 0.07f));
+            Var("accent-14", Fade(L("accent"), 0.14f));
+            Var("accent-15", Fade(L("accent"), 0.15f));
+            Var("accent-18", Fade(L("accent"), 0.18f));
+            Var("accent-20", Fade(L("accent"), 0.20f));
+            Var("accent-22", Fade(L("accent"), 0.22f));
+            Var("accent-70", Fade(L("accent"), 0.70f));
+            Var("error-14", Fade(L("error"), 0.14f));
+            Var("error-18", Mix(L("error"), 0.18f, L("panel")));
+            Var("muted-70", Fade(L("muted"), 0.70f));
+            Var("more-8", Fade(L("more"), 0.08f));
+            Var("more-60", Fade(L("more"), 0.60f));
+            Var("data-16", Fade(L("data"), 0.16f));
+            Var("behaviour-16", Fade(L("behaviour"), 0.16f));
+            Var("more-16", Fade(L("more"), 0.16f));
+            Var("node-border-55", Fade(L("nodeBorder"), 0.55f));
+            Var("entry-border", Mix(L("behaviour"), 0.55f, L("nodeBorder")));
+            sb.Append("}\n");
+            return sb.ToString();
+        }
+
+        // A USS sheet made from text, as the UI Builder makes one: UI Toolkit has no public way to, and USS variables
+        // can't be set on an element. Where this Unity hasn't that importer, one error says so, once.
+        static bool importable = true;
+
+        static bool Import(StyleSheet into, string text)
+        {
+            if (!importable) return false;
+            try
+            {
+                var type = typeof(EditorWindow).Assembly.GetType("UnityEditor.UIElements.StyleSheets.StyleSheetImporterImpl");
+                var importer = type?.GetConstructor(Type.EmptyTypes)?.Invoke(null);
+                var import = type?.GetMethod("Import", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic, null, new[] { typeof(StyleSheet), typeof(string) }, null);
+                if (importer != null && import != null)
+                {
+                    import.Invoke(importer, new object[] { into, text });
+                    return true;
+                }
+            }
+            catch (Exception)
+            {
+                // Said below
+            }
+            importable = false;
+            Debug.LogError("Tide graph: this Unity can't make a sheet from text (UnityEditor.UIElements.StyleSheets.StyleSheetImporterImpl.Import is missing or failed), so the graph window is drawn in the package's dark look whatever the theme, and the schema's own look isn't followed. Tide's Unity package needs updating for this Unity.");
+            return false;
+        }
+
+        static string Css(Color c) => c.a >= 1
+            ? "#" + ColorUtility.ToHtmlStringRGB(c).ToLowerInvariant()
+            : $"rgba({Mathf.RoundToInt(c.r * 255)}, {Mathf.RoundToInt(c.g * 255)}, {Mathf.RoundToInt(c.b * 255)}, {c.a.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)})";
+
+        static string Kebab(string name)
+        {
+            var sb = new StringBuilder();
+            foreach (var c in name)
+            {
+                if (char.IsUpper(c)) sb.Append('-').Append(char.ToLowerInvariant(c));
+                else sb.Append(c);
+            }
+            return sb.ToString();
+        }
+
+        // The look's font (Inter, which ships with the package, under the SIL Open Font License): its regular face,
+        // with its bold face as the weight bold text takes, so bold text is drawn and measured in Inter Bold
+        public const string FontFolder = "Packages/com.tide.unity/Editor/Graph/Fonts/";
+        static UnityEngine.TextCore.Text.FontAsset font;
+
+        public static UnityEngine.TextCore.Text.FontAsset Face
+        {
+            get
+            {
+                if (font != null) return font;
+                UnityEngine.TextCore.Text.FontAsset Asset(string weight)
+                {
+                    var file = GraphSchema.Available ? GraphSchema.FontFile(weight) : null;
+                    var ttf = file != null ? AssetDatabase.LoadAssetAtPath<Font>(FontFolder + file) : null;
+                    if (ttf == null) return null;
+                    var a = UnityEngine.TextCore.Text.FontAsset.CreateFontAsset(ttf);
+                    if (a != null) a.hideFlags = HideFlags.HideAndDontSave;
+                    return a;
+                }
+                var regular = Asset("regular");
+                var bold = Asset("bold");
+                if (regular == null) return null;
+                // What Inter hasn't (the menu's ⋯, a ▾), from the system's font of symbols, as a browser takes it
+                foreach (var family in new[] { "Segoe UI Symbol", "Apple Symbols", "DejaVu Sans" })
+                {
+                    var symbols = UnityEngine.TextCore.Text.FontAsset.CreateFontAsset(family, "Regular");
+                    if (symbols == null) continue;
+                    symbols.hideFlags = HideFlags.HideAndDontSave;
+                    regular.fallbackFontAssetTable = new List<UnityEngine.TextCore.Text.FontAsset> { symbols };
+                    if (bold != null) bold.fallbackFontAssetTable = new List<UnityEngine.TextCore.Text.FontAsset> { symbols };
+                    break;
+                }
+                if (bold != null)
+                {
+                    var table = regular.fontWeightTable;
+                    table[7].regularTypeface = bold;
+                    table[6].regularTypeface = bold;
+                }
+                return font = regular;
+            }
+        }
+
+        // How wide a digit is in the font at a size: CSS's ch, which the page sizes its number fields by
+        static float chPerSize;
+
+        public static float Ch(float fontSize)
+        {
+            if (chPerSize <= 0)
+            {
+                var file = GraphSchema.Available ? GraphSchema.FontFile("regular") : null;
+                var ttf = file != null ? AssetDatabase.LoadAssetAtPath<Font>(FontFolder + file) : null;
+                const int size = 100;
+                if (ttf != null && UnityEngine.TextCore.LowLevel.FontEngine.LoadFontFace(ttf, size) == UnityEngine.TextCore.LowLevel.FontEngineError.Success
+                    && UnityEngine.TextCore.LowLevel.FontEngine.TryGetGlyphWithUnicodeValue('0', UnityEngine.TextCore.LowLevel.GlyphLoadFlags.LOAD_NO_HINTING, out var zero))
+                    chPerSize = zero.metrics.horizontalAdvance / size;
+                else chPerSize = 0.6f;
+            }
+            return chPerSize * fontSize;
+        }
+
+        // The look on an element: the board's sheet, its variables for dark or light, and its font
+        public static void Apply(VisualElement e, bool light)
+        {
+            e.AddToClassList("tg-look");
+            var look = LookSheet(light);
+            if (look != null) e.styleSheets.Add(look);
+            if (Face != null) e.style.unityFontDefinition = FontDefinition.FromSDFFont(Face);
+            e.style.fontSize = GraphSchema.Available ? GraphSchema.Size("font", 13) : 13;
+        }
 
         // ---------------------------------------------------------------------------------------------------------
         // Pieces
@@ -100,9 +333,10 @@ namespace Tide.Editor
         // A kind in plain words, in its group's colour
         public static Label Kind(string title, string group)
         {
-            var l = new Label(title) { pickingMode = PickingMode.Ignore };
+            // In capitals, as the page draws it (USS has no text-transform); its words as they were given kept with it
+            var l = new Label((title ?? "").ToUpperInvariant()) { pickingMode = PickingMode.Ignore, userData = title };
             l.AddToClassList("tg-kind");
-            if (!string.IsNullOrEmpty(group)) l.AddToClassList("tg-kind--" + group);
+            if (!string.IsNullOrEmpty(group)) l.AddToClassList("tg-kind--" + group.ToLowerInvariant());
             return l;
         }
 
@@ -448,61 +682,11 @@ namespace Tide.Editor
         }
     }
 
-    // The colours of values' types, Blueprint-like: a few kinds of their own, any other a hue of its name's
+    // The colours of values' types: the schema's (GraphSchema.TypeHex), the same in dark and light; the look's muted
+    // for a type that isn't known
     static class TideGraphTypes
     {
-        public static readonly Color Untyped = new Color(0.62f, 0.72f, 0.88f);
-
-        public static Color ColorOf(string type, bool light = false)
-        {
-            var c = Base(type);
-            // On a light board, the same hues, deeper
-            if (light)
-            {
-                Color.RGBToHSV(c, out var h, out var s, out var v);
-                c = Color.HSVToRGB(h, Mathf.Min(1, s * 1.35f + 0.1f), v * 0.68f);
-            }
-            return c;
-        }
-
-        static Color Base(string type)
-        {
-            if (string.IsNullOrEmpty(type)) return Untyped;
-            var t = type.TrimEnd('?');
-            var generic = t.IndexOf('<');
-            var name = generic > 0 ? t.Substring(0, generic) : t;
-            var array = name.IndexOf('[');
-            if (array > 0) name = name.Substring(0, array);
-            switch (name)
-            {
-                case "bool": return new Color(0.9f, 0.3f, 0.3f);
-                case "byte":
-                case "int":
-                case "long": return new Color(0.3f, 0.88f, 0.75f);
-                case "float":
-                case "double": return new Color(0.6f, 0.92f, 0.35f);
-                case "string":
-                case "char": return new Color(0.95f, 0.45f, 0.85f);
-                case "int2":
-                case "int3":
-                case "int4":
-                case "float2":
-                case "float3":
-                case "float4":
-                case "double2":
-                case "double3":
-                case "double4": return new Color(0.98f, 0.8f, 0.3f);
-                case "quaternion": return new Color(0.65f, 0.65f, 1f);
-                case "Entity": return new Color(0.35f, 0.6f, 1f);
-                case "Color": return new Color(1f, 0.6f, 0.3f);
-                case "void": return new Color(0.6f, 0.6f, 0.6f);
-            }
-            // Any other: its own hue, from its name
-            var hash = 17;
-            foreach (var c in name) hash = unchecked(hash * 31 + c);
-            var hue = (hash & 0xffff) / 65536f;
-            return Color.HSVToRGB(hue, 0.45f, 0.95f);
-        }
+        public static Color ColorOf(string type, bool light = false) => GraphSchema.Available ? GraphSchema.TypeColor(type) ?? GraphSchema.Look("muted", light) : Color.gray;
     }
 
     // A type, as it's shown wherever one goes: its colour's dot and its name, and a click (or Enter) opens the

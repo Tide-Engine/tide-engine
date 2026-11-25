@@ -106,6 +106,7 @@ namespace Tide.Editor
 
         public virtual void ShowProblems()
         {
+            ShowBadge();
             EnableInClassList("tg-has-problem", Board.HasProblems(this));
             problemRows.RemoveAll(p => p.holder.parent == null);
             foreach (var (id, row, holder) in problemRows) Fill(id, row, holder);
@@ -113,6 +114,33 @@ namespace Tide.Editor
 
         // The ids whose problems are this item's to show: its own, its members', its parameters'
         public abstract IEnumerable<int> Carries();
+
+        // How many problems it has in it, on its title bar, as the page shows it: the errors in red, else the
+        // warnings in amber, nothing when there are none
+        protected Label badge;
+
+        protected Label Badge()
+        {
+            badge = GraphLook.Text("", "tg-badge");
+            badge.name = "badge";
+            badge.style.display = DisplayStyle.None;
+            ShowBadge();
+            return badge;
+        }
+
+        void ShowBadge()
+        {
+            if (badge == null) return;
+            var said = Carries().SelectMany(Board.Problems).Distinct().ToList();
+            var errors = said.Count(d => d.Severity == "error");
+            var count = errors > 0 ? errors : said.Count(d => d.Severity == "warning");
+            badge.text = count.ToString();
+            badge.style.display = count > 0 ? DisplayStyle.Flex : DisplayStyle.None;
+            badge.EnableInClassList("tg-badge--warning", errors == 0);
+            badge.tooltip = errors > 0 ? (errors == 1 ? "1 problem" : $"{errors} problems") : count == 1 ? "1 warning" : $"{count} warnings";
+        }
+
+        internal string BadgeText => badge != null && badge.style.display != DisplayStyle.None ? badge.text : null;
 
         // ---------------------------------------------------------------------------------------------------------
         // What cards and frames both have: a note, options, attributes
@@ -467,7 +495,10 @@ namespace Tide.Editor
                 }, TrickleDown.TrickleDown);
                 head.Add(name);
             }
+            // What it is, where it has no name (the settings)
+            else head.Add(GraphLook.Text(d.Has("text") ? "" : GraphSchema.DeclSummary(kind) ?? "", "tg-name-fixed"));
             head.Add(new VisualElement { style = { flexGrow = 1 }, pickingMode = PickingMode.Ignore });
+            head.Add(Badge());
             // Its rows are added from its title bar, not from a row under the last one that's hit by accident
             var adds = RowAdd();
             if (adds != null)
@@ -481,10 +512,13 @@ namespace Tide.Editor
             more.name = "more";
             head.Add(more);
             Add(head);
+            var tags = Tags(e);
+            if (tags.childCount > 0) Add(tags);
             var note = Note(e);
             if (note != null) Add(note);
-            Add(Tags(e));
             AddProblems(this, Id);
+            Rows = GraphLook.Row("tg-rows");
+            Add(Rows);
 
             switch (kind)
             {
@@ -502,7 +536,7 @@ namespace Tide.Editor
                     row.Add(TypeChip(e, "type", d.Str("type"), null));
                     row.Add(new VisualElement { style = { flexGrow = 1 } });
                     row.Add(GraphValues.Control(Window, new GraphSlot(Id, "value"), kind == "asset" ? "string" : d.Str("type"), false, Id, d.Str("name") ?? kind).Class("tg-row-value--wide"));
-                    Add(row);
+                    Rows.Add(row);
                     break;
                 }
                 case "alias":
@@ -510,7 +544,7 @@ namespace Tide.Editor
                     var row = GraphLook.Row("tg-row");
                     row.Add(GraphLook.Text("is another name for", "tg-port-label"));
                     row.Add(TypeChip(e, "type", d.Str("type"), null));
-                    Add(row);
+                    Rows.Add(row);
                     break;
                 }
                 case "text":
@@ -523,7 +557,7 @@ namespace Tide.Editor
                         ev.StopPropagation();
                         Edit("Tide text", () => d.Set("text", JValue.Of(ev.newValue), GraphSchema.DeclOrder(kind)));
                     });
-                    Add(text);
+                    Rows.Add(text);
                     break;
                 }
                 case "prefab":
@@ -533,6 +567,7 @@ namespace Tide.Editor
                     Members(d);
                     break;
             }
+            SpaceRows();
         }
 
         // ---------------------------------------------------------------------------------------------------------
@@ -580,6 +615,24 @@ namespace Tide.Editor
 
         bool CanAdd(string memberKind) => GraphDocument.OfferedMemberKinds(Decl).Contains(memberKind);
 
+        // Its rows: its fields, choices, settings, its value
+        VisualElement Rows;
+
+        // What an empty card says goes in it, and how
+        static Label Empty(string what) => GraphLook.Text(GraphSchema.Word("card.rows.empty", "what", (what ?? "").TrimEnd('…').ToLowerInvariant()), "tg-rows-empty");
+
+        // Its rows two pixels apart, as the page's
+        void SpaceRows()
+        {
+            var first = true;
+            foreach (var c in Rows.Children())
+            {
+                if (!c.ClassListContains("tg-row") && !c.ClassListContains("tg-rows-empty")) continue;
+                c.style.marginTop = first ? 0 : 2;
+                first = false;
+            }
+        }
+
         // The words of a kind's last row (the schema's addRow), without the plus the row draws
         static string RowWords(string kind)
         {
@@ -601,7 +654,7 @@ namespace Tide.Editor
             }
             if (!CanAdd("field")) return;
             // An empty card says what goes in it, and where the button is that adds one
-            if (count == 0) Add(GraphLook.Text($"{GraphSchema.MemberSummary("field")}. The + in its title adds one.", "tg-empty"));
+            if (count == 0) Rows.Add(Empty(RowWords(Kind) ?? GraphSchema.MemberTitle("field")));
         }
 
         // What its title bar's "+" adds: a field, a choice, a setting; null for a kind with no rows to add
@@ -714,18 +767,17 @@ namespace Tide.Editor
             var more = GraphLook.IconButton("more", "Rename, copy, delete (or right-click)", null, "tg-on-hover");
             more.clicked += () => GraphMenu.Open(Window, GraphMenu.ForRow(this, id), more);
             row.Add(more);
-            Add(row);
+            Rows.Add(row);
             var note = m.Str("comment");
             if (!string.IsNullOrEmpty(note))
             {
                 var line = GraphLook.Plain(() => AskNote(e), "tg-note");
                 line.text = GraphLook.Brief(note);
                 line.tooltip = note;
-                Add(line);
+                Rows.Add(line);
             }
             var attributes = m.Arr("attributes");
-            if (attributes != null && attributes.Items.Count > 0) Add(Tags(e).Class("tg-sub"));
-            AddProblems(this, id, row);
+            AddProblems(Rows, id, row);
         }
 
         // Enter in a field's name keeps what's typed and goes on: to a new field after the last, else to the next
@@ -820,7 +872,7 @@ namespace Tide.Editor
             var members = d.Arr("members");
             var count = members?.Items.Count ?? 0;
             for (var i = 0; i < count; i++) Named(members, members.Items[i], i == count - 1, true, "choice", null);
-            if (count == 0) Add(GraphLook.Text("The choices a value of it can be, by name. The + in its title adds one.", "tg-empty"));
+            if (count == 0) Rows.Add(Empty(RowWords("enum") ?? "choice"));
         }
 
         void Entries(JValue d)
@@ -828,7 +880,7 @@ namespace Tide.Editor
             var entries = d.Arr("entries");
             var count = entries?.Items.Count ?? 0;
             for (var i = 0; i < count; i++) Named(entries, entries.Items[i], i == count - 1, false, "setting", null);
-            if (count == 0) Add(GraphLook.Text(GraphSchema.DeclSummary("settings") + ". The + in its title adds one.", "tg-empty"));
+            if (count == 0) Rows.Add(Empty(RowWords("settings") ?? "setting"));
         }
 
         void Named(JValue list, JValue item, bool last, bool optionalValue, string what, string type)
@@ -882,8 +934,8 @@ namespace Tide.Editor
             var more = GraphLook.IconButton("more", "Rename, copy, delete (or right-click)", null, "tg-on-hover");
             more.clicked += () => GraphMenu.Open(Window, GraphMenu.ForRow(this, id), more);
             row.Add(more);
-            Add(row);
-            AddProblems(this, id, row);
+            Rows.Add(row);
+            AddProblems(Rows, id, row);
         }
 
         int AddNamed(string key, string name, string value, (JValue item, string name)? rename = null)
@@ -938,7 +990,7 @@ namespace Tide.Editor
                 more.clicked += () => GraphMenu.Open(Window, GraphMenu.ForRow(this, id), more);
                 row.Add(more);
             }
-            Add(row);
+            Rows.Add(row);
             var components = p.Arr("components");
             var line = GraphLook.Row("tg-tags");
             line.style.paddingLeft = 12 + depth * 14;
@@ -967,8 +1019,8 @@ namespace Tide.Editor
                     list.Items.Add(g);
                 })), "tg-link");
             line.Add(add);
-            Add(line);
-            AddProblems(this, id, row);
+            Rows.Add(line);
+            AddProblems(Rows, id, row);
             var kids = p.Arr("children");
             if (kids != null) foreach (var c in kids.Items) Prefab(c, depth + 1);
         }

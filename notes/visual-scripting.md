@@ -509,7 +509,7 @@ gives as a field of its completion item, and whether a type fits a place.
   in JCEF; the page's edits are write commands on the IDE's document; requests through LSP4IJ; the IDE's
   undo/copy/paste/delete/duplicate/select-all reach the page while it has focus; without JCEF, the text editor
   and a notice. Gradle puts the page and schema in the jar under `tide-graph/`. A standalone clone of the plugin
-  builds from the snapshot in `tools/tide-jetbrains/graph/` (the page's files and `graph_schema.json`), refreshed
+  builds from the snapshot in `tools/tide-jetbrains/graph/` (the page's files, `fonts/` and `graph_schema.json`), refreshed
   before each public export as `textmate/` is (notes/editors.md).
 - Tests: `tide_graph_editor` (ctest; in the root CMakeLists beside `tide_vscode_adapter`, as `tools/` is
   configured alone by `tide_cli_ide`, with no tidec):
@@ -878,3 +878,70 @@ wired to several inputs is worked out at each (Blueprint's pure nodes). What fol
   drags a My game row with the real pointer (its drop is tested by calls); files laid out before this round have
   Gets where chips were until "Tidy up its nodes"; the new words are each editor's own until the schema has the
   menu words.
+
+## Round five: one look (owner, 2026-11-25)
+
+The owner, on pictures of the two editors side by side: "why do both views vary so much, they are meant to be the
+same system", then "we should do an effort to keep them similar if not identical". They shared the schema and
+tidels but each drew its own look and said its own words, and no test compared them. So (my picks, Provisional):
+
+- **The web editor's look is the reference** (closer to Blueprint: compact Gets with "Target", dark headers, the
+  dotted board). The Unity window changes to match it.
+- **One look, in the schema**: `look` holds the colours (board, grid dots, frame, node body and header per
+  category, pins, wires, selection, problems; light and dark), sizes (font sizes, row height, pin size, radii,
+  gaps, paddings, a Get's and a knot's size), and the font. Neither editor hard-codes them. Both draw with the same
+  font, shipped with each editor (Inter, OFL), so text measures the same.
+- **Every word in the schema**: `words` holds the toolbar, the hint line, menus (`menu.<key>`: label and keys),
+  panel titles and empty states, pickers' titles, tooltips: what was each editor's own.
+- **The same features**: each editor has what the other has (the web's zoom buttons, undo and redo buttons and
+  Find in Unity; whatever the Unity window has that the page hasn't).
+- **A parity test**: each editor writes what it drew for the same graphs (`tools/tide-graph/test/drawn/`): every
+  frame's and node's box on the board, its title lines, its rows (label, pin kind and colour, what's shown in
+  it), its header colour, and each wire's ends and colour. The web test writes the expected files (with an
+  environment variable) and checks against them; the Unity test checks against the same files. Boxes match
+  within a few pixels, text and colours exactly.
+
+**Round five built** (2026-11-25, both editors). As above, with these details and picks:
+
+- Schema: `look` has `font` (Inter regular and bold, its licence, and `code`, a monospace stack for code nodes),
+  `colors` (28, each `{dark, light}`), `headers` (a title bar's colour per category, and `entry`), `types` (pin and
+  wire colours by type, and `typeHue` for any other: a hue from a hash of the name at saturation 55, lightness
+  58), `sizes` (31, px). `words` has every word the editors say (458, `{name}` fill-ins; a menu entry is `{label,
+  keys}`, a tooltip `<key>.tip`, "How the board works" `help.1`...). The banners shown before there's a schema
+  ("Getting ready…", the two "can't start") stay in each editor's code.
+- Web: the board takes only dark or light from the host (VS Code's body class or the theme message), not its
+  colours or font. Inter ships in `tools/tide-graph/fonts/` with its OFL licence; JetBrains inlines the fonts as
+  data and the docs playground points them at the site's assets (both put the CSS inline). An older tidels'
+  schema without `look` or `words` keeps the host copy's.
+- Unity: `GraphLook.LookSheet` builds a sheet of `--tg-*` variables for the skin from the schema (with the page's
+  `color-mix` and `em` sizes worked out), through Unity's internal `StyleSheetImporterImpl` by reflection, as the
+  UI Builder does: there's no public way to make a sheet from text or set a variable on an element.
+  `GraphBoard.uss` is layout alone. Without the importer, the window loads `GraphLookDark.uss` (the dark look,
+  shipped) and logs one error; `TheLooksSheetIsMadeFromTheSchema` checks both looks are made and that the shipped
+  file is the schema's dark (it writes the right one when not). Inter ships in `Editor/Graph/Fonts/`; glyphs Inter
+  lacks (⋯, ▾) fall back to Segoe UI Symbol, as Chrome does.
+- Each has the other's: Unity got Find… (Ctrl+F, "/"), undo and redo buttons (Unity's Undo, always enabled as its
+  stack is the editor's), zoom buttons and + / −, right-drag and wheel to look around and Ctrl+wheel to zoom,
+  the problem chip's words and colours, problem counts on title bars and My game, "Deleted X" with Undo, the
+  namespace's "Delete with what is in it", drop targets lit while dragging from My game. The page got "How the
+  board works" and Save in the board's menu, problem words written out (under a row, at a node's foot, above a
+  frame) and the list grouped (Problems, To look at, Notes), typed names cleaned up ("my speed" → mySpeed), a new
+  field taking the type of the one before, Alt+click on a row to empty it, My game's hover and search behaviours,
+  Details' "Owning it, not having a component" and "Nothing of its own" ticks, "Add get" / "Add set" on a property
+  and "Add what the query needs…". Unity lost what the page hadn't: attributes on a card row's own line (Details
+  has them), the ▾ on a wired input, a value input on a Return in code that returns nothing.
+- Parity: `tools/tide-graph/test/drawn/` (format in its README: rows top to bottom then left to right, pins within
+  6 px one row; a chip one word; the port names) has `spin`, `shapes` (`test/shapes.tidegraph`, one of each shape)
+  and `stars` (`docs/playground/stars.tidegraph`), drawn with no language server (pins and wires coloured only
+  where the file says a type; arguments "argument 1"...). The browser test writes them with
+  `TIDE_GRAPH_DRAWN_WRITE=1` and otherwise checks the page against them; Unity's `TheBoardDrawsWhatThePageDraws`
+  (`GraphDrawn.cs`) checks the window against the same files, boxes within 4 px and the rest exactly (skipped
+  without a graphics device, so on CI's `-nographics` runs; it runs on the hidden desktop). A web bug it found: "+
+  argument" wrapped on a node 113 px wide (`white-space: nowrap` now).
+- Tests: `tide_graph_editor` (model 23: every word the code asks for is in the schema, every colour has both looks,
+  the JetBrains copy is the same; browser 12: the look, the words, the features from Unity, the drawn files),
+  docs playground 8, tide-vscode 38, JetBrains 18 (its theme test: dark or light only, fonts inlined); Unity's
+  graph fixtures 62 on the hidden desktop, 59 and 3 skipped under `-nographics`.
+- Not there: the page has no "not saved" marker in its toolbar or View as Tide as a panel (the host's); Unity's
+  undo names and some popup texts have no schema words yet; the drawn comparison doesn't run in CI (no graphics
+  device there); the light look is compared by pictures only.

@@ -14,11 +14,14 @@
     const RESULT = -2; // A value's result, whose input is its value
     // The board's measures, as tidec lays it out (graph_layout.c): a frame's head and the room under its nodes,
     // the entry's width, and where the nodes start to the right of it
-    const HEAD = 48, PAD = 16, BOTTOM = 40, ENTRY_W = 320, NODE_X0 = PAD + ENTRY_W + 60;
-    const MIN_W = NODE_X0 + 330, MIN_H = 190; // Room in an empty frame to say what to do, and to drop a first wire in
+    // (the schema's look.sizes: setLook)
+    let HEAD = 48, PAD = 16, BOTTOM = 40, ENTRY_W = 320, NODE_X0 = PAD + ENTRY_W + 60;
+    let MIN_W = NODE_X0 + 330; const MIN_H = 190; // Room in an empty frame to say what to do, and to drop a first wire in
 
     const ONE = ['++', '--']; // The ways Set changes a value that take no value
-    const article = word => (/^[aeiou]/i.test(word) ? 'an' : 'a');
+    const article = word => (/^[aeiou]/i.test(word) ? W('an.lower') : W('a.lower'));
+    // The page's words (the schema's)
+    const W = (key, vars) => G.w(key, vars);
 
     function portKey(p) {
         if (p.pin !== undefined) return `${ENTRY}|o|d|pin:${p.pin}`;
@@ -28,9 +31,8 @@
 
     // How big tidec takes a graph's nodes to be, and what an input is called on its node: the model's (Doc.sizes,
     // Lang.inputLabel); what a method is called on, or a field is of, is its Target, as Blueprint calls it
-    const TARGET = 'Target';
     const estimate = (schema, g, analysis) => Doc.prototype.sizes.call({ schema }, g, analysis);
-    const inputLabel = (app, node, p, always = false) => (p.key === 'object' && !p.group && (node.k === 'method' || node.k === 'member') ? TARGET : app.lang.inputLabel(app.editor.schema, node, p, always));
+    const inputLabel = (app, node, p, always = false) => (p.key === 'object' && !p.group && (node.k === 'method' || node.k === 'member') ? W('target') : app.lang.inputLabel(app.editor.schema, node, p, always));
     // How wide a Get is drawn, for placing one before it's measured: its name, and a Target pin for a member's
     const getWidth = (text, member) => Math.round(44 + 7.5 * String(text).length + (member ? 62 : 0));
 
@@ -189,7 +191,7 @@
                 G.ui.put(head, el('span.tg-chip.tg-chip-value', { text: s.keyLabel(this.value.key === 'components' ? 'value' : this.value.key || 'value') }),
                     el('span.tg-frame-title', { text: this.value.title }),
                     el('span.tg-grow'),
-                    button('Done', () => app.closeValue(), 'Close this value (Esc)', 'tg-button.tg-primary'));
+                    button(W('value.done'), () => app.closeValue(), W('value.done.tip'), 'tg-button.tg-primary'));
                 return;
             }
             const item = this.item;
@@ -198,17 +200,17 @@
             const order = item.accessor ? s.element('accessor') : spec?.keys || [];
             const group = item.member || item.accessor ? 'behaviour' : (spec?.group || 'More').toLowerCase();
             const property = s.memberSpec('property');
-            G.ui.put(head, el('span.tg-chip.tg-chip-' + group, { text: item.accessor ? property?.title || 'Property' : spec?.title || v.kind, title: item.accessor ? property?.summary : spec?.summary }));
+            G.ui.put(head, el('span.tg-chip.tg-chip-' + group, { text: item.accessor ? property?.title || W('details.property') : spec?.title || v.kind, title: item.accessor ? property?.summary : spec?.summary }));
             if (item.member || item.accessor) {
-                G.ui.put(head, button(item.type?.name ?? '', () => app.reveal(item.type.id), 'Go to its card', 'tg-link.tg-frame-owner'), el('span.tg-frame-dot', { text: '.' }));
+                G.ui.put(head, button(item.type?.name ?? '', () => app.reveal(item.type.id), W('frame.goToCard'), 'tg-link.tg-frame-owner'), el('span.tg-frame-dot', { text: '.' }));
             }
             if (item.accessor) {
                 G.ui.put(head, el('span.tg-frame-title', { text: `${item.property?.name ?? ''} ${v.word ?? ''}` }));
             } else if (v.kind === 'operator') {
-                G.ui.put(head, el('span.tg-frame-title', { text: 'operator' }), select(v.op ?? '+', s.ops({ kind: 'operator' }) || [], op => app.edit(() => { v.op = op; }), 'Which operator', 'tg-select.tg-op'));
+                G.ui.put(head, el('span.tg-frame-title', { text: W('frame.operator') }), select(v.op ?? '+', s.ops({ kind: 'operator' }) || [], op => app.edit(() => { v.op = op; }), W('frame.operator.tip'), 'tg-select.tg-op'));
             } else if (order.includes('name')) {
                 G.ui.put(head, G.ui.nameText(v.name ?? '', x => app.renameDecl(item, x), {
-                    className: 'tg-name', placeholder: 'Name', check: G.cards.checkName, fk: `${v.id}:name`,
+                    className: 'tg-name', placeholder: W('placeholder.name'), check: G.cards.checkName, fk: `${v.id}:name`,
                     onEnter: () => {
                         // A new frame's first Enter goes on to what it needs
                         const fresh = !this.graph?.nodes?.length && !(v.params || []).length && !(v.payload || []).length;
@@ -226,7 +228,7 @@
             }
             G.ui.put(head, el('span.tg-tags', null, G.cards.tagsOf(app, item)),
                 el('span.tg-grow'), el('span.tg-badge', { dataset: { badge: item.id } }),
-                button('⋯', e => G.menus.contextMenu(app, { kind: 'frame', item }, e.clientX, e.clientY, { anchor: e.currentTarget }), 'What can be done with it (or right-click it)', 'tg-more'));
+                button(W('more'), e => G.menus.contextMenu(app, { kind: 'frame', item }, e.clientX, e.clientY, { anchor: e.currentTarget }), W('more.tip'), 'tg-more'));
         }
 
         openNeeds() {
@@ -266,9 +268,9 @@
             }
             if (!this.isValue && g && !Doc.nodes(g).length) {
                 G.ui.put(this.nodesLayer, el('div.tg-frame-hint', { style: { left: PAD + ENTRY_W + 30 + 'px', top: PAD + 1 + 'px' } },
-                    el('span.tg-frame-hint-arrow', { text: '←' }), 'Drag from the arrow to add what happens'));
+                    el('span.tg-frame-hint-arrow', { text: '←' }), W('frame.empty')));
             } else if (this.isValue && g && !g.root) {
-                G.ui.put(this.nodesLayer, el('div.tg-frame-hint', { style: { left: PAD + 'px', top: PAD + 70 + 'px' } }, 'Click "pick…" for its value; "Work it out…" there makes a node'));
+                G.ui.put(this.nodesLayer, el('div.tg-frame-hint', { style: { left: PAD + 'px', top: PAD + 70 + 'px' } }, W('value.empty')));
             }
             this.measure();
             this.drawWires();
@@ -312,7 +314,7 @@
             if (g) {
                 const port = { node: ENTRY, input: false, exec: true, path: null, label: 'start' };
                 const dot = el('span.tg-dot.tg-dot-exec');
-                const row = el('span.tg-port.tg-out.tg-port-exec.tg-entry-start', { dataset: { port: portKey(port) }, title: 'What happens first: drag from here' }, dot);
+                const row = el('span.tg-port.tg-out.tg-port-exec.tg-entry-start', { dataset: { port: portKey(port) }, title: W('pin.start') }, dot);
                 G.ui.put(head, row);
                 this.ports.set(portKey(port), { port, dot, row, view: record });
             }
@@ -321,7 +323,7 @@
             const pinOf = (name, type) => {
                 const port = { node: ENTRY, input: false, exec: false, pin: name, label: name, type };
                 const dot = el('span.tg-dot');
-                const row = el('span.tg-port.tg-out.tg-pin', { dataset: { port: portKey(port), pin: name }, title: `Drag from here into an input to use ${name}` }, dot);
+                const row = el('span.tg-port.tg-out.tg-pin', { dataset: { port: portKey(port), pin: name }, title: W('pin.param', { name }) }, dot);
                 this.ports.set(portKey(port), { port, dot, row, view: record });
                 return row;
             };
@@ -336,9 +338,9 @@
                 G.ui.put(rows, el('div.tg-entry-row', { dataset: { row: 'trigger' } },
                     el('span.tg-mode.tg-mode-fixed', { text: s.keyLabel('trigger').toLowerCase() }),
                     t.changed
-                        ? field(t.type ?? '', x => edit(() => { t.type = x; }), { className: 'tg-input.tg-entry-name', placeholder: 'Component.field', fk: `${v.id}:trigger`, title: 'The field whose change it hears' })
+                        ? field(t.type ?? '', x => edit(() => { t.type = x; }), { className: 'tg-input.tg-entry-name', placeholder: 'Component.field', fk: `${v.id}:trigger`, title: W('entry.changed.tip') })
                         : G.cards.typeChip(app, {
-                            type: t.type, kinds: ['event'], details: ['event'], fk: `${v.id}:trigger`, placeholder: 'pick an event',
+                            type: t.type, kinds: ['event'], details: ['event'], fk: `${v.id}:trigger`, placeholder: W('entry.event'),
                             ask: () => {
                                 const sp = lang.span(v.id);
                                 const open = sp ? lang.text.indexOf('(', sp[0]) : -1;
@@ -354,7 +356,7 @@
                                 }
                             }),
                         }),
-                    G.ui.nameText(t.name ?? '', rename(t, t.name), { className: 'tg-entry-name', placeholder: 'name', check: G.cards.checkName, fk: `${v.id}:trigger-name` }),
+                    G.ui.nameText(t.name ?? '', rename(t, t.name), { className: 'tg-entry-name', placeholder: W('placeholder.lower'), check: G.cards.checkName, fk: `${v.id}:trigger-name` }),
                     t.name ? pinOf(t.name, t.changed ? undefined : t.type) : null));
             }
             // A command's values
@@ -365,7 +367,7 @@
                     G.ui.put(rows, el('div.tg-entry-row', { dataset: { id: p.id } },
                         el('span.tg-mode.tg-mode-fixed', { text: s.keyLabel('payload').toLowerCase() }),
                         G.cards.typeChip(app, { type: p.type, at: p.id, own, fk: `${p.id}:type`, onPick: t => edit(() => set(p, 'type', t, porder)) }),
-                        G.ui.nameText(p.name ?? '', rename(p, p.name), { className: 'tg-entry-name', placeholder: 'name', check: G.cards.checkName, fk: `${p.id}:name` }),
+                        G.ui.nameText(p.name ?? '', rename(p, p.name), { className: 'tg-entry-name', placeholder: W('placeholder.lower'), check: G.cards.checkName, fk: `${p.id}:name` }),
                         p.name ? pinOf(p.name, p.type) : null));
                 }
                 G.ui.put(rows, button(`+ ${s.keyLabel('payload').toLowerCase()}…`, e => G.pickers.typePicker(app, {
@@ -379,7 +381,7 @@
                         });
                         if (made) this.board.focusSoon(`${made.id}:name`, true);
                     },
-                }), 'A value the player sends with it', 'tg-add-row'));
+                }), W('entry.payload.tip'), 'tg-add-row'));
             }
             // What it takes
             if (item.accessor) {
@@ -390,7 +392,7 @@
                 const list = Array.isArray(v.params) ? v.params : [];
                 for (const p of list) G.ui.put(rows, this.paramRow(v, list, p, 0, pinOf, rename, own));
                 G.ui.put(rows, button(s.addRow(v.kind, !!item.member), e => G.pickers.needsPicker(app, item, { anchor: e.currentTarget }),
-                    'Add something it takes: pick what', 'tg-add-row'));
+                    W('entry.needs.tip'), 'tg-add-row'));
             }
             // What it gives back
             if (order.includes('returnType')) {
@@ -398,7 +400,7 @@
                     el('span.tg-mode.tg-mode-fixed', { text: s.keyLabel('returnType').toLowerCase() }),
                     G.cards.typeChip(app, { type: v.returnType, at: v.id, own, allow: { void: true }, fk: `${v.id}:returnType`, onPick: t => edit(() => set(v, 'returnType', t, order)) })));
             }
-            if (v.extern) G.ui.put(rows, el('div.tg-entry-note', { text: `${s.keyLabel('extern')}: its code isn't nodes` }));
+            if (v.extern) G.ui.put(rows, el('div.tg-entry-note', { text: W('entry.extern', { extern: s.keyLabel('extern') }) }));
             G.ui.put(view, rows);
             G.ui.put(this.nodesLayer, view);
             this.views.set(ENTRY, record);
@@ -430,12 +432,12 @@
                 const all = s.paramModes.filter(m => depth === 0 || m !== 'query');
                 menu(e.clientX, e.clientY, [
                     ...all.filter(m => !s.modeAdvanced(m)).map(m => ({ label: s.modeLabel(m), summary: s.modeHelp(m), checked: m === mode, run: () => pick(m) })),
-                    ...all.filter(m => s.modeAdvanced(m)).map(m => ({ label: s.modeLabel(m), summary: s.modeHelp(m), checked: m === mode, group: 'More', run: () => pick(m) })),
-                ], { anchor: e.currentTarget, title: 'How it takes it' });
+                    ...all.filter(m => s.modeAdvanced(m)).map(m => ({ label: s.modeLabel(m), summary: s.modeHelp(m), checked: m === mode, group: W('entry.mode.more'), run: () => pick(m) })),
+                ], { anchor: e.currentTarget, title: W('details.mode') });
             };
             const words = ['local', 'verified', 'previous'].filter(k => p[k]).map(k => el('span.tg-row-tag', { text: k, title: s.keyLabel(k) }));
             const row = el('div.tg-entry-row' + (filter ? '.tg-entry-filter' : '') + (depth ? '.tg-entry-sub' : ''), { dataset: { id: p.id }, title: p.comment || undefined },
-                routine.kind === 'sample' ? null : button(s.modeLabel(mode), modes, `${s.modeHelp(mode) || 'How it takes it'} · click to change`, 'tg-mode'),
+                routine.kind === 'sample' ? null : button(s.modeLabel(mode), modes, W('entry.mode.tip', { help: s.modeHelp(mode) || W('details.mode') }), 'tg-mode'),
                 words,
                 p.ownership ? el('span.tg-type.tg-type-fixed', { text: 'ownership' })
                     : mode === 'query' ? null
@@ -450,17 +452,17 @@
                             }
                         }) }),
                 p.scene ? el('span.tg-row-tag', { text: 'scene' }) : null,
-                filter ? el('span.tg-grow') : G.ui.nameText(p.name ?? '', rename(p, p.name), { className: 'tg-entry-name', placeholder: 'name', check: G.cards.checkName, fk: `${p.id}:name` }),
+                filter ? el('span.tg-grow') : G.ui.nameText(p.name ?? '', rename(p, p.name), { className: 'tg-entry-name', placeholder: W('placeholder.lower'), check: G.cards.checkName, fk: `${p.id}:name` }),
                 p.default ? button('= …', () => app.openValue({ owner: p.id, key: 'default' }, p, 'default', porder, p.type), s.keyLabel('default'), 'tg-row-tag.tg-row-tag-button') : null,
                 !filter && p.name && depth === 0 ? pinOf(p.name, mode === 'query' ? undefined : p.type) : null);
             if (mode !== 'query') return row;
             // A query's own: what the entities it goes through have
             const inner = Array.isArray(p.query) ? p.query : [];
             return [row, inner.map(q => this.paramRow(routine, inner, q, depth + 1, pinOf, rename, own)),
-                button('+ with…', e => G.pickers.typePicker(app, {
-                    anchor: e.currentTarget, kinds: ['component'], details: ['component'], ask: () => app.lang.completionInParams(routine), title: 'What the entities it goes through have',
+                button(W('entry.query.add'), e => G.pickers.typePicker(app, {
+                    anchor: e.currentTarget, kinds: ['component'], details: ['component'], ask: () => app.lang.completionInParams(routine), title: W('entry.query.title'),
                     onPick: type => edit(d => { if (!Array.isArray(p.query)) set(p, 'query', [], porder); p.query.push(d.newParam(type, G.pickers.nameFor(type))); }),
-                }), 'A component the query asks for', 'tg-add-row.tg-entry-sub')];
+                }), W('entry.query.tip'), 'tg-add-row.tg-entry-sub')];
         }
 
         // A value's result: where its value is wired
@@ -471,7 +473,7 @@
             for (const n of nodes) right = Math.max(right, this.dx(n) + this.sizes.get(n.id).w);
             const x = nodes.length ? right + 60 : PAD;
             const y = root && this.drawn(root) ? this.dy(root) : PAD;
-            const port = { node: RESULT, input: true, exec: false, path: null, label: this.value.type || 'its value' };
+            const port = { node: RESULT, input: true, exec: false, path: null, label: this.value.type || W('search.itsValue') };
             const view = el('div.tg-node.tg-result', { dataset: { id: RESULT }, style: { left: x + 'px', top: y + 'px' } },
                 el('div.tg-node-header', null, el('span.tg-node-title', { text: this.schema.keyLabel(this.value.key === 'components' ? 'value' : this.value.key || 'value') })));
             const record = { el: view, node: { id: RESULT }, fixed: true, x, y };
@@ -527,7 +529,7 @@
             const outRow = p => {
                 const dot = dotOf(p);
                 const row = el('div.tg-port.tg-out' + (p.exec ? '.tg-port-exec' : '') + (p.local !== undefined ? '.tg-pin' : ''),
-                    { dataset: { port: portKey(p) }, title: p.local !== undefined ? `Drag from here to use ${p.label}` : undefined },
+                    { dataset: { port: portKey(p) }, title: p.local !== undefined ? W('pin.param', { name: p.label }) : undefined },
                     p.label ? el('span.tg-port-label', { text: p.label }) : null, dot);
                 this.ports.set(portKey(p), { port: p, dot, row, view: record });
                 return row;
@@ -536,7 +538,7 @@
             if (!spec) {
                 const view = el('div.tg-node.tg-unknown', { dataset: { id: n.id }, style: { left: record.x + 'px', top: record.y + 'px' } },
                     el('div.tg-node-header', null, el('span.tg-node-title', { text: n.k })),
-                    el('div.tg-node-unknown', { text: `This editor doesn't know '${n.k}' nodes. It's kept as it is.` }), ports.map(p => (p.input ? this.inputRow(p, record) : outRow(p))));
+                    el('div.tg-node-unknown', { text: W('node.unknown', { kind: n.k }) }), ports.map(p => (p.input ? this.inputRow(p, record) : outRow(p))));
                 record.el = view;
                 G.ui.put(this.nodesLayer, view);
                 this.views.set(n.id, record);
@@ -570,13 +572,13 @@
                         // what each does (the schema's `assignInfo`), only those Tide takes for what it changes and
                         // the value it's changed by (tide/graphOperators)
                         const words = s.assignLabel(shown.op);
-                        op = button(shown.op ?? '=', e => this.opMenu(shown, e.currentTarget, pick), words ? `It ${words}: pick another way` : 'How it changes it', 'tg-op.tg-op-button');
+                        op = button(shown.op ?? '=', e => this.opMenu(shown, e.currentTarget, pick), words ? W('op.assign.tip', { words }) : W('op.assign'), 'tg-op.tg-op-button');
                         op.dataset.op = shown.op ?? '';
                         continue;
                     }
                     if (named) {
                         // An operator is its node's title, by what it's called: picking another there changes the node
-                        op = button(null, e => this.opMenu(shown, e.currentTarget, pick), 'What it does: pick another', 'tg-op.tg-op-title');
+                        op = button(null, e => this.opMenu(shown, e.currentTarget, pick), W('op.title.tip'), 'tg-op.tg-op-title');
                         G.ui.put(op, el('span', { text: s.opTitle(shown.op, shown.k === 'unary') }), el('span.tg-op-sign', { text: shown.op ?? '' }));
                         op.dataset.op = shown.op ?? '';
                         continue;
@@ -587,7 +589,7 @@
                 if (type === 'flag') {
                     if (shown.k === 'bool' && key === 'value') {
                         const box = el('input', { type: 'checkbox', checked: !!shown.value, onchange: e => edit('value', e.target.checked), onpointerdown: e => e.stopPropagation() });
-                        fields.push(el('label.tg-value-bool', { onpointerdown: e => e.stopPropagation() }, box, el('span', { text: shown.value ? 'yes' : 'no' })));
+                        fields.push(el('label.tg-value-bool', { onpointerdown: e => e.stopPropagation() }, box, el('span', { text: shown.value ? W('value.yes') : W('value.no') })));
                     } else if (shown[key]) {
                         tags.push(el('span.tg-node-tag', { text: s.flagLabel(key).toLowerCase(), title: s.flagHelp(key) }));
                     }
@@ -595,7 +597,7 @@
                 }
                 if (key === 'typeArgs') {
                     for (const [i, t] of (shown.typeArgs || []).entries()) {
-                        tags.push(el('span.tg-node-tag', null, t, button('×', () => app.edit(() => { shown.typeArgs.splice(i, 1); if (!shown.typeArgs.length) delete shown.typeArgs; }), 'Remove this type', 'tg-icon')));
+                        tags.push(el('span.tg-node-tag', null, t, button('×', () => app.edit(() => { shown.typeArgs.splice(i, 1); if (!shown.typeArgs.length) delete shown.typeArgs; }), W('details.typeArg.delete'), 'tg-icon')));
                     }
                     continue;
                 }
@@ -610,8 +612,8 @@
                 if (type === 'type') {
                     const optional = spec.declares || shown.k === 'lambda';
                     fields.push(el('span.tg-field', null, key === 'type' ? null : el('span.tg-field-label', { text: s.keyLabel(key) }), G.cards.typeChip(app, {
-                        type: shown[key], at: shown.id, fk: `${shown.id}:${key}`, placeholder: optional ? 'any type' : 'pick a type',
-                        allow: optional ? { none: 'Work it out', noneSummary: 'The type of the value it gets' } : {},
+                        type: shown[key], at: shown.id, fk: `${shown.id}:${key}`, placeholder: optional ? W('node.anyType') : W('node.pickType'),
+                        allow: optional ? { none: W('value.work.group'), noneSummary: W('node.inferType') } : {},
                         onPick: t => edit(key, t),
                     })));
                     continue;
@@ -619,9 +621,9 @@
                 if (type === 'string' && key !== 'formats' && key !== 'argNames') {
                     // A name reads as text and is renamed by a double click (a local's new name is its reads' too:
                     // they name its node, not its name)
-                    const check = ['name', 'member', 'binding', 'field'].includes(key) ? v => (v === '' && key === 'binding' ? null : /^[A-Za-z_][A-Za-z0-9_.]*$/.test(v) ? null : 'A name: letters, digits and _') : undefined;
+                    const check = ['name', 'member', 'binding', 'field'].includes(key) ? v => (v === '' && key === 'binding' ? null : /^[A-Za-z_][A-Za-z0-9_.]*$/.test(v) ? null : W('check.name')) : undefined;
                     const input = G.ui.nameText(shown[key] ?? '', v => edit(key, v === '' && !['name', 'member'].includes(key) ? undefined : v), {
-                        placeholder: key === 'binding' ? 'a name for it' : key, fk: `${shown.id}:${key}`, check,
+                        placeholder: key === 'binding' ? W('node.binding') : key, fk: `${shown.id}:${key}`, check,
                         className: 'tg-node-input' + (key === primaryKey ? '.tg-node-name' : ''),
                     });
                     if (key === primaryKey) primary = input; else fields.push(input);
@@ -629,11 +631,11 @@
                 }
                 if (type === 'text') {
                     const wide = shown.k === 'text' || shown.k === 'code';
-                    const check = shown.k === 'int' || shown.k === 'float' ? v => (G.values.NUMBER.test(v.trim()) && !v.trim().startsWith('-') ? null : `"${v}" isn't a number`) : undefined;
+                    const check = shown.k === 'int' || shown.k === 'float' ? v => (G.values.NUMBER.test(v.trim()) && !v.trim().startsWith('-') ? null : W('check.number', { text: v })) : undefined;
                     const shownText = shown.k === 'char' ? String(shown.text ?? '').replace(/^'|'$/g, '') : shown.text ?? '';
                     fields.push(field(shownText, v => edit('text', shown.k === 'char' ? `'${v}'` : shown.k === 'int' || shown.k === 'float' ? v.trim() : v), {
                         multiline: wide, rows: wide ? Math.max(2, Math.min(8, String(shown.text ?? '').split('\n').length)) : 1, mono: wide, check, grow: wide ? 0 : 3,
-                        className: 'tg-input.tg-node-input' + (wide ? '.tg-node-code' : ''), placeholder: shown.k === 'string' ? 'text' : wide ? 'Tide' : '0', fk: `${shown.id}:text`,
+                        className: 'tg-input.tg-node-input' + (wide ? '.tg-node-code' : ''), placeholder: shown.k === 'string' ? W('value.text') : wide ? 'Tide' : '0', fk: `${shown.id}:text`,
                     }));
                 }
             }
@@ -641,15 +643,15 @@
             // A value with nothing in it to wire, and one value of its own or none: a pill, with its pin beside it
             const chip = !spec.exec && !call && !inputs.length && !execOuts.length && fields.length + (primary ? 1 : 0) <= 1 && !op && !spec.lists && !spec.items && !spec.map && outs.length === 1;
             const view = el('div.tg-node' + (own?.exec ? '.tg-exec' : '.tg-data') + (chip ? '.tg-chipnode' : '') + (reached ? '' : '.tg-dim'),
-                { dataset: { id: n.id }, style: { left: record.x + 'px', top: record.y + 'px', '--tg-cat': s.color(shown.k) } });
+                { dataset: { id: n.id }, style: { left: record.x + 'px', top: record.y + 'px', '--tg-cat': s.color(shown.k), '--tg-head': s.headerColor(shown.k) } });
             record.el = view;
             const words = shown.k === 'binary' || shown.k === 'unary' ? s.opTitle(shown.op, shown.k === 'unary') : spec.title;
-            const moreButton = button('⋯', e => G.menus.contextMenu(app, { kind: 'node', frame: this, node: n }, e.clientX, e.clientY, { anchor: e.currentTarget }), 'What can be done with it (or right-click it)', 'tg-more.tg-node-more');
+            const moreButton = button(W('more'), e => G.menus.contextMenu(app, { kind: 'node', frame: this, node: n }, e.clientX, e.clientY, { anchor: e.currentTarget }), W('more.tip'), 'tg-more.tg-node-more');
             if (chip) {
                 const out = outs[0];
                 const dot = dotOf(out);
                 const lone = shown.k === 'local' ? el('span.tg-node-name', { text: this.doc.valueText(this.graph, shown.id) }) : null;
-                const row = el('div.tg-port.tg-out.tg-chip-row', { dataset: { port: portKey(out) }, title: reached ? s.help(shown.k) : `${s.help(shown.k)}. Nothing uses it yet: drag from its pin into an input.` },
+                const row = el('div.tg-port.tg-out.tg-chip-row', { dataset: { port: portKey(out) }, title: reached ? s.help(shown.k) : W('node.unread', { help: s.help(shown.k) }) },
                     fields.length || primary || lone ? null : el('span.tg-node-title', { text: words }),
                     shown.k === 'member' && shown.shorthand ? el('span.tg-node-dot', { text: '.' }) : null,
                     primary, lone, fields, tags, dot);
@@ -676,13 +678,13 @@
             // Target, what it's a field of, is the first row ("Set scale", Target wired from a Get of transform)
             const changes = a.titled.has(shown.id) ? a.byId.get(a.titled.get(shown.id)) : null;
             const targetPort = changes ? inputs.find(p => p.key === 'target') : null;
-            const ofTarget = changes?.k === 'member' && !changes.shorthand ? { node: changes.id, input: true, exec: false, path: ['object'], key: 'object', label: TARGET } : null;
+            const ofTarget = changes?.k === 'member' && !changes.shorthand ? { node: changes.id, input: true, exec: false, path: ['object'], key: 'object', label: W('target') } : null;
             const rowInputs = [...(ofTarget ? [ofTarget] : []), ...inputs.filter(p => p !== targetPort && !(objectShown && p === objectPort))];
             // A value made of one other with nothing else to set: its input on the title's row, one line in all
             const headIn = !objectPort && !changes && !execIn && !op && rowInputs.length === 1 && !rowInputs[0].group && !fields.length && !spec.lists && !spec.items && !spec.map && this.wireOf(rowInputs[0]) && !a.folded.has(this.wireOf(rowInputs[0])) ? rowInputs[0] : null;
             if (headIn) {
                 const dot = dotOf(headIn);
-                const row = el('span.tg-port.tg-in.tg-head-port', { dataset: { port: portKey(headIn) }, title: `What it is ${headIn.label}: a wire from a node` }, dot);
+                const row = el('span.tg-port.tg-in.tg-head-port', { dataset: { port: portKey(headIn) }, title: W('pin.headIn', { input: headIn.label }) }, dot);
                 this.ports.set(portKey(headIn), { port: headIn, dot, row, view: record, label: headIn.label });
                 G.ui.put(header, row);
             }
@@ -699,7 +701,7 @@
             const headOut = own?.exec ? execOuts.find(p => G.samePath(p.path, ['next'])) : outs.find(p => p.local === undefined);
             if (headOut) {
                 const dot = dotOf(headOut);
-                const row = el('span.tg-port.tg-out.tg-head-port' + (headOut.exec ? '.tg-port-exec' : ''), { dataset: { port: portKey(headOut) }, title: headOut.exec ? 'What happens next: drag from here' : 'Its value: drag from here into an input' }, dot);
+                const row = el('span.tg-port.tg-out.tg-head-port' + (headOut.exec ? '.tg-port-exec' : ''), { dataset: { port: portKey(headOut) }, title: headOut.exec ? W('pin.next') : W('pin.value') }, dot);
                 this.ports.set(portKey(headOut), { port: headOut, dot, row, view: record });
                 G.ui.put(header, row);
             }
@@ -708,7 +710,7 @@
                 // "Clamp", and "Math" beneath it: each part clicked to change it from there
                 const dot = el('span.tg-dot.tg-sub-dot');
                 const row = el('div.tg-port.tg-in.tg-inline.tg-node-sub', { dataset: { port: portKey(objectPort) } }, dot, this.pathChip(objectPort, objectWire), this.emptyButton(objectPort));
-                this.ports.set(portKey(objectPort), { port: objectPort, dot, row, view: record, label: TARGET });
+                this.ports.set(portKey(objectPort), { port: objectPort, dot, row, view: record, label: W('target') });
                 G.ui.put(view, row);
             }
             if (shown.comment || n.comment) G.ui.put(view, el('div.tg-node-comment', { text: n.comment || shown.comment, title: n.comment || shown.comment }));
@@ -745,7 +747,7 @@
         changesButton(port, n) {
             const text = n.k === 'member' ? (n.shorthand ? '.' : '') + (n.member ?? '') : this.doc.valueText(this.graph, n.id);
             const type = this.typeOfValue(n.id);
-            const b = button(text, e => this.pickValue(port, e.currentTarget), `What it changes${type ? `, ${article(type)} ${type}` : ''}: click to pick another`, 'tg-set-target');
+            const b = button(text, e => this.pickValue(port, e.currentTarget), W(type ? 'set.target.typed' : 'set.target', { article: article(type || ''), type }), 'tg-set-target');
             b.dataset.changes = String(n.id);
             const read = n.k === 'member' ? null : this.readOf(n);
             if (read) b.dataset.read = read;
@@ -766,11 +768,11 @@
             const text = n.k === 'member' ? (n.shorthand ? '.' : '') + (n.member ?? '') : this.doc.valueText(this.graph, n.id);
             const read = this.readOf(n);
             const reached = this.reached.has(n.id);
-            const said = n.k === 'member' && !n.shorthand ? `${text}, of its Target` : `Get ${text}`;
+            const said = n.k === 'member' && !n.shorthand ? W('get.member', { name: text }) : W('title.get', { name: text });
             const view = el('div.tg-node.tg-data.tg-get' + (target ? '.tg-get-member' : '') + (reached ? '' : '.tg-dim'), {
                 dataset: read ? { id: n.id, read } : { id: n.id },
                 style: { left: record.x + 'px', top: record.y + 'px', '--tg-type': typeColor(type) || s.color(n.k) },
-                title: `${said}${type ? `: ${type}` : ''}${reached ? '' : '. Nothing uses it yet: drag from its pin into an input'}`,
+                title: W(reached ? 'get.tip' : 'get.tip.unread', { said: type ? `${said}: ${type}` : said }),
             });
             record.el = view;
             const row = el('div.tg-get-row');
@@ -778,7 +780,7 @@
             G.ui.put(row, el('span.tg-get-name', { text }));
             if (out) {
                 const dot = el('span.tg-dot');
-                const port = el('span.tg-port.tg-out.tg-get-out', { dataset: { port: portKey(out) }, title: 'Its value: drag from here into any number of inputs' }, dot);
+                const port = el('span.tg-port.tg-out.tg-get-out', { dataset: { port: portKey(out) }, title: W('pin.get') }, dot);
                 this.ports.set(portKey(out), { port: out, dot, row: port, view: record });
                 G.ui.put(row, port);
             }
@@ -795,7 +797,7 @@
             const type = this.typeOfValue(n.id);
             const view = el('div.tg-node.tg-data.tg-knot' + (this.reached.has(n.id) ? '' : '.tg-dim'), {
                 dataset: { id: n.id }, style: { left: record.x + 'px', top: record.y + 'px', '--tg-type': typeColor(type) || 'var(--tg-muted)' },
-                title: `Reroute${type ? `: ${type}` : ''}. Drag it to move the wire; Delete joins the wire again`,
+                title: W(type ? 'knot.tip.typed' : 'knot.tip', { type }),
             });
             record.el = view;
             const pin = (p, cls) => {
@@ -825,8 +827,7 @@
 
         // The × of a filled input, seen while it's under the pointer: empties it
         emptyButton(p) {
-            const what = p.label ? `'${p.label}'` : 'it';
-            const b = button('×', () => this.emptyInput(p), `Empty ${what}: what's in it goes, a node wired in stays (Delete does it too)`, 'tg-row-empty');
+            const b = button(W('close'), () => this.emptyInput(p), W(p.label ? 'input.empty.tip' : 'input.empty.tip.it', { input: p.label }), 'tg-row-empty');
             b.dataset.empty = '';
             return b;
         }
@@ -847,7 +848,7 @@
         }
 
         pickButton(p) {
-            return button('pick…', e => this.pickValue(p, e.currentTarget), 'Nothing is in it yet: pick what goes here', 'tg-pick');
+            return button(W('input.pick'), e => this.pickValue(p, e.currentTarget), W('input.pick.tip'), 'tg-pick');
         }
 
         // Opens the value picker of an input, under `anchor` (or at `x`, `y`); `from` is the place in the path shown
@@ -863,12 +864,12 @@
             const app = this.app;
             const n = this.analysis.byId.get(w);
             const fk = `${w}:in`;
-            const other = () => button('▾', e => this.pickValue(p, e.currentTarget.parentElement), 'Pick something else for it', 'tg-row-pick');
+            const other = () => button('▾', e => this.pickValue(p, e.currentTarget.parentElement), W('input.other'), 'tg-row-pick');
             if (n.k === 'int' || n.k === 'float' || n.k === 'unary') {
                 const inner = n.k === 'unary' ? this.analysis.byId.get(n.value) : n;
                 return el('span.tg-inline-value', null, field((n.k === 'unary' ? '-' : '') + (inner?.text ?? ''), v => this.setNumber(p, w, v.trim()), {
-                    className: 'tg-input.tg-inline-number', placeholder: '0', grow: 2, fk, title: 'A number',
-                    check: v => (G.values.NUMBER.test(v.trim()) ? null : `"${v}" isn't a number`),
+                    className: 'tg-input.tg-inline-number', placeholder: '0', grow: 2, fk, title: W('input.number'),
+                    check: v => (G.values.NUMBER.test(v.trim()) ? null : W('check.number', { text: v })),
                 }), other());
             }
             if (n.k === 'call') {
@@ -880,7 +881,7 @@
                     this.setInput({ node: n.id, input: true, exec: false, path: ['args', i] }, (doc, g, at) => doc.makeLiteral(g, G.values.INT.test(body) ? 'int' : 'float', text, at));
                 };
                 if (this.schema.control(n.name) === 'colour' && args.length >= 3) {
-                    const swatch = el('input.tg-value-color', { type: 'color', value: G.values.toHex(texts), title: `${this.doc.valueText(this.graph, w)}: pick a colour`, onpointerdown: e => e.stopPropagation() });
+                    const swatch = el('input.tg-value-color', { type: 'color', value: G.values.toHex(texts), title: W('input.colour', { value: this.doc.valueText(this.graph, w) }), onpointerdown: e => e.stopPropagation() });
                     swatch.dataset.fk = fk;
                     swatch.addEventListener('change', () => app.edit(doc => {
                         G.values.fromHex(swatch.value).forEach((t, i) => doc.setInput(this.graph, n.id, ['args', i], (d, g) => d.makeLiteral(g, 'float', t.includes('.') ? t : t + '.0', n)));
@@ -890,22 +891,22 @@
                 const names = args.length <= 4 && this.schema.control(n.name) === 'vector' ? G.values.AXES : [];
                 return el('span.tg-inline-value.tg-inline-vector', { title: n.name }, args.map((a, i) => field(texts[i], v => setArg(i, v.trim()), {
                     className: 'tg-input.tg-inline-number.tg-inline-axis', placeholder: '0', grow: 1, fk: `${fk}.${i}`, title: names[i] ? `${n.name}: ${names[i]}` : n.name,
-                    check: v => (G.values.NUMBER.test(v.trim()) ? null : `"${v}" isn't a number`),
+                    check: v => (G.values.NUMBER.test(v.trim()) ? null : W('check.number', { text: v })),
                 })), other());
             }
             if (n.k === 'bool') {
                 const box = el('input', { type: 'checkbox', checked: !!n.value, onchange: e => app.edit(() => { n.value = e.target.checked; }), onpointerdown: e => e.stopPropagation() });
                 box.dataset.fk = fk;
-                return el('span.tg-inline-value', null, el('label.tg-value-bool', { onpointerdown: e => e.stopPropagation() }, box, el('span', { text: n.value ? 'yes' : 'no' })), other());
+                return el('span.tg-inline-value', null, el('label.tg-value-bool', { onpointerdown: e => e.stopPropagation() }, box, el('span', { text: n.value ? W('value.yes') : W('value.no') })), other());
             }
             if (n.k === 'string') {
                 return el('span.tg-inline-value', null, el('span.tg-inline-quote', { text: '“' }),
-                    field(n.text ?? '', v => app.edit(() => { n.text = v; }), { className: 'tg-input.tg-inline-text', placeholder: 'text', grow: 3, fk, title: 'Text' }),
+                    field(n.text ?? '', v => app.edit(() => { n.text = v; }), { className: 'tg-input.tg-inline-text', placeholder: W('value.text'), grow: 3, fk, title: W('input.text') }),
                     el('span.tg-inline-quote', { text: '”' }), other());
             }
             if (n.k === 'char') {
                 return el('span.tg-inline-value', null, field(String(n.text ?? '').replace(/^'|'$/g, ''), v => app.edit(() => { n.text = `'${v}'`; }), {
-                    className: 'tg-input.tg-inline-number', placeholder: 'a', grow: 1, fk, title: 'One character', check: v => ([...v].length === 1 || /^\\.+$/.test(v) ? null : 'One character'),
+                    className: 'tg-input.tg-inline-number', placeholder: 'a', grow: 1, fk, title: W('input.char'), check: v => ([...v].length === 1 || /^\\.+$/.test(v) ? null : W('input.char')),
                 }), other());
             }
             return el('span.tg-inline-value', null, this.pathChip(p, w));
@@ -924,7 +925,7 @@
             nodes.forEach((node, i) => {
                 const text = i === 0 ? doc.valueText(g, node.id) : node.member;
                 if (i > 0) G.ui.put(chip, el('span.tg-path-sep', { text: '.' }));
-                G.ui.put(chip, button(text, e => this.pickValue(p, chip, { from: i }), (i === 0 ? 'Click to pick something else for it' : `Click to pick another of what ${doc.valueText(g, nodes[i - 1].id)} has`) + '; × empties it', 'tg-path-part'));
+                G.ui.put(chip, button(text, e => this.pickValue(p, chip, { from: i }), i === 0 ? W('chip.first') : W('chip.part', { of: doc.valueText(g, nodes[i - 1].id) }), 'tg-path-part'));
             });
             return chip;
         }
@@ -967,7 +968,7 @@
                     this.holdPlace(doc, g);
                 }
             });
-            if (why) G.ui.toast(`That can't go there: ${why}.`);
+            if (why) G.ui.toast(W('toast.cantGoThere', { why }));
             // A node it made (something worked out) is brought into view, or the node the input is on
             const f = this.value ? null : this.board.frameOf(this.slot);
             if (f) this.board.showNode(f, made && f.views.has(made) ? made : p.node);
@@ -1106,7 +1107,7 @@
             const spec = s.node(n.k);
             const order = s.nodeOrder(n.k);
             const out = [];
-            const an = w => `${/^[aeiou]/i.test(w) ? 'an' : 'a'} ${w}`;
+            const an = word => `${article(word)} ${word}`;
             for (const list of spec?.lists || []) {
                 if (n.k === 'interp') continue;
                 // A call's next argument is called what its function calls it (tide/graphCalls), and there's none to
@@ -1114,7 +1115,7 @@
                 const next = list.names ? app.lang.nextParam(n, Array.isArray(n[list.key]) ? n[list.key].length : 0) : null;
                 if (next === '') continue;
                 out.push({
-                    key: list.key, word: next || list.label, label: next ? `Add its ${next}` : `Add ${an(list.label)}`, title: next ? `Give it its ${next}` : `Another ${list.label}`,
+                    key: list.key, word: next || list.label, label: next ? W('add.its', { name: next }) : W('add.one', { what: an(list.label) }), title: next ? W('add.its.tip', { name: next }) : W('add.another', { what: list.label }),
                     run: () => app.edit(() => {
                         if (!Array.isArray(n[list.key])) set(n, list.key, [], order);
                         n[list.key].push(null);
@@ -1135,24 +1136,24 @@
                     n[item.key].push(blank);
                 });
                 const named = n.k === 'literal';
-                const word = named ? 'field' : item.label;
+                const word = named ? W('add.field') : item.label;
                 out.push({
-                    key: item.key, word, label: `Add ${an(word)}${named ? '…' : ''}`, title: named ? 'Set another of its fields' : `Another ${item.label}`,
+                    key: item.key, word, label: W(named ? 'add.oneMore' : 'add.one', { what: an(word) }), title: named ? W('add.field.tip') : W('add.another', { what: item.label }),
                     run: anchor => {
                         if (!named) { make(); return; }
                         // A field of its type, by name: those the file knows, or a name
                         const known = this.doc.membersOf(n.type).filter(m => !m.method && !(n.inits || []).some(i => i.name === m.name));
                         G.ui.picker({
-                            anchor, x: this.board.lastPointer.x, y: this.board.lastPointer.y, placeholder: 'Which field?', entries: known.map(m => ({ title: m.name, detail: m.type, color: typeColor(m.type) })),
-                            free: text => (/^[A-Za-z_][A-Za-z0-9_]*$/.test(text) && !known.some(m => m.name === text) ? { title: text, detail: 'a field by this name' } : null),
-                            empty: "Type the field's name", onPick: entry => make(entry.title),
+                            anchor, x: this.board.lastPointer.x, y: this.board.lastPointer.y, placeholder: W('add.field.which'), entries: known.map(m => ({ title: m.name, detail: m.type, color: typeColor(m.type) })),
+                            free: text => (/^[A-Za-z_][A-Za-z0-9_]*$/.test(text) && !known.some(m => m.name === text) ? { title: text, detail: W('add.field.named') } : null),
+                            empty: W('add.field.type'), onPick: entry => make(entry.title),
                         });
                     },
                 });
             }
             if (spec?.map && n.k !== 'interp') {
                 out.push({
-                    key: spec.map, word: 'input', label: 'Add an input', title: 'Another value the text reads by its name',
+                    key: spec.map, word: W('add.input.word'), label: W('add.input'), title: W('add.input.tip'),
                     run: () => app.edit(() => {
                         if (!n[spec.map] || typeof n[spec.map] !== 'object') set(n, spec.map, {}, order);
                         const names = Object.keys(n[spec.map]);
@@ -1198,7 +1199,7 @@
                 set(n, 'parts', nextParts, order);
                 set(n, 'formats', nextFormats.some(f => f) ? nextFormats : undefined, order);
                 set(n, 'values', values, order);
-            }), { className: 'tg-input.tg-node-input.tg-node-template', placeholder: 'Score: {}', title: 'Its text, with {} where each value goes ({:F2} to format one)', fk: `${n.id}:parts`, grow: 10 });
+            }), { className: 'tg-input.tg-node-input.tg-node-template', placeholder: 'Score: {}', title: W('node.template.tip'), fk: `${n.id}:parts`, grow: 10 });
         }
 
         lambdaParams(n) {
@@ -1208,12 +1209,12 @@
             const list = Array.isArray(n.params) ? n.params : [];
             return el('span.tg-lambda-params', null,
                 list.map((p, i) => el('span.tg-lambda-param', null,
-                    field(p.name ?? '', v => app.edit(() => set(p, 'name', v, order)), { className: 'tg-input.tg-node-input', placeholder: 'name', check: G.cards.checkName, grow: 2 }),
-                    button('×', () => app.edit(() => { list.splice(i, 1); }), 'Remove this parameter', 'tg-icon'))),
-                button('+ parameter', () => app.edit(d => {
+                    field(p.name ?? '', v => app.edit(() => set(p, 'name', v, order)), { className: 'tg-input.tg-node-input', placeholder: W('placeholder.lower'), check: G.cards.checkName, grow: 2 }),
+                    button(W('close'), () => app.edit(() => { list.splice(i, 1); }), W('lambda.delete'), 'tg-icon'))),
+                button(W('lambda.add'), () => app.edit(d => {
                     if (!Array.isArray(n.params)) set(n, 'params', [], s.nodeOrder('lambda'));
                     n.params.push({ name: d.uniqueName(n.params, 'x') });
-                }), 'Something the lambda takes', 'tg-port-add'));
+                }), W('lambda.add.tip'), 'tg-port-add'));
         }
 
         // What a pin of a list, items or named inputs has of its own, for its menu: name or delete an argument, a
@@ -1231,7 +1232,7 @@
             if (list) {
                 const i = port.index;
                 if (list.names) {
-                    items.push({ section: 2, label: 'Name it…', summary: 'As in crit: 2', name: 'name-arg', run: () => G.cards.promptText({ x, y, title: "The argument's name", value: n[list.names]?.[i] ?? '', placeholder: 'left unnamed',
+                    items.push({ section: 2, label: W('arg.name'), summary: W('arg.name.summary'), name: 'name-arg', run: () => G.cards.promptText({ x, y, title: W('arg.name.title'), value: n[list.names]?.[i] ?? '', placeholder: W('arg.name.none'),
                         check: v => (v === '' ? null : G.cards.checkName(v)),
                         onDone: text => app.edit(() => {
                             const names = (n[list.key] || []).map((_, j) => (j === i ? text : n[list.names]?.[j] ?? ''));
@@ -1239,7 +1240,7 @@
                         }) }) });
                 }
                 if (n.k !== 'interp') {
-                    items.push({ section: 3, label: `Delete this ${list.label}`, danger: true, name: 'delete-item', run: () => this.editWithSweep(() => {
+                    items.push({ section: 3, label: W('item.delete', { what: list.label }), danger: true, name: 'delete-item', run: () => this.editWithSweep(() => {
                         n[list.key].splice(i, 1);
                         if (Array.isArray(n[list.names])) { n[list.names].splice(i, 1); if (!n[list.names].some(x2 => x2)) delete n[list.names]; }
                     }, [s.wire(n, port.path)]) });
@@ -1251,21 +1252,21 @@
                 for (const w of item.wires || []) {
                     if (!w.endsWith('[]') || !o) continue;
                     const key = w.slice(0, -2);
-                    items.push({ section: 1, label: 'Add a value for this case', name: 'case-value', run: () => app.edit(() => { if (!Array.isArray(o[key])) o[key] = []; o[key].push(null); }) });
-                    if ((o[key] || []).length > 1) items.push({ section: 3, label: 'Delete its last value', name: 'case-less', run: () => this.editWithSweep(() => { o[key].pop(); }, []) });
+                    items.push({ section: 1, label: W('case.add'), name: 'case-value', run: () => app.edit(() => { if (!Array.isArray(o[key])) o[key] = []; o[key].push(null); }) });
+                    if ((o[key] || []).length > 1) items.push({ section: 3, label: W('case.less'), name: 'case-less', run: () => this.editWithSweep(() => { o[key].pop(); }, []) });
                 }
-                items.push({ section: 3, label: `Delete this ${n.k === 'literal' ? 'field' : item.label}`, danger: true, name: 'delete-item', run: () => this.editWithSweep(() => { n[item.key].splice(port.index, 1); }, s.dataWires(n)) });
+                items.push({ section: 3, label: W('item.delete', { what: n.k === 'literal' ? W('add.field') : item.label }), danger: true, name: 'delete-item', run: () => this.editWithSweep(() => { n[item.key].splice(port.index, 1); }, s.dataWires(n)) });
             }
             if (spec.map === port.group) {
                 const name = port.path[1];
-                items.push({ section: 2, label: 'Rename…', name: 'rename-input', run: () => G.cards.promptText({ x, y, title: "The input's name", value: name, check: G.cards.checkName, onDone: text => app.edit(() => {
+                items.push({ section: 2, label: W('input.rename'), name: 'rename-input', run: () => G.cards.promptText({ x, y, title: W('input.rename.title'), value: name, check: G.cards.checkName, onDone: text => app.edit(() => {
                     const map = n[spec.map];
                     if (!text || text === name || text in map) return;
                     const entries = Object.entries(map).map(([k, v]) => [k === name ? text : k, v]);
                     for (const k of Object.keys(map)) delete map[k];
                     for (const [k, v] of entries) map[k] = v;
                 }) }) });
-                items.push({ section: 3, label: 'Delete this input', danger: true, name: 'delete-item', run: () => this.editWithSweep(() => { delete n[spec.map][name]; }, [s.wire(n, port.path)]) });
+                items.push({ section: 3, label: W('item.delete', { what: W('add.input.word') }), danger: true, name: 'delete-item', run: () => this.editWithSweep(() => { delete n[spec.map][name]; }, [s.wire(n, port.path)]) });
             }
             return items;
         }
@@ -1283,9 +1284,9 @@
             const label = o => (assign ? s.assignLabel(o) || o : s.opTitle(o, n.k === 'unary'));
             menu(r.left, r.bottom, shown.map(o => ({
                 label: label(o), hint: o, name: 'op:' + o, checked: o === n.op,
-                disabled: !!valid && !valid.has(o), why: "Tide can't do this with these values",
+                disabled: !!valid && !valid.has(o), why: W('op.invalid'),
                 run: () => pick(o),
-            })), { anchor, title: assign ? 'How it changes it' : 'What it does', className: 'tg-op-menu' });
+            })), { anchor, title: assign ? W('op.assign') : W('op.title'), className: 'tg-op-menu' });
         }
 
         // The operators valid for a Set, an operator or a step node with what's in it now (tide/graphOperators), or
@@ -1327,22 +1328,22 @@
         // { ok, why }
         changeable(start) {
             const s = this.schema;
-            if (!start) return { ok: false, why: 'Nothing to change' };
+            if (!start) return { ok: false, why: W('why.nothingToChange') };
             if (start.local !== undefined) {
                 const d = Doc.nodeIn(this.graph, start.local);
                 const name = s.declaredLocal(d || {}) || 'it';
                 if (d?.mut || d?.k === 'outVar' && d.mut) return { ok: true };
-                return { ok: false, why: `${name} can't be changed: tick "${s.flagLabel('mut')}" on it` };
+                return { ok: false, why: W('why.localFixed', { name, flag: s.flagLabel('mut') }) };
             }
             if (start.name !== undefined) {
                 const pin = this.pins.find(p => p.name === start.name);
-                if (!pin) return { ok: false, why: `${start.name} isn't something this code can change` };
+                if (!pin) return { ok: false, why: W('why.notHere', { name: start.name }) };
                 const mode = pin.element?.mode;
                 if (pin.from === 'param' && (mode === 'mut' || mode === 'out')) return { ok: true };
-                if (pin.from === 'param') return { ok: false, why: `${pin.name} is only read here: make it "${s.modeLabel('mut')}" on the entry to change it` };
-                return { ok: false, why: `${pin.name} is only read here` };
+                if (pin.from === 'param') return { ok: false, why: W('why.readParam', { name: pin.name, mode: s.modeLabel('mut') }) };
+                return { ok: false, why: W('why.read', { name: pin.name }) };
             }
-            return { ok: false, why: `${start.word || 'It'} can't be changed here` };
+            return { ok: false, why: W('why.cantChange', { name: start.word || W('it.upper') }) };
         }
 
         // Whether an input is the place a Set or a step changes
@@ -1700,8 +1701,9 @@
                 if ((!p.dot.title || p.dot.dataset.typed) && !p.row.dataset.problem) {
                     // A pin under the pointer says what it is, and that it's dragged from
                     const wants = p.port.input && !type ? this.expectedType(p.port) : null;
-                    const what = type ? `${p.port.label || 'value'}: ${type}` : wants ? `${p.port.label || 'value'}: takes ${/^[aeiou]/i.test(wants) ? 'an' : 'a'} ${wants}` : p.port.label || 'value';
-                    p.dot.title = `${what} · drag to connect${p.port.input ? '' : ''}`;
+                    const label = p.port.label || W('value.input');
+                    const what = type ? `${label}: ${type}` : wants ? W('pin.wants', { input: label, article: article(wants), type: wants }) : label;
+                    p.dot.title = W('pin.connect', { what });
                     p.dot.dataset.typed = '1';
                 }
             }
@@ -1885,7 +1887,7 @@
                 r.get.x = get.x;
                 r.get.y = get.y;
             });
-            if (why) { G.ui.toast(`It can't be kept as a local: ${why}.`); return; }
+            if (why) { G.ui.toast(W('toast.cantKeep', { why })); return; }
             if (!made) return;
             this.editor.selectNodes(this.slot, [made.local.id]);
             this.board.focusSoon(`${made.local.id}:name`, true);
@@ -1937,6 +1939,15 @@
         }
     }
 
+    // The board's measures from the schema's look (its sizes)
+    function setLook(sizes) {
+        if (!sizes) return;
+        HEAD = sizes.frameHead; PAD = sizes.framePad; BOTTOM = sizes.frameBottom; ENTRY_W = sizes.entryWidth;
+        NODE_X0 = PAD + ENTRY_W + sizes.entryGap;
+        MIN_W = NODE_X0 + 330;
+        Object.assign(G.frames, { HEAD, PAD, BOTTOM, ENTRY_W, NODE_X0, CARD_W: sizes.card, CARD_ROW: sizes.cardRow, CARD_HEAD: sizes.cardHead, GRID: sizes.grid });
+    }
+
     G.FrameView = FrameView;
-    G.frames = { ENTRY, RESULT, HEAD, PAD, BOTTOM, ENTRY_W, NODE_X0, portKey, estimate, inputLabel };
+    G.frames = { ENTRY, RESULT, HEAD, PAD, BOTTOM, ENTRY_W, NODE_X0, CARD_W: 300, CARD_ROW: 26, CARD_HEAD: 48, GRID: 24, portKey, estimate, inputLabel, setLook };
 })(globalThis.TideGraph = globalThis.TideGraph || {});

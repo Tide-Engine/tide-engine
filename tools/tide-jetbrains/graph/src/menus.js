@@ -13,15 +13,17 @@
     const { menu } = G.ui;
     const { ENTRY, RESULT } = G.frames;
 
-    const KEY = { rename: 'F2', cut: 'Ctrl+X', copy: 'Ctrl+C', paste: 'Ctrl+V', duplicate: 'Ctrl+D', delete: 'Del', node: 'Space', unlink: 'Alt+click' };
+    // A menu's entry by its words (menu.<key>: its label, and its keys)
+    const w = (key, vars) => G.w(key, vars);
+    const M = (key, vars) => ({ label: w('menu.' + key, vars), hint: G.wk('menu.' + key) });
 
     const article = word => (/^[aeiou]/i.test(word) ? 'an' : 'a');
 
     // "Add a field", "Add an operator"; one of its own goes by its name ("Add Sample"), and text as it is
     function addMember(spec) {
-        if (spec.once || spec.kind === 'text') return `Add ${spec.title}`;
+        if (spec.once || spec.kind === 'text') return w('menu.addOwn', { title: spec.title });
         const word = spec.title.toLowerCase();
-        return `Add ${article(word)} ${word}`;
+        return w('menu.addOne', { article: article(word), word });
     }
 
     // What a kind's "+" adds, in a menu's words: its addRow ("+ choice") as "Add a choice"; what code takes, as what
@@ -30,8 +32,8 @@
         const row = schema.addRow(kind, member);
         const word = row.replace(/^\+\s*/, '').replace(/…$/, '');
         if (!word || word === '+') return null;
-        if (word === 'needs') return 'Add what it needs…';
-        return `Add ${article(word)} ${word}${row.endsWith('…') ? '…' : ''}`;
+        if (word === 'needs') return w('menu.addNeed');
+        return w(row.endsWith('…') ? 'menu.addOneMore' : 'menu.addOne', { article: article(word), word });
     }
 
     // The thing a press was on, as the menu and Details take it: { kind: 'card' | 'frame' | 'region' | 'node' |
@@ -147,7 +149,7 @@
             if (spec?.memberKinds) {
                 for (const m of s.memberKinds(v.kind)) {
                     const there = m.once && (v.members || []).some(x2 => x2.kind === m.kind);
-                    add(addMember(m), () => app.addMember(t.item, m.kind), { name: 'add-' + m.kind, summary: m.summary, disabled: there, why: 'It has one already' });
+                    add(addMember(m), () => app.addMember(t.item, m.kind), { name: 'add-' + m.kind, summary: m.summary, disabled: there, why: w('why.hasOne') });
                 }
             } else if (spec?.keys.includes('members') || spec?.keys.includes('entries')) {
                 const label = addRow(s, v.kind, false);
@@ -156,13 +158,13 @@
         } else if (t.kind === 'frame') {
             const f = app.board.frames.get(t.item.id);
             if (f?.graph) {
-                add('Add a node…', () => {
+                add(M('addNode').label, () => {
                     const where = f.mode === 'near' ? f.body.getBoundingClientRect() : null;
                     const inside = where && x >= where.left && x <= where.right && y >= where.top && y <= where.bottom;
                     if (inside) G.pickers.nodeSearch(app, f, x, y, null);
                     else app.board.openAddIn(f);
-                }, { hint: KEY.node, name: 'add-node' });
-                add('Add a note box', () => app.addNote(t.item.id), { name: 'add-note' });
+                }, { hint: M('addNode').hint, name: 'add-node' });
+                add(w('menu.addNote'), () => app.addNote(t.item.id), { name: 'add-note' });
             }
             const keys = t.item.accessor ? [] : t.item.spec?.keys || [];
             if (keys.includes('params')) {
@@ -170,10 +172,34 @@
                 if (label) add(label, () => app.openNeeds(t.item, x, y), { name: 'add-need' });
             }
         } else if (t.kind === 'region') {
-            add('Add to it…', () => G.pickers.addMenu(app, x, y, { namespace: t.item.value }), { name: 'add-decl' });
+            add(w('menu.addTo'), () => G.pickers.addMenu(app, x, y, { namespace: t.item.value }), { name: 'add-decl' });
         } else if (t.kind === 'row') {
             const role = t.row.role;
-            if (role === 'member' && ['field', 'tweak'].includes(t.row.value.kind)) {
+            if (role === 'member' && t.row.value.kind === 'property') {
+                // A property's code for when it's read and when it's set, where it hasn't that yet
+                const m = t.row.value;
+                for (const word of ['get', 'set'].filter(x2 => !(m.accessors || []).some(a => a.word === x2))) {
+                    add(w('menu.addAccessor', { word }), () => {
+                        let made;
+                        app.edit(d => {
+                            if (!Array.isArray(m.accessors)) G.json.set(m, 'accessors', [], s.memberOrder('property'));
+                            made = d.newAccessor(word);
+                            m.accessors.push(made);
+                        });
+                        if (made) app.reveal(made.id);
+                    }, { name: 'add-' + word });
+                }
+            } else if (role === 'param' && t.row.value.mode === 'query') {
+                // What the entities a query goes through have
+                const p = t.row.value;
+                add(w('menu.addQueryNeed'), () => G.pickers.typePicker(app, {
+                    x, y, kinds: ['component'], details: ['component'], ask: () => app.lang.completionInParams(t.item.value), title: w('entry.query.title'),
+                    onPick: type => app.edit(d => {
+                        if (!Array.isArray(p.query)) G.json.set(p, 'query', [], s.element('param'));
+                        p.query.push(d.newParam(type, G.pickers.nameFor(type)));
+                    }),
+                }), { name: 'add-query-need' });
+            } else if (role === 'member' && ['field', 'tweak'].includes(t.row.value.kind)) {
                 add(addMember(s.memberSpec('field')), () => G.cards.addRowTo(app, t.item, t.row.value), { name: 'add-row' });
             } else if (role === 'enumMember' || role === 'entry') {
                 const label = addRow(s, t.item.value.kind, false);
@@ -190,20 +216,20 @@
             const f = t.frame;
             const row = f.ports.get(G.frames.portKey(p))?.row;
             if (p.input && !p.exec) {
-                add('Pick a value…', () => f.pickValue(p, row), { name: 'pick' });
-                add('Work it out…', () => f.pickValue(p, row, { work: true }), { name: 'work' });
-                add('Empty it', () => f.emptyInput(p), { name: 'empty', hint: KEY.delete, disabled: !f.wireOf(p), why: 'Nothing is in it' });
+                add(w('menu.pick'), () => f.pickValue(p, row), { name: 'pick' });
+                add(w('menu.work'), () => f.pickValue(p, row, { work: true }), { name: 'work' });
+                add(M('empty').label, () => f.emptyInput(p), { name: 'empty', hint: M('empty').hint, disabled: !f.wireOf(p), why: w('why.empty') });
             } else if (!p.input && !p.exec) {
-                add('Use it in a new node…', () => G.pickers.nodeSearch(app, f, x, y, { from: p }), { name: 'use' });
+                add(w('menu.use'), () => G.pickers.nodeSearch(app, f, x, y, { from: p }), { name: 'use' });
                 // A worked-out value, kept as a local (Blueprint's Promote to Variable)
                 if (p.node > 0 && p.local === undefined && !f.keepable(p.node)) {
                     const read = app.editor.doc.statementsReading(f.graph, p.node).length > 0;
-                    add('Keep it as a local', () => f.keepAsLocal(p.node), { name: 'keep-local', summary: 'Worked out once, before the code that reads it', disabled: !read, why: 'Nothing reads it yet' });
+                    add(w('menu.keepLocal'), () => f.keepAsLocal(p.node), { name: 'keep-local', summary: w('menu.keepLocal.summary'), disabled: !read, why: w('why.unread') });
                 }
             } else if (!p.input && p.exec) {
-                add('Add what happens next…', () => G.pickers.nodeSearch(app, f, x, y, { from: p }), { name: 'next' });
+                add(w('menu.next'), () => G.pickers.nodeSearch(app, f, x, y, { from: p }), { name: 'next' });
             } else if (p.node > 0) {
-                add('Add what happens before…', () => G.pickers.nodeSearch(app, f, x, y, { from: p }), { name: 'before' });
+                add(w('menu.before'), () => G.pickers.nodeSearch(app, f, x, y, { from: p }), { name: 'before' });
             }
         }
         return out;
@@ -216,36 +242,36 @@
         if (t.kind === 'wire') {
             // A data wire: a knot on it, or the wire taken away (what it came from stays)
             return menu(x, y, [
-                { label: 'Add a reroute', hint: 'Double-click', section: 1, name: 'reroute', summary: 'A knot to route the wire by', run: () => t.frame.addReroute(t.wire, x, y) },
-                { label: 'Break this link', section: 3, name: 'unlink', run: () => t.frame.breakWire(t.wire) },
-            ], { title: 'Wire', className: 'tg-context' });
+                { ...M('reroute'), section: 1, name: 'reroute', summary: w('menu.reroute.summary'), run: () => t.frame.addReroute(t.wire, x, y) },
+                { ...M('breakLink'), section: 3, name: 'unlink', run: () => t.frame.breakWire(t.wire) },
+            ], { title: w('title.wire'), className: 'tg-context' });
         }
         if (t.kind !== 'pin') select(app, t);
         const items = adds(app, t, x, y);
         const fk = nameOf(app, t);
-        if (fk) items.push({ label: 'Rename', hint: KEY.rename, section: 2, name: 'rename', run: () => app.rename(fk, t) });
+        if (fk) items.push({ ...M('rename'), section: 2, name: 'rename', run: () => app.rename(fk, t) });
         if (t.kind === 'pin') {
             const linked = t.frame.linksOf(t.port).length > 0;
-            items.push({ label: 'Break links', hint: KEY.unlink, section: 3, name: 'unlink', disabled: !linked, why: 'Nothing is linked to it', run: () => t.frame.breakLinks(t.port) });
+            items.push({ ...M('breakLinks'), section: 3, name: 'unlink', disabled: !linked, why: w('why.unlinked'), run: () => t.frame.breakLinks(t.port) });
             items.push(...t.frame.pinExtras(t.port, x, y));
         } else if (t.kind === 'region') {
-            items.push({ label: 'Delete the block', summary: 'What is in it stays, outside it', section: 3, name: 'unwrap', run: () => app.edit(() => { const list = t.item.list; list.splice(list.indexOf(t.item.value), 1, ...(t.item.value.decls || [])); }) });
-            items.push({ label: 'Delete', summary: 'With what is in it', hint: KEY.delete, danger: true, section: 3, name: 'delete', run: () => app.edit(() => { t.item.list.splice(t.item.list.indexOf(t.item.value), 1); }) });
+            items.push({ ...M('unwrap'), summary: w('menu.unwrap.summary'), section: 3, name: 'unwrap', run: () => app.edit(() => { const list = t.item.list; list.splice(list.indexOf(t.item.value), 1, ...(t.item.value.decls || [])); }) });
+            items.push({ ...M('delete'), summary: w('menu.delete.all'), danger: true, section: 3, name: 'delete', run: () => app.edit(() => { t.item.list.splice(t.item.list.indexOf(t.item.value), 1); }) });
         } else {
             const accessor = t.kind === 'frame' && t.item.accessor;
             const copies = !accessor && !(t.kind === 'row' && t.row.role === 'prefabNode');
             if (copies) {
-                items.push({ label: 'Cut', hint: KEY.cut, section: 3, name: 'cut', run: () => app.command('cut') });
-                items.push({ label: 'Copy', hint: KEY.copy, section: 3, name: 'copy', run: () => app.command('copy') });
+                items.push({ ...M('cut'), section: 3, name: 'cut', run: () => app.command('cut') });
+                items.push({ ...M('copy'), section: 3, name: 'copy', run: () => app.command('copy') });
             }
-            if (t.kind !== 'note') items.push({ label: 'Paste', hint: KEY.paste, section: 3, name: 'paste', run: () => app.command('paste') });
-            if (copies) items.push({ label: 'Duplicate', hint: KEY.duplicate, section: 3, name: 'duplicate', run: () => app.command('duplicate') });
-            items.push({ label: 'Delete', hint: KEY.delete, danger: true, section: 3, name: 'delete', run: () => app.command('delete') });
+            if (t.kind !== 'note') items.push({ ...M('paste'), section: 3, name: 'paste', run: () => app.command('paste') });
+            if (copies) items.push({ ...M('duplicate'), section: 3, name: 'duplicate', run: () => app.command('duplicate') });
+            items.push({ ...M('delete'), danger: true, section: 3, name: 'delete', run: () => app.command('delete') });
         }
         const order = noteOrder(app, t);
         if (order) {
             const holder = t.kind === 'row' ? t.row.value : t.kind === 'node' ? t.node : t.item.value;
-            items.push({ label: 'Note…', section: 4, name: 'note', summary: holder.comment ? firstLine(holder.comment) : undefined, run: () => G.cards.editNote(app, holder, order, { x, y }) });
+            items.push({ label: w('menu.note'), section: 4, name: 'note', summary: holder.comment ? firstLine(holder.comment) : undefined, run: () => G.cards.editNote(app, holder, order, { x, y }) });
         }
         // Each section after the one before, as every menu has them
         const sorted = items.map((item, i) => ({ item, i })).sort((a, b) => a.item.section - b.item.section || a.i - b.i).map(x2 => x2.item);
@@ -270,14 +296,14 @@
             case 'node': {
                 const a = t.frame.analysis;
                 const shown = a.merged.has(t.node.id) ? a.byId.get(a.merged.get(t.node.id)) : t.node;
-                if (ed.doc.isGet(shown) || shown.k === 'name') return `Get ${shown.k === 'member' ? shown.member ?? '' : ed.doc.valueText(t.frame.graph, shown.id)}`;
+                if (ed.doc.isGet(shown) || shown.k === 'name') return w('title.get', { name: shown.k === 'member' ? shown.member ?? '' : ed.doc.valueText(t.frame.graph, shown.id) });
                 return s.title(shown.k);
             }
-            case 'note': return 'Note box';
-            case 'pin': return t.port.label || (t.port.exec ? 'Arrow' : 'Pin');
+            case 'note': return w('title.note');
+            case 'pin': return t.port.label || (t.port.exec ? w('title.arrow') : w('title.pin'));
             default: return null;
         }
     }
 
-    G.menus = { contextMenu, targetAt, select, nameOf, addMember, addRow, KEY };
+    G.menus = { contextMenu, targetAt, select, nameOf, addMember, addRow, M };
 })(globalThis.TideGraph = globalThis.TideGraph || {});

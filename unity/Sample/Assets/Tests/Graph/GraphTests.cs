@@ -1009,7 +1009,7 @@ public class GraphTests
         GraphShots.Enter(board.Card(id).Q<TextField>("name"), "Wobble");
         var decl = window.Doc.Get(id);
         Assert.AreEqual("Wobble", decl.Str("name"));
-        StringAssert.StartsWith("A value every one of these has", board.Card(id).Q<Label>(className: "tg-empty")?.text, "an empty card says what goes in it");
+        StringAssert.StartsWith(GraphSchema.Word("card.rows.empty", "what", "x").Split('x')[0], board.Card(id).Q<Label>(className: "tg-rows-empty")?.text, "an empty card says what goes in it");
 
         // The + in its title adds a field, of the first of the common types
         GraphShots.Click(board.Card(id).Q<Button>("add"));
@@ -1126,7 +1126,7 @@ public class GraphTests
         var decl = window.Doc.Get(f);
         Assert.AreEqual("Greet", decl.Str("name"));
         Assert.AreEqual(GraphSchema.Sentence("function", false), frame.Entry.Q<Label>(className: "tg-node-title").text, "its entry reads as its kind's sentence");
-        Assert.AreEqual("Drag from the arrow to add what happens", frame.Q<Label>(className: "tg-frame-hint").text, "an empty frame says what to do");
+        Assert.AreEqual("← " + GraphSchema.Word("frame.empty"), frame.Q<Label>(className: "tg-frame-hint").text, "an empty frame says what to do");
 
         // An input, added from the entry: a row with a pin
         var times = frame.AddParam(null, "int", "read");
@@ -1275,7 +1275,7 @@ public class GraphTests
         other = board.Frame(g);
         var ret = other.Views.Values.Single();
         text = window.Doc.Text;
-        Assert.IsFalse(board.Connect(frame.Entry.ReadPin("count"), ret.Input("value"), out why));
+        Assert.IsFalse(board.Connect(frame.Entry.ReadPin("count"), ret.ExecIn, out why));
         StringAssert.Contains("stays inside its frame", why);
         StringAssert.Contains("Greet", why);
         Assert.AreEqual(text, window.Doc.Text, "nothing changes");
@@ -1399,6 +1399,9 @@ public class GraphTests
 
         // A click on a node selects it, and a drag moves it: where it is is the file's, and Undo's
         var returns = frame.Views[ret];
+        // (where it's seen)
+        window.Reveal(ret);
+        yield return GraphShots.Settle(4);
         var was = GraphDocument.PlaceOf(returns.Node);
         var head = new Vector2(returns.worldBound.x + 60, returns.worldBound.y + 10);
         GraphShots.Click(window, head);
@@ -1513,8 +1516,12 @@ public class GraphTests
 
         // The wheel zooms about the pointer, and F shows everything
         var zoom = board.Zoom;
+        var panned = board.Pan;
         window.SendEvent(new Event { type = EventType.ScrollWheel, mousePosition = inside, delta = new Vector2(0, 3) });
-        Assert.Less(board.Zoom, zoom, "the wheel zooms out");
+        Assert.AreEqual(zoom, board.Zoom, "the wheel looks around");
+        Assert.Less(board.Pan.y, panned.y, "down");
+        window.SendEvent(new Event { type = EventType.ScrollWheel, mousePosition = inside, delta = new Vector2(0, 3), modifiers = EventModifiers.Control });
+        Assert.Less(board.Zoom, zoom, "Ctrl and the wheel zooms out");
         GraphShots.Click(window, empty);
         GraphShots.Press(window, KeyCode.F);
         yield return GraphShots.Settle(2);
@@ -1872,7 +1879,7 @@ public class GraphTests
         GraphShots.Click(board.Frame(5).Views[13].Q<Button>("changes"));
         var picker = window.Popup as GraphValuePicker;
         Assert.IsNotNull(picker, "a click on what a Set changes picks something else");
-        Assert.AreEqual("What does it change?", picker.Title);
+        Assert.AreEqual("What does it change? Something this code can change.", picker.Title);
         window.ClosePopup(picker);
         Assert.AreEqual(text, window.Doc.Text, "looking changes nothing");
         window.Close();
@@ -1948,7 +1955,7 @@ public class GraphTests
         GraphShots.Click(view.Q<Button>("changes"));
         var picker = window.Popup as GraphValuePicker;
         Assert.IsNotNull(picker);
-        Assert.AreEqual("What does it change?", picker.Title);
+        Assert.AreEqual("What does it change? Something this code can change.", picker.Title);
         window.ClosePopup(picker);
         StringAssert.Contains("mut float speed = 1.5;\n    speed += 2;", Lower(window.Doc));
         // Renamed where it's declared, the title follows
@@ -2158,6 +2165,211 @@ public class GraphTests
         Assert.IsTrue(steps.Entries.Any(e => e.Title == "Set count" && e.Statement));
         Assert.IsFalse(steps.Entries.Any(e => e.Title == "Set speed"), "what's only read can't be set");
         window.Close();
+    }
+
+    // ---------------------------------------------------------------------------------------------------------
+    // Round five: one look (notes/visual-scripting.md). The page's features in the window, and what the board drew,
+    // written as the page writes it.
+
+    // The page's toolbar and zoom buttons: Find… jumps to a declaration, ↶ and ↷ are Unity's Undo and Redo, − 100% +
+    // Fit zoom; a deletion says so with an Undo; the wheel looks around (Ctrl: zooms); and the board is drawn in Inter
+    // at the page's sizes
+    [UnityTest]
+    public IEnumerator ThePagesFeaturesAreInTheWindow()
+    {
+        var path = Write("Features.tidegraph", SpinFile);
+        using var logged = new Logged();
+        var window = TideGraphWindow.Open(path);
+        GraphShots.Size(window);
+        window.ShowPanels(false);
+        yield return GraphShots.Settle(6);
+        var board = window.Board;
+        var root = window.rootVisualElement;
+        var text = window.Doc.Text;
+        // Find…: the file's declarations, a pick goes to it
+        var find = window.OpenFind(root.Q<Button>("find"));
+        Assert.IsNotNull(find, "Find… is in the toolbar");
+        CollectionAssert.AreEquivalent(new[] { "Wobble", "Spin" }, find.Shown.Select(o => o.Title).ToList());
+        yield return GraphShots.Take(window, "90-find");
+        Assert.IsTrue(find.Pick("Spin"));
+        Assert.IsTrue(board.Chosen.Contains(5), "it goes to what's picked");
+        // ↶ and ↷: Unity's Undo and Redo
+        board.MoveItemsBy(new GraphItem[] { board.Frame(5) }, new Vector2(30, 0));
+        var moved = window.Doc.Text;
+        GraphShots.Click(root.Q<Button>("undo"));
+        Assert.AreEqual(text, window.Doc.Text, "↶ undoes");
+        GraphShots.Click(root.Q<Button>("redo"));
+        Assert.AreEqual(moved, window.Doc.Text, "↷ redoes");
+        Undo.PerformUndo();
+        Assert.AreEqual(text, window.Doc.Text);
+        // − 100% + Fit
+        var label = root.Q<Button>("zoom-label");
+        GraphShots.Click(label);
+        Assert.AreEqual(1, board.Zoom, 0.001f);
+        Assert.AreEqual("100%", label.text);
+        GraphShots.Click(root.Q<Button>("zoom-in"));
+        Assert.AreEqual(1.25f, board.Zoom, 0.001f);
+        Assert.AreEqual("125%", label.text);
+        GraphShots.Click(root.Q<Button>("zoom-out"));
+        Assert.AreEqual("100%", label.text);
+        GraphShots.Click(root.Q<Button>("zoom-fit"));
+        Assert.AreEqual(Mathf.RoundToInt(board.Zoom * 100) + "%", label.text, "Fit says how near it is");
+        // A deletion says so, with a way back
+        board.SelectNode(board.Frame(5), 18, false);
+        board.DeleteSelection();
+        Assert.AreEqual("Deleted Set", window.LastSaid);
+        var back = root.Q<Button>("toast-action");
+        Assert.AreEqual("Undo", back.text);
+        yield return GraphShots.Take(window, "91-deleted-with-undo");
+        GraphShots.Click(back);
+        Assert.AreEqual(text, window.Doc.Text, "Undo in it undoes");
+        // The page's words for the board's hint
+        Assert.AreEqual(GraphSchema.Word("board.hint"), board.Q<Label>(className: "tg-hint").text);
+        // Inter, at the page's 13px, where the editor has drawn it
+        var hint = board.Q<Label>(className: "tg-hint");
+        if (!float.IsNaN(hint.layout.width) && hint.layout.width > 0)
+        {
+            var font = hint.resolvedStyle.unityFontDefinition;
+            var name = font.fontAsset != null ? font.fontAsset.name : font.font != null ? font.font.name : "";
+            StringAssert.Contains("Inter", name, "the editor's font, the page's");
+            Assert.AreEqual(13, root.Q(className: "tg-root").resolvedStyle.fontSize, "the page's size");
+            Assert.AreEqual(13 * 0.86f, hint.resolvedStyle.fontSize, 0.01f, "0.86em");
+            Assert.AreEqual(13 * 0.92f, board.Frame(5).Views[13].Q(className: "tg-port-label").resolvedStyle.fontSize, 0.01f, "a row's label, 0.92em");
+        }
+        window.Close();
+    }
+
+    // What the board draws for the page's three fixtures is what the page draws (tools/tide-graph/test/drawn): every
+    // box within 4 px, every word and colour the same. Drawn as the page's test draws them: with no language server
+    // answering (a type is only what the file says), in the dark skin, at zoom 1, every card and frame up close.
+    // TIDE_GRAPH_DRAWN names a folder to write what was drawn to. Laying out needs a graphics device: on a run with
+    // none it's skipped (the hidden desktop's run has one).
+    [UnityTest]
+    public IEnumerator TheBoardDrawsWhatThePageDraws()
+    {
+        if (SystemInfo.graphicsDeviceType == UnityEngine.Rendering.GraphicsDeviceType.Null) Assert.Ignore("Nothing is laid out with no graphics device");
+        NeedTidec();
+        var fixtures = new[]
+        {
+            ("spin.tidegraph", Path.Combine("tools", "tide-graph", "test", "spin.tidegraph")),
+            ("shapes.tidegraph", Path.Combine("tools", "tide-graph", "test", "shapes.tidegraph")),
+            ("stars.tidegraph", Path.Combine("docs", "playground", "stars.tidegraph")),
+        };
+        var folder = Environment.GetEnvironmentVariable("TIDE_GRAPH_DRAWN");
+        if (string.IsNullOrEmpty(folder)) folder = Path.Combine(Scratch, "drawn");
+        Directory.CreateDirectory(folder);
+        var was = TideGraphServices.Checker;
+        TideGraphServices.Checker = new Unchecked();
+        var differ = new List<string>();
+        try
+        {
+            foreach (var (name, file) in fixtures)
+            {
+                var path = Write(name, File.ReadAllText(Path.Combine(Repository, file)));
+                var window = TideGraphWindow.Open(path);
+                window.ForceTheme(false);
+                GraphShots.Size(window);
+                window.ShowPanels(false);
+                yield return GraphShots.Settle(6);
+                var board = window.Board;
+                board.AllNear = true;
+                board.ZoomStep(1 / board.Zoom);
+                board.Cull();
+                yield return GraphShots.Settle(10);
+                var drawn = GraphDrawn.Dump(window, name);
+                var json = Path.ChangeExtension(name, ".json");
+                File.WriteAllText(Path.Combine(folder, json), GraphDrawn.Write(drawn), new UTF8Encoding(false));
+                var want = GraphJson.Parse(File.ReadAllText(Path.Combine(Repository, "tools", "tide-graph", "test", "drawn", json)));
+                differ.AddRange(Differences(drawn, want, name));
+                // Its pictures, in dark and in light, as it was drawn: at zoom 1, from its top left
+                var shot = Path.GetFileNameWithoutExtension(name);
+                board.AllNear = false;
+                yield return GraphShots.Take(window, "r6-" + shot);
+                window.ForceTheme(true);
+                window.ShowPanels(false);
+                window.Board.ZoomStep(1 / window.Board.Zoom);
+                yield return GraphShots.Settle(8);
+                yield return GraphShots.Take(window, "r6-" + shot);
+                window.ForceTheme(null);
+                window.Close();
+            }
+        }
+        finally
+        {
+            TideGraphServices.Checker = was;
+        }
+        Assert.IsEmpty(differ, $"{differ.Count} differences from the page (what was drawn is in {folder}):\n" + string.Join("\n", differ.Take(80)));
+    }
+
+    // The board's look is the schema's: a sheet of its variables made for dark and for light; and the package's
+    // dark one, which a Unity that can't make a sheet from text is drawn in, is the same as the schema's
+    [Test]
+    public void TheLooksSheetIsMadeFromTheSchema()
+    {
+        NeedTidec();
+        var dark = GraphLook.LookSheet(false);
+        var light = GraphLook.LookSheet(true);
+        Assert.IsTrue(GraphLook.LookMade, "made from the schema, not the package's dark look");
+        Assert.IsNotNull(dark);
+        Assert.IsNotNull(light);
+        Assert.AreNotSame(dark, light);
+        StringAssert.Contains("--tg-board: " + GraphSchema.LookHex("board", false) + ";", GraphLook.LookText(false));
+        StringAssert.Contains("--tg-board: " + GraphSchema.LookHex("board", true) + ";", GraphLook.LookText(true));
+        var made = GraphLook.LookText(false);
+        var file = Path.Combine(Repository, "unity", "com.tide.unity", "Editor", "Graph", "GraphLookDark.uss");
+        if (File.ReadAllText(file).Replace("\r\n", "\n") == made) return;
+        // (where it's kept after the run: TIDE_GRAPH_DRAWN's folder)
+        var folder = Environment.GetEnvironmentVariable("TIDE_GRAPH_DRAWN");
+        if (!string.IsNullOrEmpty(folder)) Directory.CreateDirectory(folder);
+        var now = Path.Combine(string.IsNullOrEmpty(folder) ? Scratch : folder, "GraphLookDark.uss");
+        File.WriteAllText(now, made, new UTF8Encoding(false));
+        Assert.Fail($"The package's dark look isn't the schema's: {now} is what it should be");
+    }
+
+    // A check that answers with nothing: no types, no calls' parameters, as when no language server is running
+    sealed class Unchecked : ITideGraphChecker
+    {
+        public void Check(string path, string json, Action<GraphCheckResult> done) => done(new GraphCheckResult());
+        public void Closed(string path)
+        {
+        }
+    }
+
+    // Where what was drawn differs from what the page drew: boxes by more than 4 px, anything else at all
+    static IEnumerable<string> Differences(JValue have, JValue want, string name)
+    {
+        foreach (var key in new[] { "frames", "cards", "nodes" })
+        {
+            var mine = have.Arr(key).Items;
+            var theirs = want.Arr(key).Items;
+            string Id(JValue x) => x.Get("id").Number + (key == "nodes" ? "/" + x.Get("frame").Number : "");
+            var ids = mine.Select(Id).ToList();
+            var wanted = theirs.Select(Id).ToList();
+            foreach (var gone in wanted.Except(ids)) yield return $"{name}: {key} {gone} isn't drawn";
+            foreach (var extra in ids.Except(wanted)) yield return $"{name}: {key} {extra} is drawn and the page has none";
+            foreach (var x in mine)
+            {
+                var c = theirs.FirstOrDefault(t => Id(t) == Id(x));
+                if (c == null) continue;
+                var a = x.Arr("box").Items.Select(v => v.Number).ToArray();
+                var b = c.Arr("box").Items.Select(v => v.Number).ToArray();
+                if (a.Length != 4 || a.Where((v, i) => Math.Abs(v - b[i]) > 4).Any())
+                    yield return $"{name}: {key} {Id(x)}'s box [{string.Join(",", a)}], not [{string.Join(",", b)}]";
+                foreach (var field in c.Keys)
+                {
+                    if (field == "box") continue;
+                    var mineText = GraphJson.Write(x.Get(field) ?? JValue.Null());
+                    var theirText = GraphJson.Write(c.Get(field));
+                    if (mineText != theirText) yield return $"{name}: {key} {Id(x)}'s {field} {mineText}, not {theirText}";
+                }
+            }
+        }
+        var wiresHave = have.Arr("wires").Items.Select(w => GraphJson.Write(w)).ToList();
+        var wiresWant = want.Arr("wires").Items.Select(w => GraphJson.Write(w)).ToList();
+        foreach (var w in wiresWant.Except(wiresHave)) yield return $"{name}: a wire isn't drawn: {w}";
+        foreach (var w in wiresHave.Except(wiresWant)) yield return $"{name}: a wire the page hasn't: {w}";
+        if (wiresHave.SequenceEqual(wiresWant) == false && !wiresWant.Except(wiresHave).Any() && !wiresHave.Except(wiresWant).Any())
+            yield return $"{name}: the wires are in another order";
     }
 
     // The same with the pointer, through the window (on a desktop of its own: a run with no graphics device lays

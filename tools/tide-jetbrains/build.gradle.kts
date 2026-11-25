@@ -115,7 +115,7 @@ tasks {
         // The graph editor's page (tools/tide-graph) and the schema it starts with, which TideGraphEditor reads
         from(graphEditor) {
             into("tide-graph")
-            include("files.json", "style.css", "src/**")
+            include("files.json", "style.css", "src/**", "fonts/**")
         }
         from(graphSchema) { into("tide-graph") }
     }

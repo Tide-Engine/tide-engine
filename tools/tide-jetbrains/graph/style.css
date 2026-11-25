@@ -1,95 +1,18 @@
-/* The graph editor's look. Its colours are variables: dark by default, light with .tg-light (JetBrains and the docs
-   set them from their themes), and VS Code's own where the page is in a VS Code webview. */
+/* The graph editor's look. Every colour and size is the schema's (look, compiler/src/graph_schema.json), set as
+   these variables by the page (app.js, applyLook) for dark or light, whichever the host is: no host's own theme
+   colours or font. The font is Inter, shipped with the editor (fonts/, under the SIL Open Font License); a host that
+   puts this file inline gives its url()s a place of its own. */
+@font-face { font-family: "Inter"; font-style: normal; font-weight: 400; font-display: block; src: url("fonts/Inter-Regular.ttf") format("truetype"); }
+@font-face { font-family: "Inter"; font-style: normal; font-weight: 700; font-display: block; src: url("fonts/Inter-Bold.ttf") format("truetype"); }
 :root {
-  --tg-bg: #1e1f22;
-  --tg-panel: #2b2d30;
-  --tg-fg: #dfe1e5;
-  --tg-muted: #8c8f96;
-  --tg-border: #393b40;
-  --tg-accent: #3574f0;
-  --tg-select: #2e436e;
-  --tg-hover: #3a3d43;
-  --tg-input-bg: #1e1f22;
-  --tg-input-fg: var(--tg-fg);
-  --tg-input-border: #4e5157;
-  --tg-node-bg: #2b2d30;
-  --tg-node-border: #43454a;
-  --tg-exec: #e8e8e8;
-  --tg-error: #f75464;
-  --tg-warning: #e0a63b;
-  --tg-ok: #57a96b;
-  --tg-grid: rgba(255, 255, 255, 0.07);
-  --tg-shadow: rgba(0, 0, 0, 0.45);
-  --tg-note: rgba(214, 190, 96, 0.13);
-  --tg-note-border: rgba(214, 190, 96, 0.45);
-  --tg-mark: rgba(53, 116, 240, 0.35);
-  /* What a thing is, by its group: data, behaviour, the rest */
-  --tg-data: #2fa37a;
-  --tg-behaviour: #5b8def;
-  --tg-more: #8a8f98;
-  --tg-font: system-ui, -apple-system, "Segoe UI", sans-serif;
-  --tg-mono: ui-monospace, "JetBrains Mono", Consolas, monospace;
-  --tg-font-size: 13px;
+  --tg-font: "Inter", sans-serif;
   color-scheme: dark;
 }
-:root.tg-light {
-  --tg-bg: #f4f5f7;
-  --tg-panel: #ffffff;
-  --tg-fg: #1e1f22;
-  --tg-muted: #6c707e;
-  --tg-border: #dfe1e6;
-  --tg-select: #d4e2ff;
-  --tg-hover: #eef0f4;
-  --tg-input-bg: #ffffff;
-  --tg-input-border: #c9ccd6;
-  --tg-node-bg: #ffffff;
-  --tg-node-border: #c9ccd6;
-  --tg-exec: #4a4d55;
-  --tg-ok: #2e8b4e;
-  --tg-grid: rgba(0, 0, 0, 0.09);
-  --tg-shadow: rgba(20, 30, 50, 0.14);
-  --tg-note: rgba(214, 170, 40, 0.12);
-  --tg-mark: rgba(53, 116, 240, 0.22);
-  --tg-data: #1f8a64;
-  --tg-behaviour: #3d6fd6;
-  --tg-more: #747986;
-  color-scheme: light;
-}
-body.vscode-light, body.vscode-dark, body.vscode-high-contrast, body.vscode-high-contrast-light {
-  --tg-bg: var(--vscode-editor-background);
-  --tg-panel: var(--vscode-sideBar-background, var(--vscode-editor-background));
-  --tg-fg: var(--vscode-foreground);
-  --tg-muted: var(--vscode-descriptionForeground);
-  --tg-border: var(--vscode-panel-border, var(--vscode-widget-border, #80808040));
-  --tg-accent: var(--vscode-focusBorder);
-  --tg-select: var(--vscode-list-activeSelectionBackground);
-  --tg-hover: var(--vscode-list-hoverBackground);
-  --tg-input-bg: var(--vscode-input-background);
-  --tg-input-fg: var(--vscode-input-foreground);
-  --tg-input-border: var(--vscode-input-border, var(--vscode-panel-border, #80808060));
-  --tg-node-bg: var(--vscode-editorWidget-background);
-  --tg-node-border: var(--vscode-editorWidget-border, var(--vscode-widget-border, #80808060));
-  --tg-error: var(--vscode-errorForeground);
-  --tg-warning: var(--vscode-editorWarning-foreground);
-  --tg-exec: var(--vscode-editor-foreground);
-  --tg-mark: var(--vscode-editor-selectionBackground);
-  --tg-font: var(--vscode-font-family);
-  --tg-mono: var(--vscode-editor-font-family);
-  --tg-font-size: var(--vscode-font-size);
-}
-body.vscode-light, body.vscode-high-contrast-light {
-  --tg-grid: rgba(0, 0, 0, 0.09);
-  --tg-shadow: rgba(20, 30, 50, 0.14);
-  --tg-ok: #2e8b4e;
-  --tg-data: #1f8a64;
-  --tg-behaviour: #3d6fd6;
-  --tg-more: #747986;
-  color-scheme: light;
-}
+:root.tg-light { color-scheme: light; }
 
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; overflow: hidden; }
-body { background: var(--tg-bg); color: var(--tg-fg); font: var(--tg-font-size)/1.35 var(--tg-font); padding: 0; }
+body { background: var(--tg-board); color: var(--tg-text); font: var(--tg-font-size)/var(--tg-line-height) var(--tg-font); padding: 0; }
 button, input, select, textarea { font: inherit; color: inherit; }
 .tg-root { display: grid; grid-template-rows: auto auto minmax(0, 1fr); height: 100vh; height: 100dvh; }
 /* Each in its own row, so the banner gone (display: none) leaves its row empty rather than moving the rest up */
@@ -98,22 +21,22 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .tg-main { grid-row: 3; }
 .tg-grow { flex: 1; }
 .tg-muted { color: var(--tg-muted); }
-.tg-mono { font-family: var(--tg-mono); }
+.tg-mono { font-family: var(--tg-code); }
 
 /* The toolbar */
 .tg-toolbar { display: flex; align-items: center; gap: 6px; padding: 6px 8px; background: var(--tg-panel); border-bottom: 1px solid var(--tg-border); min-width: 0; }
-.tg-button { background: transparent; border: 1px solid var(--tg-border); border-radius: 6px; padding: 3px 10px; cursor: pointer; color: var(--tg-fg); white-space: nowrap; line-height: 20px; }
+.tg-button { background: transparent; border: 1px solid var(--tg-border); border-radius: 6px; padding: 3px 10px; cursor: pointer; color: var(--tg-text); white-space: nowrap; line-height: 20px; }
 .tg-button:hover:not(:disabled) { background: var(--tg-hover); }
 .tg-button:focus-visible, .tg-more:focus-visible, .tg-type:focus-visible, .tg-mode:focus-visible, .tg-add-row:focus-visible, .tg-link:focus-visible, .tg-status:focus-visible, .tg-start-choice:focus-visible { outline: 2px solid var(--tg-accent); outline-offset: 1px; }
 .tg-button:disabled { opacity: 0.4; cursor: default; }
 .tg-button.tg-on { background: var(--tg-select); border-color: transparent; }
-.tg-button.tg-primary { background: var(--tg-accent); border-color: transparent; color: #fff; font-weight: 600; }
+.tg-button.tg-primary { background: var(--tg-accent); border-color: transparent; color: var(--tg-on-accent); font-weight: 600; }
 .tg-button.tg-primary:hover:not(:disabled) { background: color-mix(in srgb, var(--tg-accent) 86%, #fff); }
 .tg-button.tg-tool { border-color: transparent; padding: 3px 8px; font-size: 1.15em; }
 .tg-icon { background: transparent; border: none; cursor: pointer; color: var(--tg-muted); padding: 0 5px; border-radius: 4px; line-height: 18px; }
-.tg-icon:hover { background: var(--tg-hover); color: var(--tg-fg); }
+.tg-icon:hover { background: var(--tg-hover); color: var(--tg-text); }
 .tg-more { background: transparent; border: none; cursor: pointer; color: var(--tg-muted); padding: 0 6px; border-radius: 5px; line-height: 20px; font-size: 1.15em; letter-spacing: 1px; }
-.tg-more:hover { background: var(--tg-hover); color: var(--tg-fg); }
+.tg-more:hover { background: var(--tg-hover); color: var(--tg-text); }
 .tg-link { background: none; border: none; padding: 0 2px; color: var(--tg-accent); cursor: pointer; border-radius: 3px; text-align: left; }
 .tg-link:hover { text-decoration: underline; }
 .tg-sep { width: 1px; height: 18px; background: var(--tg-border); margin: 0 2px; }
@@ -124,7 +47,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .tg-status:hover { background: var(--tg-hover); }
 .tg-status-mark { width: 8px; height: 8px; border-radius: 50%; background: currentColor; flex: none; }
 .tg-status-ok { color: var(--tg-ok); }
-.tg-status-error { color: #fff; background: var(--tg-error); font-weight: 600; }
+.tg-status-error { color: var(--tg-on-accent); background: var(--tg-error); font-weight: 600; }
 .tg-status-error:hover { background: color-mix(in srgb, var(--tg-error) 85%, #000); }
 .tg-status-warning, .tg-status-off { color: var(--tg-warning); }
 .tg-status-quiet .tg-status-mark { animation: tg-pulse 1.1s ease-in-out infinite; }
@@ -157,7 +80,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .tg-mygame-kind { color: var(--tg-muted); font-size: 0.88em; margin-left: auto; }
 .tg-mygame-none { color: var(--tg-muted); padding: 2px 14px 4px; font-size: 0.92em; }
 /* The code in hand's Variables: each dragged onto it to Get or Set it, opening to its fields */
-.tg-mygame-of { text-transform: none; letter-spacing: 0; font-weight: 600; color: var(--tg-fg); overflow: hidden; text-overflow: ellipsis; max-width: 120px; }
+.tg-mygame-of { text-transform: none; letter-spacing: 0; font-weight: 600; color: var(--tg-text); overflow: hidden; text-overflow: ellipsis; max-width: 120px; }
 .tg-mygame-var { gap: 6px; cursor: grab; }
 .tg-var-toggle { width: 16px; flex: none; padding: 0; text-align: center; color: var(--tg-muted); }
 .tg-mygame-var .tg-mygame-name { font-weight: 600; }
@@ -190,7 +113,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .tg-details-tick-label { font-weight: 600; }
 .tg-details-advanced { border-top: 1px solid var(--tg-border); padding-top: 6px; }
 .tg-details-advanced > summary { cursor: pointer; color: var(--tg-muted); font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.06em; padding: 2px 0 6px; }
-.tg-details-advanced[open] > summary { color: var(--tg-fg); }
+.tg-details-advanced[open] > summary { color: var(--tg-text); }
 .tg-details-advanced > :not(summary) + :not(summary) { margin-top: 6px; }
 .tg-details-attributes { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
 .tg-details-buttons { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -200,7 +123,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .tg-hidden { visibility: hidden; }
 
 .tg-board { position: absolute; inset: 0; overflow: hidden; outline: none; cursor: default; touch-action: none;
-  background-color: var(--tg-bg);
+  background-color: var(--tg-board);
   background-image: radial-gradient(circle, var(--tg-grid) 1.2px, transparent 1.4px);
   background-size: var(--tg-grid-size, 24px) var(--tg-grid-size, 24px); }
 .tg-board.tg-panning { cursor: grabbing; }
@@ -232,20 +155,20 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .tg-chip-data { --tg-kind: var(--tg-data); }
 .tg-chip-behaviour { --tg-kind: var(--tg-behaviour); }
 .tg-chip-more, .tg-chip-value { --tg-kind: var(--tg-more); }
-.tg-badge { flex: none; min-width: 18px; text-align: center; border-radius: 9px; padding: 0 5px; font-size: 0.85em; font-weight: 650; line-height: 18px; color: #fff; }
+.tg-badge { flex: none; min-width: 18px; text-align: center; border-radius: 9px; padding: 0 5px; font-size: 0.85em; font-weight: 650; line-height: 18px; color: var(--tg-on-accent); }
 .tg-badge:empty { display: none; }
 .tg-badge-error { background: var(--tg-error); }
 .tg-badge-warning { background: var(--tg-warning); }
 .tg-tags { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; min-width: 0; }
 .tg-card-in > .tg-tags { padding: 0 12px 6px; }
 .tg-tag { font-size: 0.85em; color: var(--tg-muted); border: 1px solid var(--tg-border); border-radius: 999px; padding: 0 7px; line-height: 17px; white-space: nowrap; background: transparent; }
-.tg-tag-attribute { font-family: var(--tg-mono); cursor: pointer; }
-.tg-tag-attribute:hover { color: var(--tg-fg); border-color: var(--tg-muted); }
+.tg-tag-attribute { font-family: var(--tg-code); cursor: pointer; }
+.tg-tag-attribute:hover { color: var(--tg-text); border-color: var(--tg-muted); }
 .tg-comment { color: var(--tg-muted); font-style: italic; padding: 0 12px 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
-.tg-comment:hover { color: var(--tg-fg); }
+.tg-comment:hover { color: var(--tg-text); }
 
 /* Fields edited in place: text until they're hovered or have the focus */
-.tg-input, .tg-select { background: transparent; color: var(--tg-input-fg); border: 1px solid transparent; border-radius: 4px; padding: 1px 5px; min-width: 0; line-height: 18px; }
+.tg-input, .tg-select { background: transparent; color: var(--tg-input-text); border: 1px solid transparent; border-radius: 4px; padding: 1px 5px; min-width: 0; line-height: 18px; }
 .tg-input::placeholder { color: var(--tg-muted); opacity: 0.75; }
 .tg-input:hover, .tg-select:hover { border-color: var(--tg-input-border); }
 .tg-input:focus, .tg-select:focus { outline: none; border-color: var(--tg-accent); background: var(--tg-input-bg); box-shadow: 0 0 0 1px var(--tg-accent); }
@@ -261,24 +184,24 @@ span.tg-name { flex: 0 1 auto; }
 .tg-name-fixed { color: var(--tg-muted); font-weight: normal; font-size: 0.95em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 5px; }
 
 /* A type: a chip that opens the type picker */
-.tg-type { display: inline-flex; align-items: center; gap: 5px; flex: none; max-width: 150px; background: color-mix(in srgb, var(--tg-fg) 7%, transparent); border: 1px solid transparent; border-radius: 5px; padding: 0 7px 0 6px; line-height: 20px; cursor: pointer; white-space: nowrap; font-family: var(--tg-mono); font-size: 0.93em; }
+.tg-type { display: inline-flex; align-items: center; gap: 5px; flex: none; max-width: 150px; background: color-mix(in srgb, var(--tg-text) 7%, transparent); border: 1px solid transparent; border-radius: 5px; padding: 0 7px 0 6px; line-height: 20px; cursor: pointer; white-space: nowrap; font-family: var(--tg-font); font-size: 0.93em; }
 .tg-type:hover { border-color: var(--tg-input-border); background: var(--tg-hover); }
 .tg-type-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .tg-type-name { overflow: hidden; text-overflow: ellipsis; }
 .tg-type.tg-unset { color: var(--tg-muted); font-family: var(--tg-font); font-style: italic; border: 1px dashed var(--tg-input-border); background: transparent; }
 .tg-type-fixed { cursor: default; }
-.tg-type-fixed:hover { border-color: transparent; background: color-mix(in srgb, var(--tg-fg) 7%, transparent); }
+.tg-type-fixed:hover { border-color: transparent; background: color-mix(in srgb, var(--tg-text) 7%, transparent); }
 
 /* A value, by its type's control */
 .tg-value { display: inline-flex; align-items: center; gap: 2px; min-width: 0; flex: 0 1 auto; justify-content: flex-end; }
 .tg-value .tg-input { text-align: right; }
-.tg-value-number { width: 100%; min-width: 30px; max-width: 76px; font-family: var(--tg-mono); font-size: 0.95em; }
+.tg-value-number { width: 100%; min-width: 30px; max-width: 76px; font-family: var(--tg-font); font-size: 0.95em; }
 .tg-value-number::placeholder { font-family: var(--tg-font); }
 .tg-value-text { width: 100%; min-width: 30px; text-align: left !important; }
-.tg-value-char { width: 30px; text-align: center !important; font-family: var(--tg-mono); }
+.tg-value-char { width: 30px; text-align: center !important; font-family: var(--tg-font); }
 .tg-value-bool { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; color: var(--tg-muted); }
 .tg-value-vector { display: inline-flex; gap: 1px; min-width: 0; }
-.tg-value-axis { width: 34px; padding: 1px 2px; font-family: var(--tg-mono); font-size: 0.9em; text-align: center !important; }
+.tg-value-axis { width: 34px; padding: 1px 2px; font-family: var(--tg-font); font-size: 0.9em; text-align: center !important; }
 .tg-value-colour { display: inline-flex; align-items: center; gap: 5px; }
 .tg-value-color { width: 30px; height: 20px; padding: 0; border: 1px solid var(--tg-input-border); border-radius: 4px; background: none; cursor: pointer; }
 .tg-value-colour.tg-unset .tg-value-color { opacity: 0.45; }
@@ -287,12 +210,12 @@ span.tg-name { flex: 0 1 auto; }
 .tg-value-more { visibility: hidden; background: none; border: none; color: var(--tg-muted); cursor: pointer; padding: 0 3px; border-radius: 4px; font-style: italic; font-family: Georgia, serif; }
 .tg-row:hover .tg-value-more, .tg-value:focus-within .tg-value-more { visibility: visible; }
 .tg-value-more:hover { color: var(--tg-accent); background: var(--tg-hover); }
-.tg-value-graph { background: color-mix(in srgb, var(--tg-accent) 14%, transparent); border: 1px solid transparent; border-radius: 5px; padding: 0 7px; line-height: 20px; cursor: pointer; white-space: nowrap; max-width: 130px; overflow: hidden; text-overflow: ellipsis; color: var(--tg-fg); }
+.tg-value-graph { background: color-mix(in srgb, var(--tg-accent) 14%, transparent); border: 1px solid transparent; border-radius: 5px; padding: 0 7px; line-height: 20px; cursor: pointer; white-space: nowrap; max-width: 130px; overflow: hidden; text-overflow: ellipsis; color: var(--tg-text); }
 .tg-value-graph:hover { border-color: var(--tg-accent); }
 .tg-value-graph.tg-unset { background: transparent; border: 1px dashed var(--tg-input-border); color: var(--tg-muted); }
 
 /* A card: a declaration of data */
-.tg-card { position: absolute; width: 300px; background: var(--tg-panel); border: 1px solid var(--tg-node-border); border-radius: 10px; box-shadow: 0 2px 10px var(--tg-shadow); cursor: default; user-select: none; }
+.tg-card { position: absolute; width: var(--tg-card); background: var(--tg-panel); border: 1px solid var(--tg-node-border); border-radius: var(--tg-card-radius); box-shadow: 0 2px 10px var(--tg-shadow); cursor: default; user-select: none; }
 .tg-card.tg-picked, .tg-frame.tg-picked { outline: 2px solid var(--tg-accent); outline-offset: 0; }
 
 .tg-card.tg-card-wrong { border-color: var(--tg-error); }
@@ -305,7 +228,7 @@ span.tg-name { flex: 0 1 auto; }
 .tg-row { display: flex; align-items: center; gap: 6px; min-height: 30px; padding: 2px 6px 2px 4px; border-radius: 6px; position: relative; cursor: grab; }
 .tg-row.tg-row-selected, .tg-entry-row.tg-row-selected { background: color-mix(in srgb, var(--tg-accent) 18%, transparent); }
 .tg-rows-empty { color: var(--tg-muted); padding: 6px 6px 2px; font-style: italic; }
-.tg-row:hover { background: color-mix(in srgb, var(--tg-fg) 5%, transparent); }
+.tg-row:hover { background: color-mix(in srgb, var(--tg-text) 5%, transparent); }
 .tg-row.tg-has-error { background: color-mix(in srgb, var(--tg-error) 14%, transparent); box-shadow: inset 2px 0 0 var(--tg-error); }
 .tg-row.tg-has-warning { box-shadow: inset 2px 0 0 var(--tg-warning); }
 .tg-row-name { flex: 0 1 auto; min-width: 30px; margin-right: auto; }
@@ -327,18 +250,18 @@ input.tg-row-name { flex: 1 1 60px; }
 .tg-prefab-component { display: inline-flex; align-items: center; }
 
 /* Far away, a card or a frame says only its name */
-.tg-far-label { display: none; position: absolute; left: 10px; top: 6px; font-weight: 650; white-space: nowrap; pointer-events: none; font-size: calc(15px * var(--tg-inv, 1)); line-height: 1.15; text-shadow: 0 0 calc(4px * var(--tg-inv, 1)) var(--tg-bg), 0 0 calc(4px * var(--tg-inv, 1)) var(--tg-bg); z-index: 2; }
+.tg-far-label { display: none; position: absolute; left: 10px; top: 6px; font-weight: 650; white-space: nowrap; pointer-events: none; font-size: calc(15px * var(--tg-inv, 1)); line-height: 1.15; text-shadow: 0 0 calc(4px * var(--tg-inv, 1)) var(--tg-board), 0 0 calc(4px * var(--tg-inv, 1)) var(--tg-board); z-index: 2; }
 .tg-far-view .tg-far-label { display: block; }
 .tg-far-view .tg-card-in, .tg-far-view .tg-frame-head > * { visibility: hidden; }
 .tg-far-view .tg-card { min-height: 60px; }
 
 /* A frame: code, with its nodes inside */
-.tg-frame { position: absolute; min-width: 300px; border: 1px solid var(--tg-node-border); border-radius: 14px; background: color-mix(in srgb, var(--tg-panel) 55%, transparent); cursor: default; user-select: none; }
+.tg-frame { position: absolute; min-width: 300px; border: 1px solid var(--tg-node-border); border-radius: var(--tg-frame-radius); background: var(--tg-frame); cursor: default; user-select: none; }
 .tg-frame.tg-frame-wrong { border-color: var(--tg-error); }
-.tg-frame-head { display: flex; align-items: center; gap: 6px; height: 48px; padding: 0 10px 0 14px; cursor: grab; border-bottom: 1px solid color-mix(in srgb, var(--tg-node-border) 55%, transparent); min-width: 0; }
+.tg-frame-head { display: flex; align-items: center; gap: 6px; height: var(--tg-frame-head); padding: 0 10px 0 14px; cursor: grab; border-bottom: 1px solid color-mix(in srgb, var(--tg-node-border) 55%, transparent); min-width: 0; }
 .tg-frame-head .tg-name { flex: 0 1 auto; }
 .tg-frame-title { font-weight: 650; font-size: 1.1em; white-space: nowrap; }
-.tg-frame-owner { font-weight: 650; font-size: 1.1em; color: var(--tg-fg); }
+.tg-frame-owner { font-weight: 650; font-size: 1.1em; color: var(--tg-text); }
 .tg-frame-dot { color: var(--tg-muted); margin: 0 -5px 0 -7px; }
 .tg-frame-body { position: relative; cursor: default; }
 .tg-panning, .tg-panning .tg-frame-body { cursor: grabbing; }
@@ -367,14 +290,14 @@ input.tg-row-name { flex: 1 1 60px; }
 .tg-region-head .tg-name { flex: none; }
 
 /* Nodes */
-.tg-node { position: absolute; min-width: 110px; background: var(--tg-node-bg); border: 1px solid var(--tg-node-border); border-radius: 8px; box-shadow: 0 1px 5px var(--tg-shadow); user-select: none; cursor: grab; }
+.tg-node { position: absolute; min-width: 110px; background: var(--tg-node); border: 1px solid var(--tg-node-border); border-radius: var(--tg-radius); box-shadow: 0 1px 5px var(--tg-shadow); user-select: none; cursor: grab; }
 .tg-node.tg-selected { outline: 2px solid var(--tg-accent); outline-offset: 1px; }
 .tg-node.tg-dim { opacity: 0.55; }
 .tg-node.tg-has-error { border-color: var(--tg-error); box-shadow: 0 0 0 1.5px var(--tg-error), 0 1px 5px var(--tg-shadow); }
 .tg-node.tg-has-warning { border-color: var(--tg-warning); box-shadow: 0 0 0 1px var(--tg-warning); }
-.tg-node-header { display: flex; align-items: center; gap: 4px; min-height: 24px; padding: 1px 6px 1px 8px; border-radius: 7px 7px 0 0; white-space: nowrap;
-  background: color-mix(in srgb, var(--tg-cat, #5c6170) 26%, var(--tg-node-bg)); border-left: 3px solid var(--tg-cat, #5c6170); }
-.tg-node-header:last-child { border-radius: 7px; }
+.tg-node-header { display: flex; align-items: center; gap: 4px; min-height: var(--tg-header); padding: 1px 6px 1px var(--tg-header-padding); border-radius: calc(var(--tg-radius) - 1px) calc(var(--tg-radius) - 1px) 0 0; white-space: nowrap;
+  background: var(--tg-head, var(--tg-node)); border-left: var(--tg-category-bar) solid var(--tg-cat, var(--tg-muted)); }
+.tg-node-header:last-child { border-radius: calc(var(--tg-radius) - 1px); }
 /* A node says what it does in its own words: "Set", "ball.Bounce", "Multiply" */
 .tg-node-title { font-weight: 650; }
 .tg-node-dot { color: var(--tg-muted); font-weight: 650; margin: 0 -8px 0 -5px; }
@@ -393,17 +316,17 @@ span.tg-node-input { overflow: hidden; text-overflow: ellipsis; white-space: now
 .tg-field-label { color: var(--tg-muted); font-size: 0.9em; }
 .tg-node-unknown { color: var(--tg-warning); max-width: 220px; padding: 4px 8px; white-space: normal; }
 .tg-node-ports { display: flex; justify-content: space-between; gap: 14px; padding: 3px 0 5px; }
-.tg-col { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.tg-col { display: flex; flex-direction: column; gap: var(--tg-row-gap); min-width: 0; }
 .tg-col-out { align-items: flex-end; margin-left: auto; }
-.tg-port { display: flex; align-items: center; gap: 5px; padding: 0 8px; min-height: 20px; cursor: crosshair; white-space: nowrap; color: var(--tg-muted); font-size: 0.92em; }
+.tg-port { display: flex; align-items: center; gap: 5px; padding: 0 var(--tg-padding); min-height: var(--tg-row); cursor: crosshair; white-space: nowrap; color: var(--tg-muted); font-size: 0.92em; }
 .tg-port.tg-in { margin-left: -6px; }
 .tg-port.tg-out { margin-right: -6px; }
-.tg-port:hover, .tg-port.tg-target { color: var(--tg-fg); }
+.tg-port:hover, .tg-port.tg-target { color: var(--tg-text); }
 /* An input with its value in it (a number, a name, a path of fields), or nothing yet: part of its node, not a place
    a wire starts from. Its pin is a small ring a wire can still be dropped on. */
-.tg-port.tg-inline { cursor: inherit; color: var(--tg-fg); min-height: 22px; }
+.tg-port.tg-inline { cursor: inherit; color: var(--tg-text); min-height: 22px; }
 .tg-port.tg-inline .tg-port-label { color: var(--tg-muted); }
-.tg-dot.tg-dot-empty { background: var(--tg-node-bg) !important; box-shadow: 0 0 0 1.5px var(--tg-muted) !important; opacity: 0.9; }
+.tg-dot.tg-dot-empty { background: var(--tg-node) !important; box-shadow: 0 0 0 1.5px var(--tg-muted) !important; opacity: 0.9; }
 .tg-port .tg-dot:not(.tg-dot-exec) { cursor: crosshair; }
 .tg-title-port { padding: 0; margin: 0 0 0 -14px !important; min-height: 0; font-size: 1em; gap: 5px; }
 .tg-wiring .tg-port.tg-cannot { opacity: 0.32; }
@@ -414,7 +337,7 @@ span.tg-node-input { overflow: hidden; text-overflow: ellipsis; white-space: now
 .tg-port.tg-has-error .tg-pick { color: var(--tg-error); border-color: var(--tg-error); }
 .tg-inline-value { display: inline-flex; align-items: center; gap: 2px; min-width: 0; }
 .tg-inline-number, .tg-inline-text { padding: 0 5px; line-height: 18px; min-width: 3ch; max-width: 200px; background: var(--tg-input-bg); border-color: var(--tg-input-border); border-radius: 5px; }
-.tg-inline-number { font-family: var(--tg-mono); font-size: 0.95em; }
+.tg-inline-number { font-family: var(--tg-font); font-size: 0.95em; }
 .tg-inline-quote { color: var(--tg-muted); }
 .tg-inline-vector { gap: 3px; }
 .tg-inline-axis { min-width: 2.5ch; max-width: 9ch; text-align: right; }
@@ -428,10 +351,10 @@ span.tg-node-input { overflow: hidden; text-overflow: ellipsis; white-space: now
 .tg-row-empty:hover { color: var(--tg-error); }
 /* A name or a path of fields, in its type's colour: each part is a button that changes the path from there */
 .tg-path { display: inline-flex; align-items: center; border-radius: 999px; padding: 0 7px 0 6px; line-height: 18px; white-space: nowrap;
-  background: color-mix(in srgb, var(--tg-type, var(--tg-muted)) 16%, var(--tg-node-bg)); border: 1px solid color-mix(in srgb, var(--tg-type, var(--tg-muted)) 50%, transparent); }
+  background: color-mix(in srgb, var(--tg-type, var(--tg-muted)) 16%, var(--tg-node)); border: 1px solid color-mix(in srgb, var(--tg-type, var(--tg-muted)) 50%, transparent); }
 .tg-path-dot { width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; flex: none; background: var(--tg-muted); }
 .tg-path-sep { color: var(--tg-muted); padding: 0 1px; }
-.tg-path-part { background: none; border: none; padding: 0; margin: 0; color: var(--tg-fg); font: inherit; font-weight: 600; cursor: pointer; border-radius: 3px; }
+.tg-path-part { background: none; border: none; padding: 0; margin: 0; color: var(--tg-text); font: inherit; font-weight: 600; cursor: pointer; border-radius: 3px; }
 .tg-path-part:hover, .tg-path-part:focus-visible { color: var(--tg-accent); text-decoration: underline; outline: none; }
 /* In a node's title it reads as part of the name: ball.Bounce, Math.Abs */
 .tg-node-header .tg-path { background: none; border-color: transparent; padding: 0; line-height: 20px; }
@@ -448,53 +371,53 @@ span.tg-node-input { overflow: hidden; text-overflow: ellipsis; white-space: now
 .tg-head-port { padding: 0; min-height: 0; }
 .tg-head-port.tg-in { margin-left: -14px; margin-right: 2px; }
 .tg-head-port.tg-out { margin-right: -12px; margin-left: 2px; }
-.tg-port-add { background: none; border: none; color: var(--tg-muted); cursor: pointer; padding: 0 8px; text-align: left; font-size: 0.88em; line-height: 18px; border-radius: 4px; visibility: hidden; }
+.tg-port-add { background: none; border: none; color: var(--tg-muted); cursor: pointer; padding: 0 8px; text-align: left; white-space: nowrap; font-size: 0.88em; line-height: 18px; border-radius: 4px; visibility: hidden; }
 .tg-node:hover .tg-port-add, .tg-node.tg-selected .tg-port-add, .tg-lambda-params .tg-port-add { visibility: visible; }
 .tg-port-add:hover { color: var(--tg-accent); }
 .tg-port-add-inline { padding: 0 5px; margin: 0 -4px 0 0; font-size: 1.05em; line-height: 16px; }
-.tg-dot { width: 11px; height: 11px; border-radius: 50%; border: 2px solid var(--tg-node-bg); background: var(--tg-muted); box-shadow: 0 0 0 1px var(--tg-muted); flex: none; opacity: 0.75; }
+.tg-dot { width: var(--tg-pin); height: var(--tg-pin); border-radius: 50%; border: var(--tg-pin-border) solid var(--tg-node); background: var(--tg-muted); box-shadow: 0 0 0 1px var(--tg-muted); flex: none; opacity: 0.75; }
 .tg-dot.tg-wired { opacity: 1; }
 /* An exec pin is an arrow */
 .tg-dot-exec { width: 0; height: 0; border-radius: 0; background: none !important; box-shadow: none !important; opacity: 1; border: 6px solid transparent; border-left: 9px solid var(--tg-exec); border-right: 0; }
 .tg-port:hover .tg-dot-exec, .tg-port.tg-target .tg-dot-exec { box-shadow: none !important; border-left-color: var(--tg-accent); }
-.tg-op { font-family: var(--tg-mono); height: 20px; }
-.tg-op-button { background: var(--tg-input-bg); color: var(--tg-fg); border: 1px solid var(--tg-input-border); border-radius: 5px; padding: 0 6px; min-width: 26px; line-height: 17px; cursor: pointer; font-size: 0.95em; font-weight: 600; }
+.tg-op { font-family: var(--tg-font); height: 20px; }
+.tg-op-button { background: var(--tg-input-bg); color: var(--tg-text); border: 1px solid var(--tg-input-border); border-radius: 5px; padding: 0 6px; min-width: 26px; line-height: 17px; cursor: pointer; font-size: 0.95em; font-weight: 600; }
 .tg-op-button:hover, .tg-op-button:focus-visible { border-color: var(--tg-accent); color: var(--tg-accent); outline: none; }
-.tg-op-title { font: inherit; font-weight: 650; height: 22px; padding: 0 5px; margin-left: -3px; background: transparent; border: 1px solid transparent; border-radius: 5px; color: var(--tg-fg); cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+.tg-op-title { font: inherit; font-weight: 650; height: 22px; padding: 0 5px; margin-left: -3px; background: transparent; border: 1px solid transparent; border-radius: 5px; color: var(--tg-text); cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
 .tg-op-title:hover, .tg-op-title:focus-visible { border-color: var(--tg-input-border); background: var(--tg-input-bg); outline: none; }
-.tg-op-sign { font-family: var(--tg-mono); color: var(--tg-muted); font-weight: 600; }
+.tg-op-sign { font-family: var(--tg-font); color: var(--tg-muted); font-weight: 600; }
 .tg-lambda-params { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 2px; }
 .tg-lambda-param { display: inline-flex; align-items: center; }
 
 /* A value with nothing wired in: a small pill */
-.tg-chipnode { min-width: 0; border-radius: 999px; border-left: 3px solid var(--tg-cat, #5c6170); }
-.tg-chip-row { padding: 2px 8px 2px 8px; min-height: 24px; margin-right: -6px !important; cursor: grab; color: var(--tg-fg); gap: 4px; }
+.tg-chipnode { min-width: 0; border-radius: 999px; border-left: var(--tg-category-bar) solid var(--tg-cat, var(--tg-muted)); }
+.tg-chip-row { padding: 2px 8px 2px 8px; min-height: 24px; margin-right: -6px !important; cursor: grab; color: var(--tg-text); gap: 4px; }
 .tg-chip-row .tg-dot { cursor: crosshair; }
 
 /* A Get (Blueprint's variable node): no title bar, the variable's name and its value pin, in its type's colour; a
    field of something has its Target pin on the left */
 .tg-node.tg-get { min-width: 0; border-radius: 999px; border: 1px solid color-mix(in srgb, var(--tg-type) 55%, var(--tg-node-border));
-  background: color-mix(in srgb, var(--tg-type) 14%, var(--tg-node-bg)); }
-.tg-get-row { display: flex; align-items: center; gap: 6px; min-height: 26px; padding: 0 0 0 12px; white-space: nowrap; }
+  background: color-mix(in srgb, var(--tg-type) 14%, var(--tg-node)); }
+.tg-get-row { display: flex; align-items: center; gap: 6px; min-height: var(--tg-get); padding: 0 0 0 var(--tg-get-padding); white-space: nowrap; }
 .tg-get-member .tg-get-row { padding-left: 0; }
-.tg-get-name { font-weight: 650; color: var(--tg-fg); }
+.tg-get-name { font-weight: 650; color: var(--tg-text); }
 .tg-get-row > .tg-port.tg-in { margin-left: -6px; padding-right: 0; }
 .tg-get-row > .tg-port.tg-in .tg-port-label { font-size: 0.86em; }
-.tg-get-out { padding: 0 8px 0 2px; min-height: 26px; }
+.tg-get-out { padding: 0 var(--tg-padding) 0 2px; min-height: var(--tg-get); }
 .tg-get .tg-get-out .tg-dot { background: var(--tg-type); box-shadow: 0 0 0 1px var(--tg-type); }
 .tg-node.tg-get.tg-lit { box-shadow: 0 0 0 2px var(--tg-accent), 0 1px 5px var(--tg-shadow); }
 .tg-set-target.tg-lit { box-shadow: 0 0 0 2px var(--tg-accent); }
 
 /* A reroute: a knot on a wire, its input and output pins either side of a dot that drags it */
-.tg-node.tg-knot { min-width: 0; display: flex; align-items: center; gap: 0; padding: 0; background: none; border: none; box-shadow: none; height: 18px; }
-.tg-knot .tg-port { padding: 0; margin: 0 !important; min-height: 18px; }
-.tg-knot .tg-dot { width: 8px; height: 8px; border-width: 1px; }
-.tg-knot-body { width: 14px; height: 14px; border-radius: 50%; background: var(--tg-type); box-shadow: 0 0 0 2px var(--tg-node-bg), 0 1px 4px var(--tg-shadow); cursor: grab; margin: 0 1px; }
+.tg-node.tg-knot { min-width: 0; display: flex; align-items: center; gap: 0; padding: 0; background: none; border: none; box-shadow: none; height: var(--tg-knot); }
+.tg-knot .tg-port { padding: 0; margin: 0 !important; min-height: var(--tg-knot); }
+.tg-knot .tg-dot { width: var(--tg-knot-pin); height: var(--tg-knot-pin); border-width: 1px; }
+.tg-knot-body { width: var(--tg-knot-body); height: var(--tg-knot-body); border-radius: 50%; background: var(--tg-type); box-shadow: 0 0 0 2px var(--tg-node), 0 1px 4px var(--tg-shadow); cursor: grab; margin: 0 1px; }
 .tg-node.tg-knot.tg-selected { outline: none; }
 .tg-node.tg-knot.tg-selected .tg-knot-body { box-shadow: 0 0 0 2px var(--tg-accent); }
 
 /* What a Set changes, in its title: "Set score" */
-.tg-set-target { font: inherit; font-weight: 650; color: var(--tg-fg); background: none; border: 1px solid transparent; border-radius: 5px; padding: 0 4px; margin-left: -2px; height: 22px; cursor: pointer;
+.tg-set-target { font: inherit; font-weight: 650; color: var(--tg-text); background: none; border: 1px solid transparent; border-radius: 5px; padding: 0 4px; margin-left: -2px; height: 22px; cursor: pointer;
   text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--tg-type, var(--tg-muted)) 80%, transparent); text-decoration-thickness: 2px; text-underline-offset: 3px; }
 .tg-set-target:hover, .tg-set-target:focus-visible { border-color: var(--tg-input-border); background: var(--tg-input-bg); outline: none; }
 /* What a call is called on when it's a type or a namespace: "Math" beneath "Clamp" (Blueprint's Target is Math) */
@@ -511,12 +434,12 @@ span.tg-node-input { overflow: hidden; text-overflow: ellipsis; white-space: now
 
 /* The entry of a frame: what its code takes, each with a pin to wire from, and the arrow it starts from */
 .tg-node.tg-entry { border-radius: 10px; border-color: color-mix(in srgb, var(--tg-behaviour) 55%, var(--tg-node-border)); cursor: grab; }
-.tg-entry-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 32px; padding: 0 0 0 12px; border-radius: 9px 9px 0 0; background: color-mix(in srgb, var(--tg-behaviour) 16%, var(--tg-node-bg)); }
+.tg-entry-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 32px; padding: 0 0 0 12px; border-radius: 9px 9px 0 0; background: var(--tg-head-entry); }
 .tg-entry-sentence { font-weight: 650; }
 .tg-entry-start { min-height: 32px; margin-right: -8px !important; }
 .tg-entry-rows { display: flex; flex-direction: column; padding: 4px 0 6px 6px; }
-.tg-entry-row { display: flex; align-items: center; gap: 6px; min-height: 30px; padding: 0 0 0 4px; border-radius: 6px 0 0 6px; }
-.tg-entry-row:hover { background: color-mix(in srgb, var(--tg-fg) 5%, transparent); }
+.tg-entry-row { display: flex; align-items: center; gap: 6px; min-height: var(--tg-entry-row); padding: 0 0 0 4px; border-radius: 6px 0 0 6px; }
+.tg-entry-row:hover { background: color-mix(in srgb, var(--tg-text) 5%, transparent); }
 .tg-entry-row.tg-has-error { background: color-mix(in srgb, var(--tg-error) 14%, transparent); box-shadow: inset 2px 0 0 var(--tg-error); }
 .tg-entry-sub { margin-left: 18px; }
 .tg-entry-name { flex: 1 1 auto; min-width: 30px; }
@@ -525,19 +448,19 @@ span.tg-node-input { overflow: hidden; text-overflow: ellipsis; white-space: now
 .tg-entry-result { border-top: 1px dashed var(--tg-border); margin-top: 4px; padding-top: 2px; border-radius: 0; }
 .tg-entry-note { color: var(--tg-muted); padding: 4px 8px; }
 .tg-entry-rows > .tg-add-row { margin-left: 2px; }
-.tg-mode { flex: none; background: color-mix(in srgb, var(--tg-behaviour) 16%, transparent); color: var(--tg-fg); border: 1px solid transparent; border-radius: 5px; padding: 0 6px; line-height: 20px; cursor: pointer; white-space: nowrap; font-size: 0.93em; }
+.tg-mode { flex: none; background: color-mix(in srgb, var(--tg-behaviour) 16%, transparent); color: var(--tg-text); border: 1px solid transparent; border-radius: 5px; padding: 0 6px; line-height: 20px; cursor: pointer; white-space: nowrap; font-size: 0.93em; }
 .tg-mode:hover { border-color: var(--tg-behaviour); }
 .tg-mode-fixed { background: transparent; color: var(--tg-muted); cursor: default; padding: 0 2px; }
 .tg-mode-fixed:hover { border-color: transparent; }
 .tg-pin { padding: 0 0 0 4px; margin-right: -7px !important; min-height: 30px; flex: none; }
-.tg-col-out .tg-pin { padding: 0 8px; margin-right: -6px !important; min-height: 20px; color: var(--tg-fg); font-weight: 600; }
+.tg-col-out .tg-pin { padding: 0 8px; margin-right: -6px !important; min-height: 20px; color: var(--tg-text); font-weight: 600; }
 .tg-node.tg-result { border-radius: 10px; min-width: 120px; padding-bottom: 5px; cursor: default; border-color: var(--tg-accent); }
 .tg-node.tg-result .tg-node-header { margin-bottom: 4px; }
 
 .tg-note { position: absolute; background: var(--tg-note); border: 1px solid var(--tg-note-border); border-radius: 6px; overflow: hidden; cursor: grab; }
 .tg-note.tg-selected { outline: 2px solid var(--tg-accent); }
 .tg-note-bar { height: 14px; background: var(--tg-note-border); opacity: 0.5; }
-.tg-note-text { padding: 6px 8px; white-space: pre-wrap; color: var(--tg-fg); height: calc(100% - 14px); overflow: hidden; }
+.tg-note-text { padding: 6px 8px; white-space: pre-wrap; color: var(--tg-text); height: calc(100% - 14px); overflow: hidden; }
 .tg-note-edit { width: 100%; height: calc(100% - 14px) !important; border: none !important; background: transparent !important; padding: 6px 8px; resize: none !important; }
 .tg-note-size { position: absolute; right: 0; bottom: 0; width: 12px; height: 12px; cursor: nwse-resize; background: linear-gradient(135deg, transparent 50%, var(--tg-note-border) 50%); }
 
@@ -574,7 +497,7 @@ span.tg-node-input { overflow: hidden; text-overflow: ellipsis; white-space: now
 .tg-picker-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tg-picker-detail { margin-left: auto; color: var(--tg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 55%; font-size: 0.9em; }
 .tg-picker-summary { color: var(--tg-muted); font-size: 0.92em; }
-.tg-picker-tag { background: var(--tg-error); color: #fff; border-radius: 9px; padding: 0 6px; font-size: 0.85em; }
+.tg-picker-tag { background: var(--tg-error); color: var(--tg-on-accent); border-radius: 9px; padding: 0 6px; font-size: 0.85em; }
 .tg-picker-none { color: var(--tg-muted); padding: 8px; }
 .tg-picker-note { color: var(--tg-muted); font-size: 0.88em; white-space: nowrap; }
 .tg-picker-drill { color: var(--tg-muted); font-size: 1.25em; line-height: 1; padding: 0 4px 2px 8px; border-radius: 4px; }
@@ -599,7 +522,7 @@ span.tg-node-input { overflow: hidden; text-overflow: ellipsis; white-space: now
 .tg-problem-note { color: var(--tg-muted); font-size: 0.93em; }
 .tg-problem-where { color: var(--tg-muted); white-space: nowrap; font-size: 0.9em; max-width: 40%; overflow: hidden; text-overflow: ellipsis; }
 .tg-problems-none { padding: 8px 10px; color: var(--tg-muted); display: flex; flex-direction: column; gap: 4px; }
-.tg-problems-none strong { color: var(--tg-fg); }
+.tg-problems-none strong { color: var(--tg-text); }
 
 .tg-tooltip { position: fixed; z-index: 40; display: none; max-width: 420px; background: var(--tg-panel); border: 1px solid var(--tg-border); border-radius: 6px; padding: 6px 9px; white-space: pre-wrap; box-shadow: 0 4px 14px var(--tg-shadow); pointer-events: none; font-size: 0.95em; }
 .tg-tooltip-problem { border-color: var(--tg-error); }
@@ -607,7 +530,7 @@ span.tg-node-input { overflow: hidden; text-overflow: ellipsis; white-space: now
 .tg-tip-problem + .tg-tip-problem, .tg-tip-note + .tg-tip-problem { margin-top: 6px; }
 .tg-tip-problem { font-weight: 600; }
 .tg-tip-note { color: var(--tg-muted); margin-top: 3px; }
-.tg-toast { position: fixed; left: 50%; bottom: 22px; transform: translate(-50%, 12px); z-index: 50; display: flex; align-items: center; gap: 12px; max-width: min(560px, calc(100vw - 24px)); background: var(--tg-fg); color: var(--tg-bg); border-radius: 10px; padding: 8px 14px; box-shadow: 0 6px 24px var(--tg-shadow); opacity: 0; pointer-events: none; transition: opacity 0.15s ease, transform 0.15s ease; }
+.tg-toast { position: fixed; left: 50%; bottom: 22px; transform: translate(-50%, 12px); z-index: 50; display: flex; align-items: center; gap: 12px; max-width: min(560px, calc(100vw - 24px)); background: var(--tg-text); color: var(--tg-board); border-radius: 10px; padding: 8px 14px; box-shadow: 0 6px 24px var(--tg-shadow); opacity: 0; pointer-events: none; transition: opacity 0.15s ease, transform 0.15s ease; }
 .tg-toast-shown { opacity: 1; transform: translate(-50%, 0); pointer-events: auto; }
 .tg-toast-action { background: none; border: none; color: inherit; font-weight: 700; cursor: pointer; text-decoration: underline; padding: 0; white-space: nowrap; }
 
@@ -638,3 +561,16 @@ span.tg-node-input { overflow: hidden; text-overflow: ellipsis; white-space: now
   .tg-zoom-label { display: none; }
   .tg-row-remove, .tg-value-more, .tg-node-more, .tg-port-add { visibility: visible; }
 }
+
+/* A problem's words, written out under what it's about (a row, a node's foot, a frame's or a card's title) */
+.tg-problem-text { color: var(--tg-error); font-size: var(--tg-small); line-height: 1.3; padding: 2px var(--tg-padding) 3px; white-space: normal; max-width: 280px; }
+.tg-problem-text-warning { color: var(--tg-warning); }
+.tg-problem-above { position: absolute; bottom: 100%; left: 10px; }
+.tg-problem-above .tg-problem-text { max-width: none; white-space: nowrap; }
+.tg-problems-heading { color: var(--tg-muted); font-size: var(--tg-small); text-transform: uppercase; letter-spacing: 0.06em; padding: 8px 10px 2px; }
+/* How the board works: every key and gesture */
+.tg-help { padding: 10px 12px; max-width: 560px; }
+.tg-help-title { font-weight: 700; margin-bottom: 6px; }
+.tg-help-rows { display: grid; grid-template-columns: minmax(180px, auto) 1fr; gap: 4px 18px; }
+.tg-help-row { display: contents; }
+.tg-help-keys { color: var(--tg-muted); }

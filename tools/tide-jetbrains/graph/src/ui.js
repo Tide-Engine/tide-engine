@@ -50,7 +50,7 @@
     // A text input edited where it's drawn: it looks like text until it's hovered or has the focus, commits on Enter,
     // Tab and on leaving it, and goes back on Escape. `check(value)` gives why a value can't be (it's then shown red
     // with the reason, and not committed); `fk` names it, so the focus comes back to it after the page draws again.
-    function field(value, commit, { placeholder, className = 'tg-input', multiline = false, rows = 3, title, check, fk, onEnter, size, grow = false, mono = false } = {}) {
+    function field(value, commit, { placeholder, className = 'tg-input', multiline = false, rows = 3, title, check, fk, onEnter, size, grow = false, mono = false, clean = check && check === G.cards?.checkName ? G.cards.cleanName : null } = {}) {
         const input = multiline ? el('textarea.' + className, { rows, placeholder, title, spellcheck: 'false' })
             : el('input.' + className, { type: 'text', placeholder, title, spellcheck: 'false', autocomplete: 'off' });
         if (mono) input.classList.add('tg-mono');
@@ -65,7 +65,8 @@
             input.style.width = `calc(${Math.max(grow, (input.value || placeholder || '').length + 1)}ch + 12px)`;
         };
         fit();
-        const why = () => (check ? check(input.value) : null);
+        // A name is cleaned up rather than refused ("my speed" is mySpeed): what's checked is what will be kept
+        const why = () => (check ? check(clean ? clean(input.value) : input.value) : null);
         const show = () => {
             const reason = why();
             input.classList.toggle('tg-invalid', !!reason);
@@ -73,6 +74,7 @@
             return reason;
         };
         const done = () => {
+            if (clean && input.value !== start) input.value = clean(input.value);
             if (input.value === start) return true;
             if (show()) return false;
             start = input.value;
@@ -121,8 +123,8 @@
     // A name that reads as text and is part of what it's on (a press on it selects and drags its card, frame or
     // node), renamed by a double click, F2 or Rename in its menu: it then becomes a field() until Enter, Tab, Escape
     // or a click elsewhere. `rename(select)` starts it (the board's focusSoon does, for a new thing's name).
-    function nameText(value, commit, { className = 'tg-name', placeholder = 'Name', check, fk, onEnter, title, grow = 4 } = {}) {
-        const span = el('span.' + className + '.tg-renamable', { title: title ?? 'Double-click to rename (F2)' });
+    function nameText(value, commit, { className = 'tg-name', placeholder = G.w('placeholder.name'), check, fk, onEnter, title, grow = 4 } = {}) {
+        const span = el('span.' + className + '.tg-renamable', { title: title ?? G.w('name.tip') });
         span.dataset.rename = '1';
         if (fk) span.dataset.fk = fk;
         const show = v => {
@@ -311,8 +313,8 @@
     // `drill` opens to more (a value's fields): its arrow, the right arrow key or a typed '.' calls `onDrill(entry)`,
     // and Backspace in an empty box `onBack()`; `reset({ entries, more, title, placeholder })` shows another list in
     // the same popup. An entry with `typed` is shown only once something is typed, one with `untyped` only before.
-    function picker({ x = 0, y = 0, anchor = null, placeholder = 'Search…', title = null, entries = [], more = null, status = null, onPick, onClose,
-        empty = 'Nothing by that name', typed = '', keep = false, width = null, className = '', footer = null, free = null, onDrill = null, onBack = null }) {
+    function picker({ x = 0, y = 0, anchor = null, placeholder = G.w('value.search'), title = null, entries = [], more = null, status = null, onPick, onClose,
+        empty = G.w('mygame.noMatch'), typed = '', keep = false, width = null, className = '', footer = null, free = null, onDrill = null, onBack = null }) {
         const input = el('input.tg-input.tg-picker-input', { type: 'text', placeholder, spellcheck: 'false', autocomplete: 'off' });
         input.value = typed;
         const list = el('div.tg-picker-list', { role: 'listbox' });
@@ -344,7 +346,7 @@
             if (made && made.last) shown.push(made);
             else if (made) shown.unshift(made);
             chosen = Math.min(chosen, Math.max(0, shown.length - 1));
-            statusEl.textContent = asking ? (status || 'Asking tidels…') : '';
+            statusEl.textContent = asking ? (status || G.w('picker.asking')) : '';
             statusEl.style.display = statusEl.textContent ? 'block' : 'none';
             list.replaceChildren();
             let group = null;
@@ -371,7 +373,7 @@
                     e.summary ? el('span.tg-picker-summary', { text: e.summary }) : null),
                 e.tag ? el('span.tg-picker-tag', { text: e.tag }) : null,
                 e.note ? el('span.tg-picker-note', { text: e.note }) : null,
-                e.drill && onDrill ? el('span.tg-picker-drill', { text: '›', title: 'What it has', onclick: ev => { ev.stopPropagation(); onDrill(e); } }) : null);
+                e.drill && onDrill ? el('span.tg-picker-drill', { text: '›', title: G.w('picker.drill'), onclick: ev => { ev.stopPropagation(); onDrill(e); } }) : null);
                 list.append(row);
             });
             if (!shown.length && !asking) list.append(el('div.tg-picker-none', { text: typeof empty === 'function' ? empty(text) : empty }));
@@ -481,18 +483,27 @@
         toastTimer = setTimeout(() => toastEl.classList.remove('tg-toast-shown'), action ? 7000 : 4500);
     }
 
-    // The colour of a value's type: a few fixed, others a hue of the name (as Unity's TideGraphTypes)
-    const FIXED = {
-        bool: '#c0392b', int: '#2aa198', long: '#2aa198', byte: '#2aa198', char: '#5f9ea0', float: '#7cb342', double: '#7cb342',
-        string: '#d33682', float2: '#e6b422', float3: '#f0a030', float4: '#d98c1f', int2: '#26a69a', int3: '#26a69a',
-        quaternion: '#8e7cc3', Color: '#ec407a', Entity: '#42a5f5', PlayerID: '#29b6f6', void: '#888888',
-    };
+    // The colour of a value's type, as the schema's look says: its `types`, else a hue of the name with `typeHue`'s
+    // saturation and lightness (the same in every editor). As #rrggbb.
     function typeColor(type) {
-        if (!type) return null;
-        if (FIXED[type]) return FIXED[type];
+        const look = G.look;
+        if (!type || !look?.types) return null;
+        if (look.types[type]) return look.types[type];
         let h = 0;
         for (let i = 0; i < type.length; i++) h = (h * 31 + type.charCodeAt(i)) >>> 0;
-        return `hsl(${h % 360}, 55%, 58%)`;
+        return hslHex(h % 360, look.typeHue.saturation, look.typeHue.lightness);
+    }
+
+    // A colour by its hue (degrees), saturation and lightness (percent), as CSS's hsl() turns it into #rrggbb
+    function hslHex(h, s, l) {
+        s /= 100; l /= 100;
+        const a = s * Math.min(l, 1 - l);
+        const f = n => {
+            const k = (n + h / 30) % 12;
+            const c = l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1));
+            return Math.round(c * 255).toString(16).padStart(2, '0');
+        };
+        return '#' + f(0) + f(8) + f(4);
     }
 
     // What a page remembers of how it was left (the panels open or closed): nothing, where storage isn't there
@@ -508,5 +519,5 @@
         try { localStorage.setItem('tide-graph:' + key, JSON.stringify(value)); } catch {}
     }
 
-    G.ui = { el, put, svg, field, nameText, checkbox, select, button, popup, closePopups, popupOpen, menu, picker, rank, tooltip, toast, typeColor, remembered, remember };
+    G.ui = { el, put, svg, field, nameText, checkbox, select, button, popup, closePopups, popupOpen, menu, picker, rank, tooltip, toast, typeColor, hslHex, remembered, remember };
 })(globalThis.TideGraph = globalThis.TideGraph || {});

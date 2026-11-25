@@ -37,7 +37,8 @@ namespace Tide.Editor
         internal int SelectedElement => selected;
 
         VisualElement shell, body, overlay, shade, chip, row;
-        Label titleLabel, chipLabel, toast;
+        Label titleLabel, chipLabel;
+        VisualElement toast;
         GraphPopup popup;
         GraphMyGame myGame;
         GraphDetails details;
@@ -325,6 +326,8 @@ namespace Tide.Editor
             shell.EnableInClassList("tg-light", Light);
             var sheet = GraphLook.Sheet;
             if (sheet != null) shell.styleSheets.Add(sheet);
+            // The schema's look: its colours for dark or light, its sizes and its font
+            GraphLook.Apply(shell, Light);
             if (forcedLight != null && forcedLight.Value == EditorGUIUtility.isProSkin)
             {
                 // The other theme than the editor's: its own sheet of Unity's variables, on the board alone
@@ -369,30 +372,49 @@ namespace Tide.Editor
 
             var bar = GraphLook.Row("tg-bar");
             Button add = null;
-            add = GraphLook.Labelled("plus", "Add", () => Board.OpenAdd(null, add), "tg-bar-button", "tg-bar-button--primary");
+            // The schema's "+ Add", its + drawn as the icon
+            add = GraphLook.Labelled("plus", GraphSchema.Word("toolbar.add").TrimStart('+').Trim(), () => Board.OpenAdd(null, add), "tg-bar-button", "tg-bar-button--primary");
             add.name = "add";
-            add.tooltip = "Something new on the board (or right-click the board, or press Space)";
+            add.tooltip = GraphSchema.Word("toolbar.add.tip");
             bar.Add(add);
-            var toMine = GraphLook.Labelled("list", "My game", () => ShowMyGame(MyGame == null, MyGame == null), "tg-bar-button");
+            var toMine = GraphLook.Labelled("list", GraphSchema.Word("toolbar.myGame"), () => ShowMyGame(MyGame == null, MyGame == null), "tg-bar-button");
             toMine.name = "my-game-button";
-            toMine.tooltip = "Everything in this file by group: click one to go to it, drag one onto the board (Ctrl+F finds one)";
+            toMine.tooltip = GraphSchema.Word("toolbar.myGame.tip");
             bar.Add(toMine);
+            Button find = null;
+            find = findButton = GraphLook.Labelled(null, GraphSchema.Word("toolbar.find"), () => OpenFind(find), "tg-bar-button");
+            find.name = "find";
+            find.tooltip = GraphSchema.Word("toolbar.find.tip");
+            bar.Add(find);
             titleLabel = GraphLook.Text("", "tg-title");
             bar.Add(titleLabel);
             Button chipButton = null;
             chipButton = GraphLook.Plain(() => OpenProblems(chipButton), "tg-chip");
             chipButton.name = "check";
             chipButton.Add(GraphLook.Row("tg-chip-dot"));
-            chipLabel = new Label("Checking…") { pickingMode = PickingMode.Ignore };
+            chipLabel = new Label(GraphSchema.Word("status.checking")) { pickingMode = PickingMode.Ignore };
             chipButton.Add(chipLabel);
             chip = chipButton;
             bar.Add(chip);
+            bar.Add(GraphLook.Row("tg-bar-sep"));
+            // Undo and redo: Unity's own, which this window's edits are recorded in
+            var undo = GraphLook.Plain(Undo.PerformUndo, "tg-bar-button", "tg-bar-button--bare", "tg-bar-tool");
+            undo.text = GraphSchema.Word("toolbar.undo");
+            undo.name = "undo";
+            undo.tooltip = GraphSchema.Word("toolbar.undo.tip");
+            bar.Add(undo);
+            var redo = GraphLook.Plain(Undo.PerformRedo, "tg-bar-button", "tg-bar-button--bare", "tg-bar-tool");
+            redo.text = GraphSchema.Word("toolbar.redo");
+            redo.name = "redo";
+            redo.tooltip = GraphSchema.Word("toolbar.redo.tip");
+            bar.Add(redo);
+            bar.Add(GraphLook.Row("tg-bar-sep"));
             Button more = null;
-            var toDetails = GraphLook.Labelled(null, "Details", () => ShowDetails(Details == null), "tg-bar-button");
+            var toDetails = GraphLook.Labelled(null, GraphSchema.Word("toolbar.details"), () => ShowDetails(Details == null), "tg-bar-button");
             toDetails.name = "details-button";
-            toDetails.tooltip = "What's selected: its name, its options, its note";
+            toDetails.tooltip = GraphSchema.Word("toolbar.details.tip");
             bar.Add(toDetails);
-            more = GraphLook.IconButton("more", "Save, tidy up, view as Tide, the file's namespace", () => OpenMenu(more), "tg-bar-button", "tg-bar-button--bare");
+            more = GraphLook.IconButton("more", GraphSchema.Word("toolbar.more.tip"), () => OpenMenu(more), "tg-bar-button", "tg-bar-button--bare");
             more.name = "menu";
             bar.Add(more);
             s.Add(bar);
@@ -419,6 +441,26 @@ namespace Tide.Editor
             row.Add(body);
             Board = new GraphBoard(this);
             body.Add(Board);
+            // The zoom buttons, at the board's bottom right: − 100% + Fit
+            var zoomBar = GraphLook.Row("tg-zoom");
+            zoomBar.name = "zoom";
+            Button ZoomButton(string text, string tip, Action click, string name)
+            {
+                var b = GraphLook.Plain(click, "tg-zoom-button");
+                if (zoomBar.childCount > 0) b.AddToClassList("tg-zoom-button--next");
+                b.text = text;
+                b.tooltip = tip;
+                b.name = name;
+                zoomBar.Add(b);
+                return b;
+            }
+            ZoomButton(GraphSchema.Word("zoom.out"), GraphSchema.Word("zoom.out.tip"), () => Board.ZoomStep(1 / 1.25f), "zoom-out");
+            var zoomLabel = ZoomButton("100%", GraphSchema.Word("zoom.full.tip"), () => Board.ZoomStep(1 / Board.Zoom), "zoom-label");
+            zoomLabel.AddToClassList("tg-zoom-label");
+            ZoomButton(GraphSchema.Word("zoom.in"), GraphSchema.Word("zoom.in.tip"), () => Board.ZoomStep(1.25f), "zoom-in");
+            ZoomButton(GraphSchema.Word("zoom.fit"), GraphSchema.Word("zoom.fit.tip"), () => Board.FitAll(), "zoom-fit");
+            Board.ZoomChanged += () => zoomLabel.text = Mathf.RoundToInt(Board.Zoom * 100) + "%";
+            body.Add(zoomBar);
             if (!myGameClosed) ShowMyGame(true);
             if (!detailsClosed) ShowDetails(true);
             overlay = new VisualElement { pickingMode = PickingMode.Ignore };
@@ -525,14 +567,35 @@ namespace Tide.Editor
         }
 
         // Says something for a few seconds, at the board's foot: why what was tried can't be
-        internal void Say(string text, bool bad = false)
+        internal void Say(string text, bool bad = false) => Say(text, bad, null, null);
+
+        // ...with a button that does something about it: Undo, after something was deleted
+        internal void Say(string text, bool bad, string action, Action run)
         {
             LastSaid = text;
             if (body == null) return;
             toast?.RemoveFromHierarchy();
-            var said = toast = GraphLook.Text(text, "tg-toast");
+            VisualElement said;
+            if (run == null)
+            {
+                said = GraphLook.Text(text, "tg-toast");
+                said.pickingMode = PickingMode.Ignore;
+            }
+            else
+            {
+                said = GraphLook.Row("tg-toast", "tg-toast--action");
+                said.Add(GraphLook.Text(text));
+                var button = GraphLook.Plain(() =>
+                {
+                    said.RemoveFromHierarchy();
+                    run();
+                }, "tg-toast-button");
+                button.text = action;
+                button.name = "toast-action";
+                said.Add(button);
+            }
+            toast = said;
             said.EnableInClassList("tg-toast--bad", bad);
-            said.pickingMode = PickingMode.Ignore;
             body.Add(said);
             said.schedule.Execute(() =>
             {
@@ -545,15 +608,15 @@ namespace Tide.Editor
         {
             return new List<GraphOption>
             {
-                new GraphOption { Title = "Save", Detail = "Ctrl+S", Off = !Dirty, Pick = Save },
+                new GraphOption { Title = GraphSchema.Word("menu.save"), Detail = GraphSchema.WordKeys("menu.save"), Off = !Dirty, Pick = Save },
                 new GraphOption { Separator = true },
-                new GraphOption { Title = "See the whole board", Detail = "F", Pick = () => Board.FitAll() },
-                new GraphOption { Title = "Tidy up the board", Detail = "Data on the left, code to its right", Pick = () => Board.TidyBoard() },
+                new GraphOption { Title = GraphSchema.Word("menu.fit"), Detail = GraphSchema.WordKeys("menu.fit"), Pick = () => Board.FitAll() },
+                new GraphOption { Title = GraphSchema.Word("menu.tidyBoard"), Detail = GraphSchema.Word("menu.tidyBoard.summary"), Pick = () => Board.TidyBoard() },
                 new GraphOption { Separator = true },
-                new GraphOption { Title = "View as Tide", Detail = "The text this file stands for", Checked = TideView != null, Pick = () => ShowTide(TideView == null) },
+                new GraphOption { Title = GraphSchema.Word("menu.viewTide"), Detail = GraphSchema.Word("menu.viewTide.summary"), Checked = TideView != null, Pick = () => ShowTide(TideView == null) },
                 new GraphOption { Title = "Namespace and using…", Detail = "The file's own lines", Pick = () => Open(new GraphFileSettings(this), chip) },
                 new GraphOption { Separator = true },
-                new GraphOption { Title = "How the board works", Detail = "Keys and gestures", Pick = () => Open(new GraphShortcuts(), chip) },
+                new GraphOption { Title = GraphSchema.Word("menu.help"), Detail = "Keys and gestures", Pick = () => Open(new GraphShortcuts(), chip) },
             };
         }
 
@@ -677,12 +740,17 @@ namespace Tide.Editor
             var warnings = Checked?.Diagnostics.Count(d => d.Severity == "warning") ?? 0;
             var busy = Checked == null || CheckPending;
             var failed = Checked?.Failure != null;
-            chip.EnableInClassList("tg-chip--bad", !busy && (errors > 0 || failed));
-            chip.EnableInClassList("tg-chip--warn", !busy && errors == 0 && !failed && warnings > 0);
+            // As the page says it: a check that couldn't run is "Not checked", in amber like a warning
+            chip.EnableInClassList("tg-chip--bad", !busy && errors > 0);
+            chip.EnableInClassList("tg-chip--warn", !busy && errors == 0 && (failed || warnings > 0));
             chip.EnableInClassList("tg-chip--ok", !busy && errors == 0 && !failed && warnings == 0);
-            chipLabel.text = busy ? "Checking…" : failed ? "Couldn't check" : errors > 0 ? (errors == 1 ? "1 problem" : $"{errors} problems")
-                : warnings > 0 ? (warnings == 1 ? "1 thing to look at" : $"{warnings} things to look at") : "Checked";
-            chip.tooltip = (failed ? Checked.Failure + "\n" : "") + CheckerSays + "\nClick for the list.";
+            chipLabel.text = busy ? GraphSchema.Word("status.checking")
+                : errors > 0 ? GraphSchema.Word(errors == 1 ? "status.problem" : "status.problems", "count", errors.ToString())
+                : failed ? GraphSchema.Word("status.off")
+                : warnings > 0 ? GraphSchema.Word(warnings == 1 ? "status.warning" : "status.warnings", "count", warnings.ToString())
+                : GraphSchema.Word("status.checked");
+            var click = errors + warnings > 0 ? GraphSchema.Word("status.list.tip") : busy ? "Click for the list." : failed ? GraphSchema.Word("status.off.tip") : GraphSchema.Word("status.checked.tip");
+            chip.tooltip = (failed ? Checked.Failure + "\n" : "") + CheckerSays + "\n" + click;
         }
 
         internal string ChipText => chipLabel?.text;
@@ -735,7 +803,7 @@ namespace Tide.Editor
         {
             var options = new List<GraphOption>();
             if (Checked == null) return options;
-            if (Checked.Failure != null) options.Add(new GraphOption { Title = "The check didn't run", Detail = Checked.Failure, Tall = true, Off = true });
+            if (Checked.Failure != null) options.Add(new GraphOption { Title = GraphSchema.Word("problems.off"), Detail = GraphSchema.Word("problems.off.why", "why", Checked.Failure), Tall = true, Off = true });
             foreach (var d in Checked.Diagnostics)
             {
                 var diagnostic = d;
@@ -744,12 +812,40 @@ namespace Tide.Editor
                 options.Add(new GraphOption
                 {
                     Title = lines[0], Detail = string.Join("\n", lines.Skip(1).Concat(where != null ? new[] { "In " + where } : new string[0])), Tall = true, Help = d.Detail,
-                    Section = d.Severity == "error" ? "Problems" : d.Severity == "warning" ? "To look at" : "Notes", Off = Doc.Find(d.Id) == null,
+                    Section = GraphSchema.Word(d.Severity == "error" ? "problems.group.problems" : d.Severity == "warning" ? "problems.group.look" : "problems.group.notes"), Off = Doc.Find(d.Id) == null,
                     Pick = () => Reveal(diagnostic.Id),
                 });
             }
-            if (options.Count == 0) options.Add(new GraphOption { Title = "Nothing's wrong", Detail = CheckerSays, Tall = true, Off = true });
+            if (options.Count == 0) options.Add(new GraphOption { Title = GraphSchema.Word("problems.none"), Detail = CheckerSays, Tall = true, Off = true });
             return options;
+        }
+
+        // Find…: the file's declarations and the members with code of their own, by name, under their kinds; a pick
+        // goes to it
+        Button findButton;
+        internal VisualElement FindButton => findButton;
+
+        internal GraphOptionList OpenFind(VisualElement from)
+        {
+            if (Doc == null || Board == null) return null;
+            var options = new List<GraphOption>();
+            foreach (var e in Doc.Elements)
+            {
+                if (Board.Item(e.Id) == null) continue;
+                var id = e.Id;
+                var kind = e.Role == GraphRole.Decl ? GraphSchema.DeclTitle(e.Value.Str("kind")) : e.Role == GraphRole.Accessor ? GraphSchema.MemberTitle("property") : GraphSchema.MemberTitle(e.Value.Str("kind"));
+                var group = e.Role == GraphRole.Decl ? GraphSchema.DeclGroup(e.Value.Str("kind")) : "Behaviour";
+                var problems = Board.HasProblems(Board.Item(id));
+                options.Add(new GraphOption
+                {
+                    Title = Doc.TitleOf(e), Detail = kind, Keywords = kind, Data = id, Section = GraphSchema.Groups.FirstOrDefault(g => g.Name == group)?.Title ?? group,
+                    Help = problems ? "It has a problem" : null, Pick = () => Reveal(id),
+                });
+            }
+            var list = new GraphOptionList(null, null, GraphSchema.Word("jump.search"), 360, 440);
+            list.Set(options.OrderBy(o => Array.FindIndex(GraphSchema.Groups, g => g.Title == o.Section)));
+            Open(list, from);
+            return list;
         }
 
         void OpenProblems(VisualElement from)

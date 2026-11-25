@@ -32,13 +32,13 @@ namespace Tide.Editor
         int asking;
 
         public GraphValuePicker(GraphBoard board, GraphFrame frame, JValue owner, WirePath path, string label, int keep)
-            : base(null, null, "Search, or type a value", 330, 440)
+            : base(null, null, GraphSchema.Word("value.search.any"), 330, 440)
         {
             this.board = board;
             this.frame = frame;
             this.owner = owner;
             this.path = path;
-            this.label = string.IsNullOrEmpty(label) ? "here" : label;
+            this.label = string.IsNullOrEmpty(label) ? GraphSchema.Word("value.input") : label;
             Window = board.Window;
             frame.Classify();
             wanted = frame.Wanted(owner, path);
@@ -67,7 +67,7 @@ namespace Tide.Editor
         void Ask()
         {
             asking++;
-            Status = "Asking what can go here…";
+            Status = GraphSchema.Word("picker.asking.game");
             TideGraphLanguage.ValuesAt(Window, frame.Slot, owner != null ? owner.Wire("id") : 0, (items, why) =>
             {
                 asking--;
@@ -112,7 +112,7 @@ namespace Tide.Editor
             if (hidden > 0 && !everything)
                 options.Add(new GraphOption
                 {
-                    Title = "Show what doesn't fit too", Detail = hidden == 1 ? "1 more" : hidden + " more", Section = "Something else", KeepOpen = true, Data = "everything",
+                    Title = GraphSchema.Word("value.all"), Detail = hidden == 1 ? "1 more" : hidden + " more", Section = GraphSchema.Word("value.else"), KeepOpen = true, Data = "everything",
                     Help = $"Listed here is what's a {wanted}, which '{label}' takes. The rest can be picked too: the check says if it's wrong.",
                     Pick = () =>
                     {
@@ -120,11 +120,16 @@ namespace Tide.Editor
                         Fill(true);
                     },
                 });
-            Title = parts.Count == 0 ? Changing ? "What does it change?" : $"What goes in '{label}'?" : PathText + ": which of it?";
-            // Nothing typed is what a Set changes: it's found
-            if (Changing) Placeholder = "Search what it can change";
-            HelpText = parts.Count > 0 ? null : Changing ? "What this code takes to change, a local that can be changed, or a field of one." : wanted != null ? $"It takes a value of type {wanted}." : null;
-            Status = asking > 0 ? "Asking what can go here…" : null;
+            // The type it takes is in the title: "What goes in 'amount'? A float."
+            var typedTitle = !string.IsNullOrEmpty(wanted);
+            var article = GraphSchema.Word(typedTitle && "aeiou".IndexOf(char.ToLowerInvariant(wanted[0])) >= 0 ? "an" : "a");
+            Title = parts.Count == 0 ? Changing ? GraphSchema.Word("value.change.title") : GraphSchema.Word(typedTitle ? "value.title.typed" : "value.title", "input", label, "article", article, "type", wanted) : GraphSchema.Word("value.which", "name", PathText);
+            // What's typed searches, and is a value of its own where the input takes a number or a text; what a Set
+            // changes is only found
+            var control = GraphSchema.ValueControl(wanted);
+            Placeholder = GraphSchema.Word(Changing ? "value.search" : control == "whole" || control == "decimal" ? "value.search.number" : control == "text" ? "value.search.text" : wanted != null ? "value.search" : "value.search.any");
+            HelpText = parts.Count > 0 ? null : Changing ? "What this code takes to change, a local that can be changed, or a field of one." : null;
+            Status = asking > 0 ? GraphSchema.Word("picker.asking.game") : null;
             Set(options, keep);
         }
 
@@ -167,7 +172,7 @@ namespace Tide.Editor
             row.Dot = TideGraphTypes.ColorOf(type, Light);
             row.Priority = priority;
             row.Data = part;
-            row.Help = exact || !opens ? null : "Opens to what it has";
+            row.Help = exact || !opens ? null : GraphSchema.Word("picker.drill");
             options.Add(row);
             // Its fields, by typing their names: wobble.phase
             if (fields == null) return;
@@ -189,7 +194,8 @@ namespace Tide.Editor
 
         void Changeable(List<GraphOption> options)
         {
-            const string has = "What this code can change", read = "Only read here";
+            var has = GraphSchema.Word("value.has");
+            var read = GraphSchema.Word("value.readOnly");
             // What can be changed first; what's only read after it, greyed
             var only = new List<GraphOption>();
             foreach (var r in frame.Reads.Values)
@@ -204,7 +210,7 @@ namespace Tide.Editor
                 only.Add(new GraphOption
                 {
                     Title = r.Name, Detail = r.Type, Section = read, Off = true, Dot = TideGraphTypes.ColorOf(r.Type, Light),
-                    Help = $"It's taken to be read. To change it, make its row in the entry \"{GraphSchema.ParamModeInfo("mut").Label}\".",
+                    Help = GraphSchema.Word("why.readParam", "name", r.Name, "mode", GraphSchema.ParamModeInfo("mut").Label),
                 });
             }
             foreach (var local in GraphDocument.Locals(frame.Graph).Where(l => l != owner))
@@ -222,22 +228,25 @@ namespace Tide.Editor
                 only.Add(new GraphOption
                 {
                     Title = name, Detail = type, Section = read, Off = true, Dot = TideGraphTypes.ColorOf(type, Light),
-                    Help = $"A local that can't be changed. Tick \"{GraphSchema.FlagInfo("mut").Label}\" in its Details to change it.",
+                    Help = GraphSchema.Word("why.localFixed", "name", name, "flag", GraphSchema.FlagInfo("mut").Label),
                 });
             }
             options.AddRange(only);
             options.Add(new GraphOption
             {
-                Title = "Work it out…", Detail = "An element of a list, a field of a call's result: a node wired in", Section = "Something else", Pinned = true, Keywords = "node index element",
+                Title = GraphSchema.Word("menu.work"), Detail = "An element of a list, a field of a call's result: a node wired in", Section = GraphSchema.Word("value.else"), Pinned = true, Keywords = "node index element",
                 Pick = () => board.WorkOut(frame, owner, path, From, Query.Trim()),
             });
             if (frame.WireAt(owner, path) != 0)
-                options.Add(new GraphOption { Title = "Nothing", Detail = "Empties it", Section = "Something else", Pick = () => frame.Edit("Clear " + label, () => frame.SetWire(owner, path, 0, out _)) });
+                options.Add(new GraphOption { Title = GraphSchema.Word("value.nothing"), Detail = GraphSchema.Word("menu.empty"), Section = GraphSchema.Word("value.else"), Pick = () => frame.Edit("Clear " + label, () => frame.SetWire(owner, path, 0, out _)) });
         }
 
         void Top(List<GraphOption> options, ref int hidden)
         {
-            const string value = "A value", has = "What this code has", constants = "Constants", functions = "Functions (a node wired in)", engine = "The engine's", other = "Something else";
+            const string value = "A value", constants = "Constants", engine = "The engine's";
+            var has = GraphSchema.Word("value.has");
+            var functions = GraphSchema.Word("search.functions");
+            var other = GraphSchema.Word("value.else");
             if (Changing)
             {
                 Changeable(options);
@@ -342,24 +351,24 @@ namespace Tide.Editor
             }
             options.Add(new GraphOption
             {
-                Title = "Work it out…", Detail = "An operator, a call: a node wired in", Section = other, Pinned = true, Keywords = "node operator call add multiply compare",
+                Title = GraphSchema.Word("menu.work"), Detail = GraphSchema.Word("value.work.summary"), Section = other, Pinned = true, Keywords = "node operator call add multiply compare",
                 Help = "Anything more than a value or a name is a node of its own, wired into this input: a sum, a comparison, a call.",
                 Pick = () => board.WorkOut(frame, owner, path, From, Query.Trim()),
             });
             if (frame.WireAt(owner, path) != 0)
-                options.Add(new GraphOption { Title = "Nothing", Detail = "Empties it", Section = other, Searched = false, Pick = () => frame.Edit("Clear " + label, () => frame.SetWire(owner, path, 0, out _)) });
+                options.Add(new GraphOption { Title = GraphSchema.Word("value.nothing"), Detail = GraphSchema.Word("menu.empty"), Section = other, Searched = false, Pick = () => frame.Edit("Clear " + label, () => frame.SetWire(owner, path, 0, out _)) });
         }
 
         // What the last part picked has: itself, its fields (each opening to its own), its methods
         void Inside(List<GraphOption> options, ref int hidden)
         {
             var last = parts[parts.Count - 1];
-            var section = "What it has";
+            var section = GraphSchema.Word("picker.drill");
             if (!last.Space && last.Kind != "shorthand")
             {
                 if (Fits(last.Type) || wanted == null)
                 {
-                    var whole = Row(PathText, string.IsNullOrEmpty(last.Type) ? "all of it" : "all of it: " + last.Type, section, () => Take(parts.ToList()));
+                    var whole = Row(PathText, string.IsNullOrEmpty(last.Type) ? GraphSchema.Word("value.whole") : GraphSchema.Word("value.whole") + ": " + last.Type, section, () => Take(parts.ToList()));
                     whole.Dot = TideGraphTypes.ColorOf(last.Type, Light);
                     whole.Data = "itself";
                     options.Add(whole);
@@ -386,7 +395,7 @@ namespace Tide.Editor
                     }
                     var method = m;
                     var row = Row($"{m.Label}({string.Join(", ", m.Parameters)})", m.Result, section, () => TakeCall(parts.ToList(), method));
-                    if (string.IsNullOrEmpty(m.Result)) row.Detail = "a call, wired in";
+                    if (string.IsNullOrEmpty(m.Result)) row.Detail = GraphSchema.Word("value.call");
                     row.Keywords = "call method";
                     row.Help = "A node wired in: " + m.Detail;
                     options.Add(row);
@@ -400,7 +409,7 @@ namespace Tide.Editor
         }
 
         // The way back from what something has, after what it has: Enter takes the first of those
-        GraphOption BackRow() => new GraphOption { Title = "‹ Back", Detail = "Esc", Section = "Something else", KeepOpen = true, Data = "back", Pick = () => Back() };
+        GraphOption BackRow() => new GraphOption { Title = GraphSchema.Word("value.back"), Detail = "Esc", Section = GraphSchema.Word("value.else"), KeepOpen = true, Data = "back", Pick = () => Back() };
 
         // Opens something to what it has
         void Open(GraphFrame.Part part)
@@ -437,7 +446,7 @@ namespace Tide.Editor
                 else if (control == null && wanted == null && !text.Contains("\""))
                     typed.Add(new GraphOption
                     {
-                        Title = "\"" + text + "\"", Detail = "As a text", Section = "A value", Keywords = text, Priority = -1, Data = "typed",
+                        Title = "\"" + text + "\"", Detail = GraphSchema.Word("value.text"), Section = "A value", Keywords = text, Priority = -1, Data = "typed",
                         Pick = () => Literal("string", text),
                     });
             }

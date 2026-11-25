@@ -453,7 +453,7 @@ namespace Tide.Editor
         readonly List<(GraphSchema.TypeBuilder builder, List<string> picked)> building = new List<(GraphSchema.TypeBuilder, List<string>)>();
         bool answered;
 
-        public GraphTypePicker(TideGraphWindow window, GraphTypeRequest request, Action<string> picked) : base(request.Title, null, "Search types", 290)
+        public GraphTypePicker(TideGraphWindow window, GraphTypeRequest request, Action<string> picked) : base(request.Title, null, GraphSchema.Word("picker.type.search"), 290)
         {
             Window = window;
             this.request = request;
@@ -510,7 +510,7 @@ namespace Tide.Editor
                 return;
             }
             Title = slot.title ?? request.Title;
-            Placeholder = "Search types";
+            Placeholder = GraphSchema.Word("picker.type.search");
             var options = new List<GraphOption>();
             var light = Window.Light;
             var top = building.Count == 0;
@@ -538,7 +538,7 @@ namespace Tide.Editor
             var suits = valid.Where(t => (request.Only == null || request.Only(t)) && !Built(t) && !(request.NoBuilders && t.Params.Count > 0)).ToList();
             var taken = new HashSet<string>();
             if (top && request.Infer != null)
-                options.Add(new GraphOption { Title = request.Infer, Section = Group("common"), Detail = "worked out from its value", Priority = 4, KeepOpen = true, Pick = () => Finish("") });
+                options.Add(new GraphOption { Title = request.Infer, Section = Group("common"), Detail = GraphSchema.Word("node.inferType"), Priority = 4, KeepOpen = true, Pick = () => Finish("") });
             foreach (var name in GraphSchema.TypeCommon)
             {
                 var t = suits.FirstOrDefault(x => x.Name == name);
@@ -546,7 +546,7 @@ namespace Tide.Editor
             }
             // Its own type parameters, this file's types, then the rest of the game's (and the engine's)
             foreach (var g in request.Generic)
-                if (taken.Add(g)) options.Add(new GraphOption { Title = g, Section = Group("own"), Detail = "generic", Dot = TideGraphTypes.ColorOf(g, light), Priority = 3, KeepOpen = true, Pick = () => Take(g) });
+                if (taken.Add(g)) options.Add(new GraphOption { Title = g, Section = Group("own"), Detail = GraphSchema.Word("picker.type.param"), Dot = TideGraphTypes.ColorOf(g, light), Priority = 3, KeepOpen = true, Pick = () => Take(g) });
             foreach (var t in suits.Where(t => !t.BuiltIn && Mine(t.Name)))
                 if (taken.Add(t.Name)) options.Add(Option(t, Group("file"), 3));
             // What the game (or a package of it) declares, as the last check said; what's offered and isn't its
@@ -573,12 +573,12 @@ namespace Tide.Editor
             foreach (var t in suits.Where(t => t.BuiltIn && t.Params.Count > 0))
                 if (taken.Add(t.Name)) options.Add(Option(t, Group("builders"), 1));
             if (top && request.AllowVoid)
-                options.Add(new GraphOption { Title = "void", Section = Group("rest"), Detail = "nothing", Dot = TideGraphTypes.ColorOf("void", light), KeepOpen = true, Pick = () => Finish("void") });
+                options.Add(new GraphOption { Title = "void", Section = Group("rest"), Detail = GraphSchema.Word("picker.nothing"), Dot = TideGraphTypes.ColorOf("void", light), KeepOpen = true, Pick = () => Finish("void") });
             foreach (var t in suits.Where(t => !t.BuiltIn))
                 if (taken.Add(t.Name)) options.Add(Option(t, Group("rest"), 0));
             foreach (var t in suits.Where(t => t.BuiltIn))
                 if (taken.Add(t.Name)) options.Add(Option(t, Group("rest"), 0));
-            Status = !Asked ? "Asking what fits here…" : suits.Count == 0 ? "Nothing that fits here is declared yet." : null;
+            Status = !Asked ? GraphSchema.Word("picker.asking.fits") : suits.Count == 0 ? "Nothing that fits here is declared yet." : null;
             Set(options, keepQuery);
         }
 
@@ -611,7 +611,7 @@ namespace Tide.Editor
                     var number = n;
                     options.Add(new GraphOption { Title = n, KeepOpen = true, Pick = () => Take(number) });
                 }
-            Status = typed.Length > 0 && !digits ? "A whole number, 1 or more." : null;
+            Status = typed.Length > 0 && !digits ? GraphSchema.Word("picker.count.empty") : null;
             Set(options, true);
         }
 

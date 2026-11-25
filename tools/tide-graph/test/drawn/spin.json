@@ -1,0 +1,32 @@
+{
+  "graph": "spin.tidegraph",
+  "frames": [
+    {"id":5,"box":[380,0,1771,367],"chip":"System","title":"Spin"}
+  ],
+  "cards": [
+    {"id":1,"box":[0,0,300,124],"chip":"Component","title":"Wobble","rows":[{"label":"frequency","shown":"float"},{"label":"phase","shown":"float"}]}
+  ],
+  "nodes": [
+    {"id":5,"frame":5,"box":[397,65,320,100],"shape":"entry","header":"#333c4f","title":["Every tick, for each entity with"],"rows":[{"label":"","pin":"exec-out","color":null,"shown":null},{"label":"wobble","pin":"out","color":"#9a59cf","shown":"Wobble"}]},
+    {"id":7,"frame":5,"box":[1225,201,82,28],"shape":"get","header":null,"title":["wobble"],"rows":[{"label":"","pin":"out","color":"#9a59cf","shown":null}]},
+    {"id":10,"frame":5,"box":[777,249,82,28],"shape":"get","header":null,"title":["wobble"],"rows":[{"label":"","pin":"out","color":"#9a59cf","shown":null}]},
+    {"id":11,"frame":5,"box":[913,249,162,28],"shape":"get","header":null,"title":["frequency"],"rows":[{"label":"Target","pin":"in","color":"#9a59cf","shown":null},{"label":"","pin":"out","color":null,"shown":null}]},
+    {"id":12,"frame":5,"box":[1133,249,130,77],"shape":"node","header":"#493f2f","title":["Add +"],"rows":[{"label":"","pin":"out","color":null,"shown":null},{"label":"a","pin":"in","color":"#7cb342","shown":"1.5"},{"label":"b","pin":"in","color":null,"shown":null}]},
+    {"id":13,"frame":5,"box":[1361,65,125,75],"shape":"node","header":"#383b41","title":["Set phase"],"rows":[{"label":"","pin":"exec-in","color":null,"shown":null},{"label":"","pin":"exec-out","color":null,"shown":null},{"label":"Target","pin":"in","color":"#9a59cf","shown":null},{"label":"=","pin":"in","color":null,"shown":null}]},
+    {"id":14,"frame":5,"box":[1825,201,82,28],"shape":"get","header":null,"title":["wobble"],"rows":[{"label":"","pin":"out","color":"#9a59cf","shown":null}]},
+    {"id":16,"frame":5,"box":[1629,249,82,28],"shape":"get","header":null,"title":["wobble"],"rows":[{"label":"","pin":"out","color":"#9a59cf","shown":null}]},
+    {"id":17,"frame":5,"box":[1765,249,136,28],"shape":"get","header":null,"title":["phase"],"rows":[{"label":"Target","pin":"in","color":"#9a59cf","shown":null},{"label":"","pin":"out","color":null,"shown":null}]},
+    {"id":18,"frame":5,"box":[1961,65,151,75],"shape":"node","header":"#383b41","title":["Set frequency"],"rows":[{"label":"","pin":"exec-in","color":null,"shown":null},{"label":"","pin":"exec-out","color":null,"shown":null},{"label":"Target","pin":"in","color":"#9a59cf","shown":null},{"label":"=","pin":"in","color":null,"shown":null}]}
+  ],
+  "wires": [
+    {"from":[7,"value"],"to":[8,"object"],"color":"#9a59cf"},
+    {"from":[10,"value"],"to":[11,"object"],"color":"#9a59cf"},
+    {"from":[11,"value"],"to":[12,"rhs"],"color":"#3d8c52"},
+    {"from":[5,"start"],"to":[13,"in"],"color":"#e8e8e8"},
+    {"from":[12,"value"],"to":[13,"value"],"color":"#9e732e"},
+    {"from":[14,"value"],"to":[15,"object"],"color":"#9a59cf"},
+    {"from":[16,"value"],"to":[17,"object"],"color":"#9a59cf"},
+    {"from":[13,"next"],"to":[18,"in"],"color":"#e8e8e8"},
+    {"from":[17,"value"],"to":[18,"value"],"color":"#3d8c52"}
+  ]
+}

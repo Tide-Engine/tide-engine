@@ -392,7 +392,7 @@ ${other || ''}`;
             case KIND.Constructor: {
                 const args = paramNames(item).map(() => null);
                 const node = member ? { k: 'method', fields: { name, args } } : { k: 'call', fields: { name, args } };
-                return { title: name + '(' + paramNames(item).join(', ') + ')', detail, group: member ? 'Members' : 'Functions', node, statement: flow, params: paramNames(item) };
+                return { title: name + '(' + paramNames(item).join(', ') + ')', detail, group: member ? G.w('search.members') : G.w('search.functions'), node, statement: flow, params: paramNames(item) };
             }
             case KIND.Field:
             case KIND.Property:
@@ -401,18 +401,18 @@ ${other || ''}`;
             case KIND.EnumMember:
             case KIND.Value:
             case KIND.Event:
-                if (member) return { title: name, detail, group: 'Members', node: { k: 'member', fields: { member: name } } };
-                if (item.kind === KIND.EnumMember) return { title: '.' + name, detail, group: 'Values', node: { k: 'member', fields: { shorthand: true, member: name } } };
-                return { title: name, detail, group: 'Names', node: { k: 'name', fields: { name } } };
+                if (member) return { title: name, detail, group: G.w('search.members'), node: { k: 'member', fields: { member: name } } };
+                if (item.kind === KIND.EnumMember) return { title: '.' + name, detail, group: G.w('search.values'), node: { k: 'member', fields: { shorthand: true, member: name } } };
+                return { title: name, detail, group: G.w('search.names'), node: { k: 'name', fields: { name } } };
             case KIND.Struct:
             case KIND.Class:
-                if (member) return { title: name, detail, group: 'Members', node: { k: 'member', fields: { member: name } } };
-                return { title: name + ' { }', detail: detail || 'a value of the type', group: 'Types', node: { k: 'literal', fields: { type: name, inits: [] } } };
+                if (member) return { title: name, detail, group: G.w('search.members'), node: { k: 'member', fields: { member: name } } };
+                return { title: name + ' { }', detail: detail || G.w('search.literal'), group: G.w('search.types'), node: { k: 'literal', fields: { type: name, inits: [] } } };
             case KIND.Enum:
             case KIND.Interface:
             case KIND.Module:
             case KIND.TypeParameter:
-                return { title: name, detail, group: member ? 'Members' : 'Names', node: member ? { k: 'member', fields: { member: name } } : { k: 'name', fields: { name } } };
+                return { title: name, detail, group: member ? G.w('search.members') : G.w('search.names'), node: member ? { k: 'member', fields: { member: name } } : { k: 'name', fields: { name } } };
             default:
                 return null; // Keywords and snippets: the schema's nodes are those
         }

@@ -247,9 +247,8 @@ public class GraphLanguageTests
         Assert.AreEqual("int", hits.TypeText);
         Assert.AreEqual("int", hits.DataOut.Type);
         StringAssert.StartsWith("int", hits.Q(className: "tg-get-row").tooltip);
-        var name = hits.Q<GraphName>("title").Q<Label>();
-        Assert.AreEqual(TideGraphTypes.ColorOf("int", window.Light), name.style.color.value);
-        Assert.AreNotEqual(TideGraphTypes.ColorOf("Ball", window.Light), name.style.color.value);
+        Assert.AreEqual(GraphSchema.TypeColor("int"), hits.DataOut.TypeTint, "its pin in its type's colour");
+        Assert.AreNotEqual(GraphSchema.TypeColor("Ball"), hits.DataOut.TypeTint);
         Assert.AreEqual("int", frame.Wanted(frame.Views[15].Node, new WirePath("value")), "what a return gives is its code's result");
         // ...and what tidels says of it
         string hover = null;
@@ -938,10 +937,10 @@ public class GraphLanguageTests
         // What goes in Twice's amount, where a Get of wobble's frequency is wired: a float typed, what this code has
         // that is one or has one, the game's constants and functions
         Assert.AreSame(frame.Views[16].DataOut, frame.SourcePin(16));
-        GraphShots.Click(twice.Q("in:args.0").Q<Button>("other"));
+        twice.OpenPicker("args.0");
         var values = (GraphValuePicker)window.Popup;
         yield return Until(() => !values.Asking, "tidels says what can go there");
-        Assert.AreEqual("What goes in 'amount'?", values.Title);
+        StringAssert.StartsWith("What goes in 'amount'?", values.Title);
         Assert.AreEqual("float", values.Wanted);
         Assert.AreEqual("What this code has", values.Shown.First(o => o.Title == "speed").Section, "a local declared before it: " + Titles(values));
         Assert.IsTrue(values.Shown.Any(o => o.Title == "wobble") && values.Shown.Any(o => o.Title == "time"), "what has a float in it opens to it: " + Titles(values));
@@ -1002,7 +1001,7 @@ public class GraphLanguageTests
         var axis = frame.Views[150].Q("in:value");
         Assert.IsNull(frame.SourcePin(frame.Views[150].Node.Wire("value")), "no wire");
         CollectionAssert.AreEqual(new[] { "0", "1.5", "-2" }, axis.Q("numbers").Query<TextField>().ToList().Select(f => f.value).ToList());
-        CollectionAssert.AreEqual(new[] { "x", "y", "z" }, axis.Q("numbers").Query<TextField>().ToList().Select(f => f.tooltip).ToList(), "each box is its part, by the type's own names");
+        CollectionAssert.AreEqual(new[] { "float3: x", "float3: y", "float3: z" }, axis.Q("numbers").Query<TextField>().ToList().Select(f => f.tooltip).ToList(), "each box is its part, by the type's own names");
         var tint = frame.Views[160].Q("in:value").Q<UnityEditor.UIElements.ColorField>("colour");
         Assert.IsNotNull(tint);
         Assert.AreEqual(new Color(1, 0.5f, 0.25f, 1), tint.value);
@@ -1281,8 +1280,8 @@ public class GraphLanguageTests
         GraphShots.Click(set.Q("in:target").Q<Button>("pick"));
         var values = (GraphValuePicker)window.Popup;
         yield return Until(() => !values.Asking, "tidels says what can go there");
-        Assert.AreEqual("What does it change?", values.Title);
-        Assert.AreEqual("What this code can change", values.Shown.First(o => o.Title == "transform").Section, Titles(values));
+        Assert.AreEqual("What does it change? Something this code can change.", values.Title);
+        Assert.AreEqual("What this code has", values.Shown.First(o => o.Title == "transform").Section, Titles(values));
         Assert.IsTrue(values.Shown.First(o => o.Title == "testFromGraph").Off, "what's only read is listed greyed, with why: " + Titles(values));
         Assert.IsFalse(values.Shown.Any(o => o.Section == "Constants" || o.Section == "A value"), "nothing that can't be changed: " + Titles(values));
         yield return GraphShots.Take(window, "52-what-can-be-changed");
@@ -1308,7 +1307,7 @@ public class GraphLanguageTests
         // Its localScale, by a click on the name in its title, then frequency: "*=" is offered, "=" isn't
         GraphShots.Click(set.Q<Button>("changes"));
         values = (GraphValuePicker)window.Popup;
-        Assert.AreEqual("What does it change?", values.Title);
+        Assert.AreEqual("What does it change? Something this code can change.", values.Title);
         yield return Until(() => !values.Asking, "tidels says what can go there");
         Assert.IsTrue(values.Choose("transform"));
         yield return Until(() => !values.Asking, "tidels says what a Transform has");
@@ -1567,9 +1566,9 @@ public class GraphLanguageTests
         GraphShots.Click(set.Q("in:target").Q<Button>("pick"));
         var values = (GraphValuePicker)window.Popup;
         yield return Until(() => !values.Asking, "tidels says what can go there");
-        Assert.AreEqual("What does it change?", values.Title);
+        Assert.AreEqual("What does it change? Something this code can change.", values.Title);
         var offered = values.Shown.First(o => o.Title == "wobble");
-        Assert.AreEqual("What this code can change", offered.Section, Titles(values));
+        Assert.AreEqual("What this code has", offered.Section, Titles(values));
         Assert.IsTrue(values.Shown.Any(o => o.Title == "Work it out…"), Titles(values));
         yield return GraphShots.Take(window, "10-what-goes-in-what");
         Assert.IsTrue(values.Choose("wobble"));
@@ -1640,7 +1639,7 @@ public class GraphLanguageTests
         Assert.IsFalse(frame.Entry.RowOf("wobble").ClassListContains("tg-lit"));
 
         // 7. More than a value: "Work it out…" makes a node, wired in, what was in the input its first input
-        GraphShots.Click(set.Q("in:value").Q<Button>("other"));
+        set.OpenPicker("value");
         values = (GraphValuePicker)window.Popup;
         yield return Until(() => !values.Asking, "tidels says what can go there");
         Assert.IsTrue(values.Choose("Work it out…"));

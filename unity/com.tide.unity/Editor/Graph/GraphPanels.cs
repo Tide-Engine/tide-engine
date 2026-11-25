@@ -84,13 +84,13 @@ namespace Tide.Editor
         {
             Clear();
             var doc = Window.Doc;
-            Add(GraphLook.Text("This file", "tg-popup-head"));
-            Add(GraphLook.Text("The namespace everything in this file is in. Leave it empty for none.", "tg-popup-help"));
-            var space = GraphLook.Inline(doc.Root.Str("namespace"), typed => Window.Edit("Namespace", () => doc.Root.SetString("namespace", GraphLook.DottedName(typed), GraphSchema.RootOrder)), "no namespace", "tg-inline--value");
+            Add(GraphLook.Text(GraphSchema.Word("details.file"), "tg-popup-head"));
+            Add(GraphLook.Text(GraphSchema.Word("prompt.namespace.help"), "tg-popup-help"));
+            var space = GraphLook.Inline(doc.Root.Str("namespace"), typed => Window.Edit("Namespace", () => doc.Root.SetString("namespace", GraphLook.DottedName(typed), GraphSchema.RootOrder)), GraphSchema.Word("details.none"), "tg-inline--value");
             space.name = "namespace";
             space.style.marginLeft = space.style.marginRight = 8;
             Add(space);
-            Add(GraphLook.Text("The namespaces whose names it uses without spelling them out.", "tg-popup-help").Class("tg-using-help"));
+            Add(GraphLook.Text(GraphSchema.Word("menu.uses.summary"), "tg-popup-help").Class("tg-using-help"));
             var uses = doc.Root.Arr("using");
             for (var i = 0; uses != null && i < uses.Items.Count; i++)
             {
@@ -141,35 +141,19 @@ namespace Tide.Editor
         public override void Opened() => this.Q<TextField>("namespace")?.Focus();
     }
 
-    // What the board's gestures are, said once asked
+    // What the board's gestures are, said once asked: the schema's words (help.1, help.2...), each its keys and
+    // what they do
     sealed class GraphShortcuts : GraphPopup
     {
         public GraphShortcuts()
         {
             style.width = 380;
-            Add(GraphLook.Text("How the board works", "tg-popup-head"));
-            foreach (var (keys, what) in new[]
+            Add(GraphLook.Text(GraphSchema.Word("help.title"), "tg-popup-head"));
+            for (var i = 1; GraphSchema.HasWord("help." + i); i++)
             {
-                ("Drag anything", "Moves it: a card, a frame or a node, by its title, its name or the space around its rows"),
-                ("Drag on the empty board", "Selects what's in the box; Shift or Ctrl adds to what's selected"),
-                ("Double-click a name, or F2", "Renames it"),
-                ("Right-click a thing, or its …", "Its menu: add, rename, cut, copy, paste, duplicate, delete, note"),
-                ("Right-click empty space, or Space", "Add: on the empty board, something new; in a frame, a node"),
-                ("Drag from a pin", "Make a wire: where it can go is lit. Dropped on nothing, it asks what to add"),
-                ("Type on an input", "A number, a text in quotes, true or false"),
-                ("Alt+click a pin", "Break its links"),
-                ("Middle button, or Alt+drag", "Move around"),
-                ("Wheel", "Zoom, about the pointer"),
-                ("F", "Fit what's selected, or everything"),
-                ("Ctrl+F", "My game: find anything by name"),
-                ("Del", "Delete what's selected"),
-                ("Ctrl+C, Ctrl+V, Ctrl+D", "Copy, paste, duplicate"),
-                ("Ctrl+Z, Ctrl+Y", "Undo, redo"),
-                ("Ctrl+S", "Save"),
-            })
-            {
+                var what = GraphSchema.Word("help." + i);
                 var row = GraphLook.Row("tg-option");
-                var k = GraphLook.Text(keys, "tg-option-title");
+                var k = GraphLook.Text(GraphSchema.WordKeys("help." + i), "tg-option-title");
                 k.style.width = 150;
                 k.style.whiteSpace = WhiteSpace.Normal;
                 row.Add(k);

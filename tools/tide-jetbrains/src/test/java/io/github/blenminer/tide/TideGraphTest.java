@@ -80,7 +80,9 @@ public final class TideGraphTest extends BasePlatformTestCase {
         assertTrue(schema.getAsJsonObject().getAsJsonArray("nodes").size() > 40);
         final JsonObject theme = TideGraphEditor.theme();
         assertEquals("theme", theme.get("type").getAsString());
-        assertTrue(theme.getAsJsonObject("colors").has("bg"));
+        assertTrue(theme.has("dark"));
+        assertFalse("the page's colours are the schema's, not the IDE's", theme.has("colors"));
+        assertTrue("the fonts are in the page", page.contains("data:font/ttf;base64,"));
     }
 
     public void testTheBridgeLoadsEditsAsksTidelsAndPassesDiagnostics() throws Exception {

@@ -1,0 +1,170 @@
+{
+  "tidegraph": 1,
+  "nextId": 93,
+  "decls": [
+    {
+      "kind": "enum",
+      "id": 1,
+      "x": 0,
+      "y": 0,
+      "name": "Phase",
+      "members": [
+        {"id": 2, "name": "Idle"},
+        {"id": 3, "name": "Running"}
+      ]
+    },
+    {
+      "kind": "component",
+      "id": 4,
+      "x": 0,
+      "y": 192,
+      "name": "Ball",
+      "members": [
+        {"kind": "field", "id": 5, "type": "float3", "name": "velocity"},
+        {
+          "kind": "field",
+          "id": 6,
+          "type": "float",
+          "name": "speed",
+          "default": {
+            "root": 7,
+            "nodes": [
+              {"id": 7, "k": "int", "x": -164, "y": 0, "text": "2"}
+            ]
+          }
+        },
+        {"kind": "field", "id": 8, "type": "Phase", "name": "phase"},
+        {"kind": "field", "id": 9, "type": "int", "name": "bounces"}
+      ]
+    },
+    {
+      "kind": "component",
+      "id": 10,
+      "x": 0,
+      "y": 436,
+      "name": "Spinner",
+      "members": [
+        {"kind": "field", "id": 11, "type": "float", "name": "angle"},
+        {
+          "kind": "method",
+          "id": 12,
+          "x": 380,
+          "y": 0,
+          "name": "Turn",
+          "returnType": "void",
+          "params": [
+            {"id": 13, "mode": "read", "type": "float", "name": "by"}
+          ],
+          "body": {
+            "entry": 16,
+            "nodes": [
+              {"id": 14, "k": "name", "x": 120, "y": 136, "name": "angle"},
+              {"id": 15, "k": "name", "x": 0, "y": 136, "name": "by"},
+              {"id": 16, "k": "assign", "x": 120, "y": 0, "op": "+=", "target": 14, "value": 15}
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "kind": "function",
+      "id": 17,
+      "x": 1248,
+      "y": 0,
+      "name": "Twice",
+      "returnType": "int",
+      "params": [
+        {"id": 18, "mode": "read", "type": "int", "name": "amount"}
+      ],
+      "body": {
+        "entry": 22,
+        "nodes": [
+          {"id": 19, "k": "name", "x": 0, "y": 112, "name": "amount"},
+          {"id": 20, "k": "int", "x": 136, "y": 160, "text": "2"},
+          {"id": 21, "k": "binary", "x": 136, "y": 112, "op": "*", "lhs": 19, "rhs": 20},
+          {"id": 22, "k": "return", "x": 364, "y": 0, "value": 21}
+        ]
+      }
+    },
+    {
+      "kind": "system",
+      "id": 23,
+      "x": 380,
+      "y": 400,
+      "name": "Roll",
+      "params": [
+        {"id": 24, "mode": "mut", "type": "Ball", "name": "ball"},
+        {"id": 25, "mode": "mut", "type": "Transform", "name": "transform"},
+        {"id": 26, "mode": "mut", "type": "Spinner", "name": "spinner"}
+      ],
+      "body": {
+        "entry": 31,
+        "nodes": [
+          {"id": 27, "k": "name", "x": 0, "y": 112, "name": "ball"},
+          {"id": 28, "k": "member", "x": 120, "y": 112, "object": 27, "member": "speed"},
+          {"id": 29, "k": "int", "x": 316, "y": 160, "text": "2"},
+          {"id": 30, "k": "binary", "x": 316, "y": 112, "op": "*", "lhs": 28, "rhs": 29},
+          {"id": 31, "k": "var", "x": 544, "y": 0, "mut": true, "name": "bounce", "value": 30, "next": 34},
+          {"id": 32, "k": "local", "x": 812, "y": 136, "ref": 31},
+          {"id": 33, "k": "int", "x": 812, "y": 136, "text": "1"},
+          {"id": 34, "k": "assign", "x": 812, "y": 0, "op": "+=", "target": 32, "value": 33, "next": 43},
+          {"id": 35, "k": "name", "x": 1578, "y": 136, "name": "ball"},
+          {"id": 36, "k": "member", "x": 1698, "y": 136, "object": 35, "member": "speed"},
+          {"id": 37, "k": "name", "x": 1470, "y": 184, "name": "Math"},
+          {"id": 38, "k": "method", "x": 1470, "y": 184, "object": 37, "name": "Clamp", "args": [92, 41, 42]},
+          {"id": 39, "k": "name", "x": 1080, "y": 184, "name": "ball"},
+          {"id": 40, "k": "member", "x": 1200, "y": 184, "object": 39, "member": "speed"},
+          {"id": 41, "k": "int", "x": 1470, "y": 232, "text": "0"},
+          {"id": 42, "k": "int", "x": 1470, "y": 232, "text": "10"},
+          {"id": 43, "k": "assign", "x": 1698, "y": 0, "op": "=", "target": 36, "value": 38, "next": 48},
+          {"id": 44, "k": "name", "x": 2138, "y": 136, "name": "transform"},
+          {"id": 45, "k": "member", "x": 2298, "y": 136, "object": 44, "member": "position"},
+          {"id": 46, "k": "name", "x": 1966, "y": 184, "name": "ball"},
+          {"id": 47, "k": "member", "x": 2086, "y": 184, "object": 46, "member": "velocity"},
+          {"id": 48, "k": "assign", "x": 2298, "y": 0, "op": "+=", "target": 45, "value": 47, "next": 56},
+          {"id": 49, "k": "name", "x": 2566, "y": 136, "name": "ball"},
+          {"id": 50, "k": "member", "x": 2686, "y": 136, "object": 49, "member": "velocity"},
+          {"id": 51, "k": "call", "x": 2686, "y": 184, "name": "float3", "args": [52, 54, 55]},
+          {"id": 52, "k": "int", "x": 2686, "y": 184, "text": "1"},
+          {"id": 53, "k": "int", "x": 2686, "y": 184, "text": "2"},
+          {"id": 54, "k": "unary", "x": 2686, "y": 184, "op": "-", "value": 53},
+          {"id": 55, "k": "float", "x": 2686, "y": 184, "text": "3.5"},
+          {"id": 56, "k": "assign", "x": 2686, "y": 0, "op": "=", "target": 50, "value": 51, "next": 61},
+          {"id": 57, "k": "name", "x": 0, "y": 564, "name": "ball"},
+          {"id": 58, "k": "member", "x": 120, "y": 564, "object": 57, "member": "phase"},
+          {"id": 59, "k": "name", "x": 120, "y": 612, "name": "Phase"},
+          {"id": 60, "k": "member", "x": 120, "y": 612, "object": 59, "member": "Running"},
+          {"id": 61, "k": "assign", "x": 120, "y": 428, "op": "=", "target": 58, "value": 60, "next": 65},
+          {"id": 62, "k": "name", "x": 428, "y": 540, "name": "spinner"},
+          {"id": 63, "k": "method", "x": 572, "y": 540, "object": 62, "name": "Turn", "args": [64]},
+          {"id": 64, "k": "local", "x": 444, "y": 588, "ref": 31},
+          {"id": 65, "k": "eval", "x": 800, "y": 428, "value": 63, "next": 70},
+          {"id": 66, "k": "call", "x": 1052, "y": 540, "name": "Log", "args": [67, 68, 69]},
+          {"id": 67, "k": "this", "x": 1052, "y": 540},
+          {"id": 68, "k": "string", "x": 1052, "y": 540, "text": "rolled"},
+          {"id": 69, "k": "bool", "x": 1052, "y": 540, "value": true},
+          {"id": 70, "k": "eval", "x": 1264, "y": 428, "value": 66, "next": 83},
+          {"id": 71, "k": "name", "x": 1516, "y": 564, "name": "ball"},
+          {"id": 72, "k": "member", "x": 1636, "y": 564, "object": 71, "member": "speed"},
+          {"id": 73, "k": "int", "x": 1832, "y": 612, "text": "5"},
+          {"id": 74, "k": "binary", "x": 1832, "y": 564, "op": ">", "lhs": 72, "rhs": 73},
+          {"id": 75, "k": "name", "x": 2372, "y": 866, "name": "ball"},
+          {"id": 76, "k": "member", "x": 2492, "y": 866, "object": 75, "member": "bounces"},
+          {"id": 79, "k": "call", "x": 2248, "y": 914, "name": "Twice", "args": [64]},
+          {"id": 81, "k": "binary", "x": 2468, "y": 914, "op": "+", "lhs": 76, "rhs": 79},
+          {"id": 82, "k": "assign", "x": 2696, "y": 730, "op": "=", "target": 76, "value": 81},
+          {"id": 83, "k": "if", "x": 2060, "y": 428, "cond": 74, "then": 82, "next": 88},
+          {"id": 84, "k": "int", "x": 2296, "y": 564, "text": "1"},
+          {"id": 85, "k": "int", "x": 2296, "y": 564, "text": "2"},
+          {"id": 86, "k": "int", "x": 2296, "y": 564, "text": "3"},
+          {"id": 87, "k": "list", "x": 2296, "y": 564, "items": [84, 85, 86]},
+          {"id": 88, "k": "foreach", "x": 2508, "y": 428, "name": "i", "collection": 87, "body": 91},
+          {"id": 89, "k": "local", "x": 2696, "y": 890, "ref": 31},
+          {"id": 90, "k": "local", "x": 2568, "y": 890, "ref": 88},
+          {"id": 91, "k": "assign", "x": 2696, "y": 754, "op": "+=", "target": 89, "value": 90},
+          {"id": 92, "k": "reroute", "x": 1396, "y": 184, "value": 40}
+        ]
+      }
+    }
+  ]
+}

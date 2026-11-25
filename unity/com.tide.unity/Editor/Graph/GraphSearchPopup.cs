@@ -26,7 +26,7 @@ namespace Tide.Editor
         HashSet<string> validOps;      // The operators that work on the value wanted, as the checker says
 
         public GraphSearchPopup(GraphBoard board, GraphFrame frame, GraphSearchContext context, Vector2 at)
-            : base(Heading(frame, context), null, context.Retarget != 0 ? "Search what it has" : "Search, or type a number or a text", 330, 420)
+            : base(Heading(frame, context), null, GraphSchema.Word(context.Retarget != 0 ? "search.member" : "value.search.any"), 330, 420)
         {
             this.board = board;
             this.frame = frame;
@@ -73,11 +73,11 @@ namespace Tide.Editor
 
         static string Heading(GraphFrame frame, GraphSearchContext c)
         {
-            if (c.Retarget != 0) return "What its value has";
+            if (c.Retarget != 0) return GraphSchema.Word("search.of", "type", GraphSchema.Word("search.itsValue"));
             var p = c.Pending;
-            if (p == null) return "Add to " + frame.Title;
-            if (p.Exec) return p.Input ? "What happens before it?" : "What happens next?";
-            return p.Input ? "What works it out?" : p.IsRead ? $"Do what with {p.Name ?? p.Label}?" : "Do what with this value?";
+            if (p == null) return GraphSchema.Word("picker.add.to", "name", frame.Title);
+            if (p.Exec) return GraphSchema.Word(p.Input ? "search.before" : "search.next");
+            return p.Input ? GraphSchema.Word("search.value") : p.IsRead ? $"Do what with {p.Name ?? p.Label}?" : GraphSchema.Word("search.use");
         }
 
         GraphOption Option(GraphSearchEntry e) => new GraphOption
@@ -93,7 +93,7 @@ namespace Tide.Editor
             if (pending != null && !everything)
                 options.Add(new GraphOption
                 {
-                    Title = "Show everything", Detail = "Not only what suits this wire", Section = "Something else", Pinned = true, KeepOpen = true, Data = "everything",
+                    Title = GraphSchema.Word("search.everything"), Detail = GraphSchema.Word("search.everything.summary"), Section = GraphSchema.Word("value.else"), Pinned = true, KeepOpen = true, Data = "everything",
                     Pick = () =>
                     {
                         everything = true;
@@ -110,13 +110,13 @@ namespace Tide.Editor
             {
                 if (!s.Asks(context)) continue;
                 asking++;
-                Status = "Asking the language server…";
+                Status = GraphSchema.Word("picker.asking");
                 s.Ask(context, (found, why) =>
                 {
                     asking--;
                     if (WasClosed) return;
                     Merge(found);
-                    Status = asking > 0 ? "Asking the language server…" : found == null || found.Count == 0 ? why : null;
+                    Status = asking > 0 ? GraphSchema.Word("picker.asking") : found == null || found.Count == 0 ? why : null;
                     Fill(true);
                 });
             }
@@ -153,9 +153,9 @@ namespace Tide.Editor
         IEnumerable<GraphSearchEntry> Commands()
         {
             if (pending != null) yield break;
-            yield return new GraphSearchEntry { Group = "Board", Title = "Note", Keywords = "note comment box", Detail = "A box of text behind the nodes", Command = () => board.AddNote(frame, at) };
+            yield return new GraphSearchEntry { Group = "Board", Title = GraphSchema.Word("title.note"), Keywords = "note comment box", Detail = GraphSchema.Word("details.note.tip"), Command = () => board.AddNote(frame, at) };
             if (GraphDocument.IsClip(GraphBoard.Clipboard))
-                yield return new GraphSearchEntry { Group = "Board", Title = "Paste", Keywords = "paste clipboard", Detail = "What was copied", Command = () => board.Paste(board.ToBoard(frame.At + at)) };
+                yield return new GraphSearchEntry { Group = "Board", Title = GraphSchema.Word("menu.paste"), Keywords = "paste clipboard", Detail = "What was copied", Command = () => board.Paste(board.ToBoard(frame.At + at)) };
         }
 
         // What's typed is itself a value, where a value goes: a number, true or false, or a text
@@ -180,7 +180,7 @@ namespace Tide.Editor
                 else if (!text.Contains("\""))
                     typed.Add(new GraphSearchEntry
                     {
-                        Group = "A value", Title = "\"" + text + "\"", Keywords = text, Detail = "As a text", Priority = -1,
+                        Group = "A value", Title = "\"" + text + "\"", Keywords = text, Detail = GraphSchema.Word("value.text"), Priority = -1,
                         Make = (doc, graph, p) =>
                         {
                             var n = doc.AddNode(graph, "string", p.x, p.y);

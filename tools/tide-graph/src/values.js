@@ -8,6 +8,7 @@
     const { Doc } = G;
 
     const AXES = ['x', 'y', 'z', 'w'];
+    const w = (key, vars) => G.w(key, vars);
     // How many numbers a vector type has: the digit its name ends with (float3), for a type whose control the
     // schema says is a vector's; 0 for any other
     function vectorSize(name, schema) {
@@ -79,7 +80,7 @@
     // A short reading of a value that's more than a literal, for its chip
     function summary(g, schema) {
         const root = Doc.nodeIn(g, g?.root);
-        if (!root) return 'nothing yet';
+        if (!root) return w('value.nothingYet');
         if (root.k === 'call') return `${root.name}(…)`;
         if (root.k === 'method') return `.${root.name}(…)`;
         if (root.k === 'member') return `.${root.member}`;
@@ -123,12 +124,12 @@
         const put = make => app.edit(d => set(holder, key, make ? make(d) : undefined, order));
         const openGraph = () => app.openValue(slot, holder, key, order, type);
         const wrap = (...parts) => el('span.tg-value', { dataset: { value: `${slot.owner}:${key}` } }, parts,
-            button('ƒ', openGraph, 'Work it out with nodes instead', 'tg-value-more'));
+            button('ƒ', openGraph, w('value.graph.tip'), 'tg-value-more'));
         const title = label ? `${label}` : undefined;
 
         if (what.kind === 'graph' || (what.kind === 'call' && !callFits(app.editor.schema, what))) {
             return el('span.tg-value', { dataset: { value: `${slot.owner}:${key}` } },
-                button('ƒ ' + summary(g, app.editor.schema), openGraph, 'A value worked out with nodes: open it', 'tg-value-graph'));
+                button('ƒ ' + summary(g, app.editor.schema), openGraph, w('value.graph.open'), 'tg-value-graph'));
         }
         // What kind of control: the type's, or the literal's own where the type doesn't say
         let kind = tk.kind;
@@ -143,7 +144,7 @@
                 else put(d => numberGraph(d, v.trim()));
             }, {
                 placeholder: none, className: 'tg-input.tg-value-number', fk, title, onEnter,
-                check: v => (v.trim() === '' || NUMBER.test(v.trim()) ? null : `"${v}" isn't a number`),
+                check: v => (v.trim() === '' || NUMBER.test(v.trim()) ? null : w('check.number', { text: v })),
             }));
         }
         if (kind === 'bool') {
@@ -153,16 +154,16 @@
                 put(!v && !required ? null : d => d.valueGraph('bool', String(v)));
             } });
             if (fk) box.dataset.fk = fk;
-            return wrap(el('label.tg-value-bool', { onpointerdown: e => e.stopPropagation() }, box, el('span', { text: on ? 'yes' : 'no' })));
+            return wrap(el('label.tg-value-bool', { onpointerdown: e => e.stopPropagation() }, box, el('span', { text: on ? w('value.yes') : w('value.no') })));
         }
         if (kind === 'string') {
             return wrap(field(what.kind === 'string' ? what.text : '', v => put(v === '' && !required ? null : d => d.valueGraph('string', v)),
-                { placeholder: 'text', className: 'tg-input.tg-value-text', fk, title, onEnter }));
+                { placeholder: w('value.text'), className: 'tg-input.tg-value-text', fk, title, onEnter }));
         }
         if (kind === 'char') {
             const shown = what.kind === 'char' ? what.text.replace(/^'|'$/g, '') : '';
             return wrap(field(shown, v => put(v === '' && !required ? null : d => d.valueGraph('char', `'${v}'`)),
-                { placeholder: 'a', className: 'tg-input.tg-value-char', fk, title, check: v => ([...v].length <= 1 || /^\\.+$/.test(v) ? null : 'One character') }));
+                { placeholder: 'a', className: 'tg-input.tg-value-char', fk, title, check: v => ([...v].length <= 1 || /^\\.+$/.test(v) ? null : w('input.char')) }));
         }
         if (kind === 'vector') {
             const name = what.kind === 'call' ? what.name : tk.name;
@@ -180,18 +181,18 @@
             for (let i = 0; i < size; i++) {
                 inputs.push(field(spread ? texts[0] : texts[i] ?? '', commit, {
                     placeholder: '0', className: 'tg-input.tg-value-axis', fk: fk ? `${fk}.${i}` : undefined, title: AXES[i], onEnter: i === size - 1 ? onEnter : undefined,
-                    check: v => (v.trim() === '' || NUMBER.test(v.trim()) ? null : `"${v}" isn't a number`),
+                    check: v => (v.trim() === '' || NUMBER.test(v.trim()) ? null : w('check.number', { text: v })),
                 }));
             }
             return wrap(el('span.tg-value-vector', null, inputs));
         }
         if (kind === 'color') {
             const texts = what.kind === 'call' ? what.texts : null;
-            const swatch = el('input.tg-value-color', { type: 'color', value: texts ? toHex(texts) : '#ffffff', title: title || 'Pick a colour', onpointerdown: e => e.stopPropagation() });
+            const swatch = el('input.tg-value-color', { type: 'color', value: texts ? toHex(texts) : '#ffffff', title: title || w('value.colour.pick'), onpointerdown: e => e.stopPropagation() });
             if (fk) swatch.dataset.fk = fk;
             swatch.addEventListener('change', () => put(d => d.callGraph('Color', [...fromHex(swatch.value).map(t => (t.includes('.') ? t : t + '.0')), ...(texts && texts.length > 3 ? [texts[3]] : [])])));
             return wrap(el('span.tg-value-colour' + (texts ? '' : '.tg-unset'), null, swatch,
-                texts ? null : el('span.tg-value-hint', { text: 'white' })));
+                texts ? null : el('span.tg-value-hint', { text: w('value.white') })));
         }
         if (kind === 'enum') {
             const current = what.kind === 'member' ? what.member : '';
@@ -201,12 +202,12 @@
             return wrap(s);
         }
         if (kind === 'word') {
-            return el('span.tg-value', { dataset: { value: `${slot.owner}:${key}` } }, button(what.word, openGraph, 'Open it as a graph to change it', 'tg-value-graph'));
+            return el('span.tg-value', { dataset: { value: `${slot.owner}:${key}` } }, button(what.word, openGraph, w('value.graph.change'), 'tg-value-graph'));
         }
         // A type with no control of its own: its value is made with nodes
         return el('span.tg-value', { dataset: { value: `${slot.owner}:${key}` } },
-            button(what.kind === 'none' ? '+ value' : 'ƒ ' + summary(g, app.editor.schema), openGraph,
-                what.kind === 'none' ? 'Give it a value, made with nodes' : 'Open its value', 'tg-value-graph' + (what.kind === 'none' ? '.tg-unset' : '')));
+            button(what.kind === 'none' ? w('value.add') : 'ƒ ' + summary(g, app.editor.schema), openGraph,
+                what.kind === 'none' ? w('value.add.tip') : w('value.open'), 'tg-value-graph' + (what.kind === 'none' ? '.tg-unset' : '')));
     }
 
     // Whether a call of numbers is a vector's or a colour's, which have a control

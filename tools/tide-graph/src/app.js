@@ -22,6 +22,7 @@
     const { el, button, menu, popup, closePopups, popupOpen, tooltip, toast } = G.ui;
     const { Doc, Schema, Editor, Lang, Board } = G;
     const { ENTRY, RESULT } = G.frames;
+    const w = (key, vars) => G.w(key, vars);
 
     class App {
         constructor(host, root) {
@@ -101,11 +102,13 @@
             }
             if (schemaJson && (!this.editor || m.schema)) {
                 const fresh = !this.editor;
+                const schema = new Schema(schemaJson);
+                this.useSchema(schema);
                 if (fresh) {
-                    this.editor = new Editor(new Schema(schemaJson), msg => this.post(msg));
+                    this.editor = new Editor(schema, msg => this.post(msg));
                     this.editor.on(what => this.changed(what));
                 } else {
-                    this.editor.setSchema(new Schema(schemaJson));
+                    this.editor.setSchema(schema);
                 }
             }
             if (!this.editor) return;
@@ -114,7 +117,12 @@
             this.editor.load(m.text ?? '', true);
             // tidels's own schema, when it's there, is the one its tidec reads
             this.request('tide/graphSchema', null).then(s => {
-                if (s && s.nodes && JSON.stringify(s) !== JSON.stringify(this.editor.schema.json)) this.editor.setSchema(new Schema(s));
+                if (!s || !s.nodes || JSON.stringify(s) === JSON.stringify(this.editor.schema.json)) return;
+                // (an older tidels's schema has no look or words: the host's copy's stay)
+                const schema = new Schema({ ...s, look: s.look || this.editor.schema.json.look, words: s.words || this.editor.schema.json.words });
+                if (JSON.stringify(schema.json) === JSON.stringify(this.editor.schema.json)) return;
+                this.useSchema(schema);
+                this.editor.setSchema(schema);
             }, () => {});
             this.checkSoon(0);
         }
@@ -126,33 +134,86 @@
             const root = this.root;
             root.classList.add('tg-root');
             this.statusChip = el('button.tg-status', { type: 'button', onclick: e => { e.stopPropagation(); this.showProblems(); }, onpointerdown: e => e.stopPropagation() });
-            this.undoButton = button('↶', () => this.command('undo'), 'Undo (Ctrl+Z)', 'tg-button.tg-tool');
-            this.redoButton = button('↷', () => this.command('redo'), 'Redo (Ctrl+Y)', 'tg-button.tg-tool');
-            this.addButton = button('+ Add', e => G.pickers.addMenu(this, 0, 0, { anchor: e.currentTarget }), 'Add something to the file (or right-click the board)', 'tg-button.tg-primary.tg-add');
-            this.gameButton = button('My game', () => this.togglePanel('mygame'), 'What this file has, by group: click one to go to it, drag one out to use it', 'tg-button.tg-mygame-button');
-            this.findButton = button('Find…', e => G.pickers.jumpTo(this, { anchor: e.currentTarget }), 'Jump to a declaration by its name (Ctrl+F)', 'tg-button.tg-find');
-            this.detailsButton = button('Details', () => this.togglePanel('details'), "What's selected: its options, its note", 'tg-button.tg-details-button');
+            // (their words are the schema's: labels() puts them on once it's there)
+            this.undoButton = button('', () => this.command('undo'), '', 'tg-button.tg-tool');
+            this.redoButton = button('', () => this.command('redo'), '', 'tg-button.tg-tool');
+            this.addButton = button('', e => G.pickers.addMenu(this, 0, 0, { anchor: e.currentTarget }), '', 'tg-button.tg-primary.tg-add');
+            this.gameButton = button('', () => this.togglePanel('mygame'), '', 'tg-button.tg-mygame-button');
+            this.findButton = button('', e => G.pickers.jumpTo(this, { anchor: e.currentTarget }), '', 'tg-button.tg-find');
+            this.detailsButton = button('', () => this.togglePanel('details'), '', 'tg-button.tg-details-button');
+            this.moreButton = button('', e => this.boardMenu(e.currentTarget), '', 'tg-button.tg-tool.tg-board-more');
             const bar = el('div.tg-toolbar', null,
                 this.addButton, this.gameButton, this.findButton,
-                el('span.tg-grow'), this.statusChip, el('span.tg-sep'), this.undoButton, this.redoButton, el('span.tg-sep'), this.detailsButton,
-                button('⋯', e => this.boardMenu(e.currentTarget), 'More: view as Tide, tidy up, this file\'s namespace', 'tg-button.tg-tool.tg-board-more'));
+                el('span.tg-grow'), this.statusChip, el('span.tg-sep'), this.undoButton, this.redoButton, el('span.tg-sep'), this.detailsButton, this.moreButton);
             this.bannerEl = el('div.tg-banner');
             this.board = new Board(this);
             this.myGame = new G.panels.MyGame(this);
             this.details = new G.panels.Details(this);
-            this.zoomLabel = button('100%', () => { this.board.zoomAt(1 / this.board.zoom); }, 'Back to full size', 'tg-button.tg-zoom-label');
-            const zoom = el('div.tg-zoom', { onpointerdown: e => e.stopPropagation() },
-                button('−', () => this.board.zoomAt(1 / 1.25), 'Zoom out (Ctrl and the wheel)', 'tg-button'),
-                this.zoomLabel,
-                button('+', () => this.board.zoomAt(1.25), 'Zoom in', 'tg-button'),
-                button('Fit', () => this.board.fit(false), 'See the whole file (F)', 'tg-button'));
+            this.zoomLabel = button('100%', () => { this.board.zoomAt(1 / this.board.zoom); }, '', 'tg-button.tg-zoom-label');
+            this.zoomOut = button('', () => this.board.zoomAt(1 / 1.25), '', 'tg-button');
+            this.zoomIn = button('', () => this.board.zoomAt(1.25), '', 'tg-button');
+            this.fitButton = button('', () => this.board.fit(false), '', 'tg-button');
+            const zoom = el('div.tg-zoom', { onpointerdown: e => e.stopPropagation() }, this.zoomOut, this.zoomLabel, this.zoomIn, this.fitButton);
             this.main = el('div.tg-main', null, this.myGame.el, el('div.tg-center', null, this.board.el, zoom), this.details.el);
             G.ui.put(root, bar, this.bannerEl, this.main);
             this.keys();
             addEventListener('resize', () => { if (this.editor) this.board.scheduleCull(); });
+            // A VS Code webview says dark or light by its body's class, which changes with VS Code's theme
+            if (typeof MutationObserver === 'function' && document.body) {
+                new MutationObserver(() => { this.applyLook(); if (this.editor) this.board.render(); }).observe(document.body, { attributes: true, attributeFilter: ['class'] });
+            }
             this.banner(null);
             this.renderStatus();
             this.showPanels();
+        }
+
+        // The toolbar's and the zoom's words, the schema's
+        labels() {
+            const w = G.w;
+            const put = (b, key) => { b.textContent = w(key); b.title = w(key + '.tip'); };
+            put(this.addButton, 'toolbar.add');
+            put(this.gameButton, 'toolbar.myGame');
+            put(this.findButton, 'toolbar.find');
+            put(this.undoButton, 'toolbar.undo');
+            put(this.redoButton, 'toolbar.redo');
+            put(this.detailsButton, 'toolbar.details');
+            put(this.moreButton, 'toolbar.more');
+            put(this.zoomOut, 'zoom.out');
+            put(this.zoomIn, 'zoom.in');
+            put(this.fitButton, 'zoom.fit');
+            this.zoomLabel.title = w('zoom.full.tip');
+            this.board.hint.textContent = w('board.hint');
+        }
+
+        // The schema the page goes by: its words, its look (colours for the host's dark or light, sizes, the font)
+        useSchema(schema) {
+            G.schemaNow = schema;
+            G.look = schema.look;
+            G.frames.setLook(schema.look.sizes);
+            this.applyLook();
+            this.labels();
+        }
+
+        // The look's colours and sizes as the page's variables, for dark or light, whichever the host is (a VS Code
+        // webview says it with its body's class; the others with a theme message)
+        applyLook() {
+            const look = G.schemaNow?.look;
+            if (!look?.colors) return;
+            const r = document.documentElement;
+            const body = document.body?.classList;
+            if (body && (body.contains('vscode-light') || body.contains('vscode-high-contrast-light'))) r.classList.add('tg-light');
+            else if (body && (body.contains('vscode-dark') || body.contains('vscode-high-contrast'))) r.classList.remove('tg-light');
+            const mode = r.classList.contains('tg-light') ? 'light' : 'dark';
+            G.mode = mode;
+            const kebab = k => k.replace(/[A-Z]/g, c => '-' + c.toLowerCase());
+            for (const [k, v] of Object.entries(look.colors)) r.style.setProperty('--tg-' + kebab(k), v[mode]);
+            r.style.setProperty('--tg-head-entry', look.headers.entry[mode]);
+            for (const [k, v] of Object.entries(look.sizes)) {
+                const name = k === 'font' ? 'font-size' : kebab(k);
+                r.style.setProperty('--tg-' + name, k === 'lineHeight' || k === 'titleWeight' ? String(v) : v + 'px');
+            }
+            r.style.setProperty('--tg-font', `"${look.font.family}", sans-serif`);
+            r.style.setProperty('--tg-code', look.font.code);
         }
 
         // Opens or closes a panel, and remembers it
@@ -206,6 +267,16 @@
             return b.frames.size === 1 ? [...b.frames.values()][0] : null;
         }
 
+        // A variable of My game clicked: where it comes from is selected and shown (its row on the entry, or the node
+        // that declares the local)
+        revealVariable(v) {
+            const f = v.frame;
+            if (v.start.local !== undefined) { this.reveal(v.start.local); return; }
+            const pin = f.pins.find(p => p.name === v.start.name);
+            this.board.reveal(f.item.id);
+            if (pin?.element?.id) this.editor.selectRow(f.item.id, pin.element.id);
+        }
+
         // Where a variable of My game would go if dropped on `under`: { el } of the input or the frame it goes in
         variableTarget(v, under) {
             const f = this.board.frameAt(under);
@@ -221,13 +292,13 @@
             const f = v.frame;
             const under = document.elementFromPoint(x, y);
             if (!this.variableTarget(v, under)) {
-                toast(`Drop ${v.text} inside ${this.editor.doc.titleOf(f.item)}: it's that code's to use.`);
+                toast(w('toast.dropVariableOutside', { name: v.text, code: this.editor.doc.titleOf(f.item) }));
                 return;
             }
             const port = this.board.portAt(f, under);
             const can = f.changeable(v.start);
             if (port && port.input && !port.exec) {
-                if (f.isPlace(port) && !can.ok) { toast(`That can't go there: ${can.why}.`); return; }
+                if (f.isPlace(port) && !can.ok) { toast(w('toast.cantGoThere', { why: can.why })); return; }
                 f.setInput(port, (d, g, at) => d.makePath(g, v.start, v.members, at));
                 return;
             }
@@ -249,7 +320,7 @@
                 made(last);
             };
             const doSet = () => {
-                if (!can.ok) { toast(`It can't be set here: ${can.why}.`); return; }
+                if (!can.ok) { toast(w('toast.cantSet', { why: can.why })); return; }
                 let node = null;
                 this.edit(doc => {
                     const g = doc.ensureGraph(f.slot);
@@ -268,8 +339,8 @@
             if (get) { doGet(); return; }
             if (set) { doSet(); return; }
             menu(x, y, [
-                { label: `Get ${v.text}`, summary: 'Its value, to wire into any number of inputs', name: 'get', hint: 'Ctrl', run: doGet },
-                { label: `Set ${v.text}`, summary: 'Changes it, when the code runs this', name: 'set', hint: 'Alt', run: doSet, disabled: !can.ok, why: can.why },
+                { label: w('menu.get', { name: v.text }), summary: w('menu.get.summary'), name: 'get', hint: G.wk('menu.get'), run: doGet },
+                { label: w('menu.set', { name: v.text }), summary: w('menu.set.summary'), name: 'set', hint: G.wk('menu.set'), run: doSet, disabled: !can.ok, why: can.why },
             ], { title: v.text, className: 'tg-context' });
         }
 
@@ -286,7 +357,7 @@
         changed(what) {
             const ed = this.editor;
             if (what === 'document') {
-                this.banner(ed.error ? `This file isn't a graph the editor can read (${ed.error}). Fix it as text; the board comes back when it reads again.` : null);
+                this.banner(ed.error ? w('banner.unreadable', { error: ed.error }) : null);
                 this.problemCounts = null;
                 this.board.render();
                 this.selectionKey = null;
@@ -349,11 +420,11 @@
             const warnings = list.length - errors;
             let text, cls, title;
             if (!this.editor) { text = ''; cls = 'tg-status-quiet'; title = ''; }
-            else if (l.status === 'unavailable') { text = 'Not checked'; cls = 'tg-status-off'; title = 'Nothing checks this file: click to see why'; }
-            else if (errors) { text = `${errors} ${errors === 1 ? 'problem' : 'problems'}`; cls = 'tg-status-error'; title = 'Click to see them'; }
-            else if (warnings) { text = `${warnings} ${warnings === 1 ? 'warning' : 'warnings'}`; cls = 'tg-status-warning'; title = 'Click to see them'; }
-            else if (l.status === 'checked') { text = 'Checked'; cls = 'tg-status-ok'; title = 'Tide checked this file and found nothing wrong'; }
-            else { text = 'Checking…'; cls = 'tg-status-quiet'; title = ''; }
+            else if (l.status === 'unavailable') { text = w('status.off'); cls = 'tg-status-off'; title = w('status.off.tip'); }
+            else if (errors) { text = w(errors === 1 ? 'status.problem' : 'status.problems', { count: errors }); cls = 'tg-status-error'; title = w('status.list.tip'); }
+            else if (warnings) { text = w(warnings === 1 ? 'status.warning' : 'status.warnings', { count: warnings }); cls = 'tg-status-warning'; title = w('status.list.tip'); }
+            else if (l.status === 'checked') { text = w('status.checked'); cls = 'tg-status-ok'; title = w('status.checked.tip'); }
+            else { text = w('status.checking'); cls = 'tg-status-quiet'; title = ''; }
             chip.replaceChildren(el('span.tg-status-mark'), text);
             chip.className = 'tg-status ' + cls;
             chip.title = title;
@@ -369,23 +440,40 @@
             const list = this.problems();
             const body = el('div.tg-problems');
             if (l.status === 'unavailable') {
-                G.ui.put(body, el('div.tg-problems-none', null, el('strong', { text: 'This file isn\'t being checked.' }),
-                    el('div', { text: `Tide's language server (tidels, which comes with tide) checks a graph as you edit it. ${l.why ? 'It says: ' + l.why + '.' : 'It isn\'t running.'} You can still edit; mistakes show when the game is built.` })));
+                G.ui.put(body, el('div.tg-problems-none', null, el('strong', { text: w('problems.off') }),
+                    el('div', { text: w(l.why ? 'problems.off.why' : 'problems.off.notRunning', { why: l.why }) })));
             } else if (!list.length) {
-                G.ui.put(body, el('div.tg-problems-none', { text: l.status === 'checked' ? 'Nothing wrong: Tide checked this file.' : 'Checking…' }));
+                G.ui.put(body, el('div.tg-problems-none', { text: l.status === 'checked' ? w('problems.none') : w('status.checking') }));
             }
-            for (const d of list) {
+            // By how much each matters: problems, what to look at, notes; each group under its heading
+            const groups = [[w('problems.group.problems'), d => d.severity === 1], [w('problems.group.look'), d => d.severity === 2], [w('problems.group.notes'), d => d.severity !== 1 && d.severity !== 2]];
+            const sorted = [];
+            for (const [heading, of] of groups) {
+                const mine = list.filter(of);
+                if (!mine.length) continue;
+                sorted.push({ heading }, ...mine);
+            }
+            for (const d of sorted) {
+                if (d.heading) { G.ui.put(body, el('div.tg-problems-heading', { text: d.heading })); continue; }
                 const e = d.node ? ed.doc.find(d.node) : null;
                 const item = d.node ? ed.doc.items().find(i => i.id === ed.itemOf(d.node)) : null;
                 G.ui.put(body, el('div.tg-problem' + (d.severity === 1 ? '.tg-error' : '.tg-warning'), {
                     onclick: () => { closePopups(); if (d.node) this.reveal(d.node); },
-                    title: d.node ? 'Go to it' : '',
+                    title: d.node ? w('problems.goTo') : '',
                 },
                 el('span.tg-problem-mark', { text: d.severity === 1 ? '●' : '▲' }),
                 el('span.tg-problem-text', null, el('span.tg-problem-message', { text: this.board.wordsOf(d) }), d.note && !d.port ? el('span.tg-problem-note', { text: d.note }) : null),
                 item ? el('span.tg-problem-where', { text: `${ed.doc.titleOf(item)}${e && e.id !== item.id && e.role !== 'node' ? ' · ' + ed.doc.describe(e) : ''}` }) : null));
             }
             popup({ anchor: this.statusChip, className: 'tg-popup tg-problems-popup', content: body });
+        }
+
+        // How the board works: every key and gesture, in the schema's words (help.<n>: what, and its keys)
+        showHelp() {
+            const rows = Object.keys(this.editor?.schema.words || {}).filter(k => /^help\.\d+$/.test(k)).sort((a, b) => Number(a.slice(5)) - Number(b.slice(5)));
+            const body = el('div.tg-help', null, el('div.tg-help-title', { text: w('help.title') }),
+                el('div.tg-help-rows', null, rows.map(k => el('div.tg-help-row', null, el('span.tg-help-what', { text: w(k) }), el('span.tg-help-keys', { text: G.wk(k) })))));
+            popup({ anchor: this.moreButton, className: 'tg-popup tg-help-popup', content: body });
         }
 
         // The board's own menu: what isn't on it
@@ -397,18 +485,20 @@
             const r = anchor.getBoundingClientRect();
             const at = { x: r.left - 200, y: r.bottom + 4 };
             menu(0, 0, [
-                { label: 'View as Tide', summary: 'The Tide code this file stands for', name: 'view-tide', run: () => this.post({ type: 'showTide', text: this.lang.text ?? undefined }) },
-                { label: 'Tidy up the board', summary: 'Data in a column, code beside it', name: 'tidy', run: () => this.layoutBoard() },
-                { label: 'See the whole file', hint: 'F', name: 'fit', run: () => this.board.fit(false) },
+                { label: w('menu.viewTide'), summary: w('menu.viewTide.summary'), name: 'view-tide', run: () => this.post({ type: 'showTide', text: this.lang.text ?? undefined }) },
+                { label: w('menu.tidyBoard'), summary: w('menu.tidyBoard.summary'), name: 'tidy', run: () => this.layoutBoard() },
+                { label: w('menu.fit'), hint: G.wk('menu.fit'), name: 'fit', run: () => this.board.fit(false) },
+                { label: w('menu.save'), hint: G.wk('menu.save'), name: 'save', run: () => this.post({ type: 'save' }) },
+                { label: w('menu.help'), name: 'help', run: () => this.showHelp() },
                 { separator: true },
-                { label: 'Namespace…', summary: root.namespace ? root.namespace : 'None: what it declares is seen everywhere', name: 'namespace',
-                    run: () => G.cards.promptText({ ...at, title: 'This file\'s namespace', help: 'A name its declarations go under, like Game.Combat. Empty for none.', value: root.namespace, placeholder: 'Game.Combat',
-                        check: v => (v === '' || /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/.test(v) ? null : 'Names joined by dots, like Game.Combat'),
+                { label: w('menu.namespace'), summary: root.namespace ? root.namespace : w('menu.namespace.none'), name: 'namespace',
+                    run: () => G.cards.promptText({ ...at, title: w('prompt.namespace'), help: w('prompt.namespace.help'), value: root.namespace, placeholder: 'Game.Combat',
+                        check: v => (v === '' || /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/.test(v) ? null : w('check.namespace')),
                         onDone: text => this.edit(() => G.json.set(root, 'namespace', text || undefined, order)) }) },
-                { label: 'Uses…', summary: (root.using || []).join(', ') || 'The namespaces whose names it uses without writing them', name: 'using',
-                    run: () => G.cards.promptRows({ ...at, title: 'Namespaces this file uses', help: 'Their names are used here without the namespace before them.', rows: (root.using || []).map(name => ({ name })),
-                        columns: [{ key: 'name', placeholder: 'Physics', check: v => (/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/.test(v) ? null : 'A namespace, like Physics') }],
-                        addLabel: 'namespace', blank: () => ({ name: '' }),
+                { label: w('menu.uses'), summary: (root.using || []).join(', ') || w('menu.uses.summary'), name: 'using',
+                    run: () => G.cards.promptRows({ ...at, title: w('prompt.uses'), help: w('prompt.uses.help'), rows: (root.using || []).map(name => ({ name })),
+                        columns: [{ key: 'name', placeholder: 'Physics', check: v => (/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/.test(v) ? null : w('check.using')) }],
+                        addLabel: w('prompt.uses.row'), blank: () => ({ name: '' }),
                         onDone: rows => this.edit(() => G.json.set(root, 'using', rows.filter(x => x.name).length ? rows.filter(x => x.name).map(x => x.name) : undefined, order)) }) },
             ], { anchor });
         }
@@ -472,7 +562,7 @@
             }
             const fk = t ? G.menus.nameOf(this, t) : null;
             if (fk) this.rename(fk, t);
-            else if (t) toast('It has no name to change');
+            else if (t) toast(w('toast.noName'));
         }
 
         // What a frame takes, picked: a component, a singleton, a filter...
@@ -526,10 +616,10 @@
             const target = this.dropTarget(item, document.elementFromPoint(x, y));
             if (target) { target.run(x, y); return; }
             const kind = item.value.kind;
-            if (kind === 'component' || kind === 'singleton') toast(`Drop ${item.value.name} on a frame of code to add it to what the code needs.`);
-            else if (kind === 'function') toast(`Drop ${item.value.name} inside a frame of code to call it there.`);
-            else if (kind === 'const') toast(`Drop ${item.value.name} on an input of a node to put it there.`);
-            else toast(`Click ${this.editor.doc.titleOf(item)} to go to it.`);
+            if (kind === 'component' || kind === 'singleton') toast(w('toast.dropNeed', { name: item.value.name }));
+            else if (kind === 'function') toast(w('toast.dropCall', { name: item.value.name }));
+            else if (kind === 'const') toast(w('toast.dropConst', { name: item.value.name }));
+            else toast(w('toast.clickToGo', { name: this.editor.doc.titleOf(item) }));
         }
 
         // ---------------------------------------------------------------------------------------------------------
@@ -636,7 +726,7 @@
                 }
             });
             ed.clearSelection();
-            toast(`Deleted ${names.length === 1 ? names[0] : names.length + ' things'}`, { action: 'Undo', run: () => this.command('undo') });
+            toast(names.length === 1 ? w('toast.deleted', { what: names[0] }) : w('toast.deletedMany', { count: names.length }), { action: w('toast.undo'), run: () => this.command('undo') });
         }
 
         // Lays a frame's nodes out as tidec does
@@ -648,11 +738,11 @@
             try {
                 places = await this.request('tide/graphLayout', { graph: g });
             } catch (e) {
-                toast(`It can't be tidied now: ${e.message}`);
+                toast(w('toast.cantTidy', { why: e.message }));
                 return;
             }
             if (!places || typeof places !== 'object') {
-                toast("It can't be tidied now: Tide's language server didn't answer");
+                toast(w('toast.cantTidy', { why: w('toast.noAnswer') }));
                 return;
             }
             this.edit(() => {
@@ -671,11 +761,11 @@
             try {
                 places = await this.request('tide/graphLayout', { file: ed.doc.root });
             } catch (e) {
-                toast(`The board can't be tidied now: ${e.message}`);
+                toast(w('toast.cantTidyBoard', { why: e.message }));
                 return;
             }
             if (!places || typeof places !== 'object') {
-                toast("The board can't be tidied now: Tide's language server didn't answer");
+                toast(w('toast.cantTidyBoard', { why: w('toast.noAnswer') }));
                 return;
             }
             this.board.auto.clear();
@@ -700,7 +790,7 @@
                 made = doc.newId();
                 const nodes = Doc.nodes(g);
                 const y = nodes.length ? Math.max(...nodes.map(n => Number(n.y) || 0)) + 140 : 120;
-                g.notes.push({ id: made, x: 0, y, w: 260, h: 120, text: 'A note: double-click to write' });
+                g.notes.push({ id: made, x: 0, y, w: 260, h: 120, text: w('note.new') });
             });
             if (made) this.editor.selectNodes(f.slot, [made]);
         }
@@ -792,7 +882,7 @@
                 }
                 made = statement && statement !== node ? statement : node;
             });
-            if (whys.length) toast(`That wire can't be: ${whys[0]}.`);
+            if (whys.length) toast(w('toast.cantWire', { why: whys[0] }));
             if (!made) return;
             ed.selectNodes(frame.slot, [made.id]);
             this.board.showNode(this.board.frameOf(frame.slot), made.id);
@@ -897,7 +987,7 @@
                         try { text = await this.request('host/clipboardRead', null); } catch { text = null; }
                     }
                     if (!Doc.isClip(text)) text = this.clip;
-                    if (!Doc.isClip(text)) { toast('Nothing to paste: copy nodes, a card or a frame first'); break; }
+                    if (!Doc.isClip(text)) { toast(w('toast.nothingToPaste')); break; }
                     this.pasteAt(text);
                     break;
                 }
@@ -917,6 +1007,12 @@
                 }
                 case 'find': G.pickers.jumpTo(this, { anchor: this.findButton }); break;
                 case 'myGame': this.togglePanel('mygame'); break;
+                case 'searchGame':
+                    // My game, with what's typed going to its search
+                    if (!this.open.mygame) this.togglePanel('mygame', true);
+                    requestAnimationFrame(() => { this.myGame.input?.focus(); this.myGame.input?.select(); });
+                    break;
+                case 'help': this.showHelp(); break;
                 case 'details': this.togglePanel('details'); break;
                 default: break;
             }
@@ -957,7 +1053,7 @@
             }
             const f = this.activeFrame();
             if (!f?.graph) {
-                toast('Nodes paste into a frame: put the pointer over the one they go in');
+                toast(w('toast.pasteNodes'));
                 return;
             }
             let dx = 40, dy = 40;
@@ -992,7 +1088,7 @@
             this.edit(() => { const i = e.list.indexOf(e.value); if (i >= 0) e.list.splice(i, 1); });
             ed.row = 0;
             ed.emit('selection');
-            toast(`Deleted ${name}`, { action: 'Undo', run: () => this.command('undo') });
+            toast(w('toast.deleted', { what: name }), { action: w('toast.undo'), run: () => this.command('undo') });
         }
 
         duplicateRow(id) {
@@ -1011,7 +1107,7 @@
         pasteRows(rows) {
             const ed = this.editor;
             const item = ed.picked.size === 1 ? ed.doc.items().find(i => i.id === [...ed.picked][0]) : null;
-            if (!item) { toast('Rows paste into a card or a frame: select the one they go in'); return; }
+            if (!item) { toast(w('toast.pasteRows')); return; }
             const v = item.value;
             const keys = item.spec?.keys || [];
             const at = ed.row ? ed.doc.find(ed.row) : null;
@@ -1056,6 +1152,7 @@
                 else if (mod && key === 'd') this.command('duplicate');
                 else if (mod && key === 'a') this.command('selectAll');
                 else if (mod && key === 'f') this.command('find');
+                else if (mod && key === 'p') this.command('searchGame');
                 else if (!mod && e.key === 'F2') this.command('rename');
                 else if (!mod && (key === 'delete' || key === 'backspace')) { if (!this.board.emptyInputUnder()) this.command('delete'); }
                 else if (!mod && !e.altKey && key === 'f') this.command('frame');
@@ -1080,14 +1177,13 @@
             });
         }
 
-        // The host's colours, for hosts without CSS variables of their own (JetBrains): { dark, colors: { name: css } }
+        // Whether the host is dark or light ({ dark }): the page's colours are the look's for it. A host's own colours
+        // and font aren't taken, so every editor looks the same.
         theme(m) {
             const r = document.documentElement;
             r.classList.toggle('tg-dark', !!m.dark);
             r.classList.toggle('tg-light', m.dark === false);
-            for (const [k, v] of Object.entries(m.colors || {})) r.style.setProperty('--tg-' + k, v);
-            if (m.font) r.style.setProperty('--tg-font', m.font);
-            if (m.fontSize) r.style.setProperty('--tg-font-size', m.fontSize + 'px');
+            this.applyLook();
             if (this.editor) this.board.render();
         }
     }

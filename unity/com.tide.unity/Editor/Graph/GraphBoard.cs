@@ -381,10 +381,28 @@ namespace Tide.Editor
             {
                 var margin = (item.Level == GraphLevel.None ? 200 : 500) / zoom;
                 var view = Rect.MinMaxRect(-pan.x / zoom - margin, -pan.y / zoom - margin, (w - pan.x) / zoom + margin, (h - pan.y) / zoom + margin);
-                var level = !view.Overlaps(item.World) ? GraphLevel.None : far ? GraphLevel.Far : GraphLevel.Near;
+                var level = AllNear ? GraphLevel.Near : !view.Overlaps(item.World) ? GraphLevel.None : far ? GraphLevel.Far : GraphLevel.Near;
                 item.Show(level, refar && level == GraphLevel.Far);
             }
         }
+
+        // While a variable of My game is dragged: the frame it can be dropped in is lit while the pointer is over it.
+        // Gives whether it is.
+        GraphFrame dropLit;
+
+        internal bool LightDrop(GraphFrame frame, Vector2? panelPosition)
+        {
+            var over = frame != null && panelPosition != null && frame.panel != null && frame.worldBound.Contains(panelPosition.Value) ? frame : null;
+            if (dropLit == over) return over != null;
+            dropLit?.RemoveFromClassList("tg-drop-ok");
+            over?.AddToClassList("tg-drop-ok");
+            dropLit = over;
+            return over != null;
+        }
+
+        // Every card and frame drawn up close, wherever it is: what the board drew is written of all of them
+        // (GraphDrawn)
+        internal bool AllNear;
 
         // How many nodes are drawn as elements now: what a big file costs is what's on screen
         internal int NodesDrawn => items.Values.Concat(values.Values).OfType<GraphFrame>().Sum(f => f.Views.Count);
@@ -395,7 +413,7 @@ namespace Tide.Editor
         void ShowStart()
         {
             var empty = Doc != null && (Doc.Root.Arr("decls")?.Items.Count ?? 0) == 0;
-            hint.text = empty ? "" : "Drag: move  ·  Double-click a name: rename  ·  Right-click: menu  ·  Drag a pin: wire  ·  F: fit";
+            hint.text = empty ? "" : GraphSchema.Word("board.hint");
             if (!empty)
             {
                 start?.RemoveFromHierarchy();
@@ -405,8 +423,8 @@ namespace Tide.Editor
             if (start != null) return;
             start = GraphLook.Row("tg-start");
             start.pickingMode = PickingMode.Ignore;
-            start.Add(GraphLook.Text("What do you want to make?", "tg-start-title"));
-            start.Add(GraphLook.Text("Pick one to start with. Everything else is a right click away.", "tg-start-sub"));
+            start.Add(GraphLook.Text(GraphSchema.Word("start.title"), "tg-start-title"));
+            start.Add(GraphLook.Text(GraphSchema.Word("start.sub"), "tg-start-sub"));
             var tiles = GraphLook.Row("tg-tiles");
             foreach (var kind in GraphSchema.DeclKinds.Where(GraphSchema.IsCommon))
             {
@@ -421,8 +439,8 @@ namespace Tide.Editor
             Button more = null;
             more = GraphLook.Plain(() => OpenAdd(null, more), "tg-tile");
             more.name = "start:more";
-            more.Add(GraphLook.Text("More…", "tg-tile-title"));
-            more.Add(GraphLook.Text("Everything a file can hold, with a search", "tg-tile-summary"));
+            more.Add(GraphLook.Text(GraphSchema.Word("start.more"), "tg-tile-title"));
+            more.Add(GraphLook.Text(GraphSchema.Word("start.more.tip"), "tg-tile-summary"));
             tiles.Add(more);
             start.Add(tiles);
             Add(start);
@@ -553,12 +571,19 @@ namespace Tide.Editor
         // ---------------------------------------------------------------------------------------------------------
         // View
 
+        // The zoom changed: the zoom buttons say it
+        internal event Action ZoomChanged;
+
         void ApplyTransform()
         {
             content.style.translate = new Translate(pan.x, pan.y);
             content.style.scale = new Scale(new Vector3(zoom, zoom, 1));
             grid.MarkDirtyRepaint();
+            ZoomChanged?.Invoke();
         }
+
+        // The zoom buttons: by a step about the board's middle, back to full size, or everything
+        internal void ZoomStep(float by) => ZoomAbout(ViewSize / 2, zoom * by);
 
         public Vector2 ToWorld(Vector2 boardPoint) => (boardPoint - pan) / zoom;
 
@@ -572,36 +597,40 @@ namespace Tide.Editor
             var p = ctx.painter2D;
             var r = grid.contentRect;
             if (r.width <= 0 || r.height <= 0) return;
-            var palette = GraphLook.Of(Light);
-            void Lines(float step, Color c)
+            // The page's: a dot every grid step, in the look's grid colour
+            var s = GraphLook.Size("grid") * zoom;
+            if (s < 6) return;
+            p.fillColor = GraphLook.Of(Light).Grid;
+            // (a column of them at a time: a fill takes so many points)
+            for (var x = Mod(pan.x + s / 2, s); x < r.width; x += s)
             {
-                var s = step * zoom;
-                if (s < 8) return;
-                p.strokeColor = c;
-                p.lineWidth = 1;
                 p.BeginPath();
-                for (var x = Mod(pan.x, s); x < r.width; x += s)
+                for (var y = Mod(pan.y + s / 2, s); y < r.height; y += s)
                 {
-                    p.MoveTo(new Vector2(x, 0));
-                    p.LineTo(new Vector2(x, r.height));
+                    p.MoveTo(new Vector2(x + 1.3f, y));
+                    p.Arc(new Vector2(x, y), 1.3f, 0, 360);
                 }
-                for (var y = Mod(pan.y, s); y < r.height; y += s)
-                {
-                    p.MoveTo(new Vector2(0, y));
-                    p.LineTo(new Vector2(r.width, y));
-                }
-                p.Stroke();
+                p.Fill();
             }
-            Lines(20, palette.Grid);
-            Lines(100, palette.GridStrong);
         }
 
         static float Mod(float a, float b) => ((a % b) + b) % b;
 
+        // The wheel looks around (Shift: sideways); with Ctrl it zooms about the pointer, as on the page
         void OnWheel(WheelEvent e)
         {
-            var at = this.WorldToLocal(e.mousePosition);
-            ZoomAbout(at, zoom * (1 - e.delta.y * 0.04f));
+            if (e.ctrlKey || e.commandKey)
+            {
+                var at = this.WorldToLocal(e.mousePosition);
+                ZoomAbout(at, zoom * (1 - e.delta.y * 0.04f));
+            }
+            else
+            {
+                const float line = 32;
+                pan -= e.shiftKey ? new Vector2(e.delta.y * line, 0) : new Vector2(e.delta.x, e.delta.y) * line;
+                ApplyTransform();
+                Cull();
+            }
             e.StopPropagation();
         }
 
@@ -887,7 +916,7 @@ namespace Tide.Editor
         // ---------------------------------------------------------------------------------------------------------
         // Dragging: moving, panning, box selecting, wiring
 
-        enum Drag { None, Pan, Box, MoveNodes, MoveItems, Wire }
+        enum Drag { None, Pan, Box, MoveNodes, MoveItems, Wire, Right }
 
         Drag drag;
         int dragPointer = -1;
@@ -901,7 +930,7 @@ namespace Tide.Editor
         // dragged ones are going, as the file has places
         Vector2 nodeFrameAt, nodeOrigin;
         readonly Dictionary<int, Vector2> nodeTo = new Dictionary<int, Vector2>();
-        (GraphFrame frame, Vector2 at, bool any)? rightDown;
+        Action rightAction; // What a right click does, when the right button comes up without having moved the board
 
         // The wire being drawn: the end that stays, and what was wired before it was taken up
         PortView wireFrom;
@@ -947,39 +976,67 @@ namespace Tide.Editor
             var note = GraphLook.Up<GraphNoteView>(target);
             var item = GraphLook.Up<GraphItem>(target);
             var frame = item as GraphFrame;
-            rightDown = null;
+            rightAction = null;
             var rowId = RowAt(target, item);
             // A data wire under the pointer, in a frame's empty inside: a double click puts a reroute on it, a right
             // click opens its menu
             var wire = frame != null && view == null && note == null && rowId == 0 ? WireUnder(frame, mouse) : null;
-            if (wire != null && (e.button == 1 || e.button == 0 && e.clickCount >= 2))
+            if (wire != null && e.button == 0 && e.clickCount >= 2)
             {
-                var at = FrameLocal(frame, mouse);
-                if (e.button == 1) GraphMenu.Open(Window, GraphMenu.ForWire(frame, wire, at), null, e.position);
-                else AddReroute(frame, wire, at);
+                AddReroute(frame, wire, FrameLocal(frame, mouse));
+                e.StopPropagation();
+                return;
+            }
+            var inside = frame != null && view == null && note == null && rowId == 0 && mouse.y - ToBoard(frame.At).y >= GraphLook.FrameHead * zoom;
+            // A double click on nothing: what can be added there, as a right click (the page's way)
+            if (e.button == 0 && e.clickCount >= 2 && wire == null && (item == null || inside))
+            {
+                if (item == null) OpenAdd(mouse);
+                else if (frame.Graph != null && frame.Level == GraphLevel.Near) OpenSearch(frame, FrameLocal(frame, mouse), null);
                 e.StopPropagation();
                 return;
             }
             if (e.button == 1)
             {
-                // One menu, the same for every kind of thing (GraphMenu): a row's, a node's, a card's or a frame's
+                // The right button moves the board when it's dragged, and opens the one menu when it's clicked, the
+                // same for every kind of thing (GraphMenu): a wire's, a row's, a node's, a card's or a frame's
                 // title's; the empty board and the empty inside of a frame open what can be added there
-                if (rowId != 0)
+                var position = e.position;
+                var at = mouse;
+                if (wire != null)
                 {
-                    SelectRow(item, rowId);
-                    GraphMenu.Open(Window, GraphMenu.ForRow(item, rowId), null, e.position);
+                    var local = FrameLocal(frame, mouse);
+                    rightAction = () => GraphMenu.Open(Window, GraphMenu.ForWire(frame, wire, local), null, position);
                 }
+                else if (rowId != 0)
+                    rightAction = () =>
+                    {
+                        SelectRow(item, rowId);
+                        GraphMenu.Open(Window, GraphMenu.ForRow(item, rowId), null, position);
+                    };
                 else if (view != null && view.Id > 0)
-                {
-                    if (!(Active == view.Frame && Nodes.Contains(view.Id))) SelectNode(view.Frame, view.Id, false);
-                    GraphMenu.Open(Window, GraphMenu.ForNode(view), null, e.position);
-                }
+                    rightAction = () =>
+                    {
+                        if (!(Active == view.Frame && Nodes.Contains(view.Id))) SelectNode(view.Frame, view.Id, false);
+                        GraphMenu.Open(Window, GraphMenu.ForNode(view), null, position);
+                    };
                 else if (item != null && (frame == null || view != null || mouse.y - ToBoard(item.At).y < GraphLook.FrameHead * zoom))
-                {
-                    if (!Chosen.Contains(item.Id) || Nodes.Count > 0) SelectItem(item, false);
-                    GraphMenu.Open(Window, GraphMenu.ForItem(item), null, e.position);
-                }
-                else rightDown = (frame, mouse, true);
+                    rightAction = () =>
+                    {
+                        if (!Chosen.Contains(item.Id) || Nodes.Count > 0) SelectItem(item, false);
+                        GraphMenu.Open(Window, GraphMenu.ForItem(item), null, position);
+                    };
+                else
+                    rightAction = () =>
+                    {
+                        if (frame != null && frame.Graph != null && frame.Level == GraphLevel.Near) OpenSearch(frame, FrameLocal(frame, at), null);
+                        else if (frame == null) OpenAdd(at);
+                        else Window.Say(frame.Graph == null ? "Its code is written in C: there's nothing to add here." : "Zoom in to add to this frame.");
+                    };
+                // Not captured until it moves: the button's release comes to the board as a click's does
+                drag = Drag.Right;
+                dragStart = mouse;
+                panStart = pan;
                 e.StopPropagation();
                 return;
             }
@@ -1061,6 +1118,23 @@ namespace Tide.Editor
                     if (wire != null) over.Wires.Hot = wire;
                     break;
                 }
+                case Drag.Right:
+                    // Let go somewhere the board didn't hear of: nothing
+                    if ((e.pressedButtons & 2) == 0)
+                    {
+                        drag = Drag.None;
+                        rightAction = null;
+                        break;
+                    }
+                    // Dragged: it moves the board, and no menu opens
+                    if ((mouse - dragStart).sqrMagnitude <= 16) break;
+                    drag = Drag.Pan;
+                    rightAction = null;
+                    Capture(e);
+                    pan = panStart + (mouse - dragStart);
+                    ApplyTransform();
+                    Cull();
+                    break;
                 case Drag.Pan:
                     pan = panStart + (mouse - dragStart);
                     ApplyTransform();
@@ -1142,16 +1216,13 @@ namespace Tide.Editor
                 case Drag.Wire:
                     DropWire(e.position);
                     break;
-                case Drag.None:
-                    if (e.button == 1 && rightDown != null && (mouse - rightDown.Value.at).sqrMagnitude < 16)
-                    {
-                        var frame = rightDown.Value.frame;
-                        if (frame != null && frame.Graph != null && frame.Level == GraphLevel.Near) OpenSearch(frame, FrameLocal(frame, mouse), null);
-                        else if (frame == null) OpenAdd(mouse);
-                        else Window.Say(frame.Graph == null ? "Its code is written in C: there's nothing to add here." : "Zoom in to add to this frame.");
-                    }
-                    rightDown = null;
+                case Drag.Right:
+                {
+                    var action = rightAction;
+                    rightAction = null;
+                    action?.Invoke();
                     break;
+                }
             }
         }
 
@@ -1822,8 +1893,23 @@ namespace Tide.Editor
                     SelectAll();
                     break;
                 case KeyCode.F when action:
+                    Window.OpenFind(Window.FindButton ?? this);
+                    break;
                 case KeyCode.P when action:
                     Window.ShowMyGame(true, true);
+                    break;
+                case KeyCode.Slash:
+                    // "/" finds, as on the page
+                    Window.OpenFind(Window.FindButton ?? this);
+                    break;
+                case KeyCode.Equals:
+                case KeyCode.Plus:
+                case KeyCode.KeypadPlus:
+                    ZoomStep(1.2f);
+                    break;
+                case KeyCode.Minus:
+                case KeyCode.KeypadMinus:
+                    ZoomStep(1 / 1.2f);
                     break;
                 case KeyCode.F:
                     FrameSelectionOrAll();
@@ -1893,6 +1979,7 @@ namespace Tide.Editor
                 if (graph == null) return;
                 var ids = frame.With(Nodes);
                 ids.UnionWith(Nodes);
+                var names = Nodes.Select(id => NodeName(frame, id)).ToList();
                 Nodes.Clear();
                 Window.Edit("Delete", () =>
                 {
@@ -1900,10 +1987,12 @@ namespace Tide.Editor
                     GraphFrame.JoinAroundKnots(graph, ids);
                     Doc.DeleteNodes(graph, ids);
                 }, frame.Id);
+                SayDeleted(names);
                 return;
             }
             if (Chosen.Count == 0) return;
             var chosen = Chosen.ToList();
+            var titles = chosen.Select(id => Doc.Find(id)).Where(e => e != null).Select(e => Doc.TitleOf(e)).ToList();
             Chosen.Clear();
             Window.Edit("Delete", () =>
             {
@@ -1913,6 +2002,27 @@ namespace Tide.Editor
                     e?.List?.Items.Remove(e.Value);
                 }
             });
+            SayDeleted(titles);
+        }
+
+        // What was deleted, said with a way back, as the page says it
+        void SayDeleted(List<string> names)
+        {
+            if (names.Count == 0) return;
+            Window.Say(names.Count == 1 ? $"Deleted {names[0]}" : $"Deleted {names.Count} things", false, "Undo", Undo.PerformUndo);
+        }
+
+        // What a node is called where it's said: a Get's variable, a call's name, else its kind's title
+        static string NodeName(GraphFrame frame, int id)
+        {
+            if (frame.Notes.ContainsKey(id)) return "a note";
+            var n = frame.ViewOf(id)?.Call ?? (frame.ById.TryGetValue(id, out var found) ? found : null);
+            if (n == null) return "a node";
+            var k = n.Str("k");
+            if (k == "member") return n.Str("member");
+            if (k == "local") return frame.ById.TryGetValue(n.Wire("ref"), out var d) ? GraphSchema.LocalName(d) : "a local";
+            if (k == "name" || k == "call" || k == "method") return n.Str("name");
+            return GraphSchema.Spec(k)?.Title ?? k;
         }
 
         // Takes a declaration, a member or anything else in a list away
@@ -1922,8 +2032,10 @@ namespace Tide.Editor
             if (e?.List == null) return;
             var owner = e.Owner?.Wire("id") ?? 0;
             Chosen.Remove(id);
-            if (owner != 0 && e.Role != GraphRole.Decl) Window.Edit("Delete " + Doc.TitleOf(e), () => e.List.Items.Remove(e.Value), owner);
-            else Window.Edit("Delete " + Doc.TitleOf(e), () => e.List.Items.Remove(e.Value));
+            var title = Doc.TitleOf(e);
+            if (owner != 0 && e.Role != GraphRole.Decl) Window.Edit("Delete " + title, () => e.List.Items.Remove(e.Value), owner);
+            else Window.Edit("Delete " + title, () => e.List.Items.Remove(e.Value));
+            SayDeleted(new List<string> { title });
         }
 
         // A copy of a declaration or a member, after it, under a name of its own
@@ -2572,12 +2684,31 @@ namespace Tide.Editor
             head.Add(name);
             head.Add(new VisualElement { style = { flexGrow = 1 }, pickingMode = PickingMode.Ignore });
             head.Add(GraphLook.IconButton("plus", "Add something to this namespace", () => board.OpenAdd(board.ToBoard(rect.min + new Vector2(20, 50)))));
-            if (e?.List != null) head.Add(GraphLook.IconButton("close", "Take the block away: what's in it stays, outside it", () => board.Window.Edit("Remove namespace", () =>
+            if (e?.List != null)
             {
-                var at = e.List.Items.IndexOf(block);
-                e.List.Items.RemoveAt(at);
-                e.List.Items.InsertRange(at, block.Arr("decls")?.Items ?? new List<JValue>());
-            })));
+                // Its menu, as the page's: the block deleted, what's in it staying outside it, or with what's in it
+                Button more = null;
+                more = GraphLook.Plain(() => GraphMenu.Open(board.Window, new List<GraphOption>
+                {
+                    new GraphOption
+                    {
+                        Title = GraphSchema.Word("menu.unwrap"), Detail = GraphSchema.Word("menu.unwrap.summary"), Pick = () => board.Window.Edit(GraphSchema.Word("menu.unwrap"), () =>
+                        {
+                            var at = e.List.Items.IndexOf(block);
+                            e.List.Items.RemoveAt(at);
+                            e.List.Items.InsertRange(at, block.Arr("decls")?.Items ?? new List<JValue>());
+                        }),
+                    },
+                    new GraphOption
+                    {
+                        Title = GraphSchema.Word("menu.delete.all"), Pick = () => board.Window.Edit(GraphSchema.Word("menu.delete.all"), () => e.List.Items.Remove(block)),
+                    },
+                }, more), "tg-more");
+                more.text = GraphSchema.Word("more");
+                more.tooltip = GraphSchema.Word("more.tip");
+                more.name = "space-more";
+                head.Add(more);
+            }
             Add(head);
         }
 

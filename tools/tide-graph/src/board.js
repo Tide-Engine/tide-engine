@@ -6,10 +6,12 @@
     'use strict';
     const { el, button, menu, tooltip, toast } = G.ui;
     const { Doc, FrameView } = G;
-    const { ENTRY, RESULT, HEAD, portKey } = G.frames;
+    const { ENTRY, RESULT, portKey } = G.frames;
+    const w = (key, vars) => G.w(key, vars);
 
     // tidec's board (graph_layout.c): cards in a column on the left, frames to their right
-    const CARD_W = 300, CARD_ROW = 26, CARD_HEAD = 48, CARD_GAP = 40, LANE = 380, FRAME_GAP = 80;
+    // A card's size and a frame's head are the schema's look (G.frames, from its sizes); the gaps tidec lays the board with
+    const CARD_GAP = 40, LANE = 380, FRAME_GAP = 80;
     const FAR = 0.32;      // Below this zoom a frame's nodes are blocks
     const MARGIN = 400;    // What's this near the screen is drawn too
     const MIN_ZOOM = 0.02, MAX_ZOOM = 2;
@@ -25,7 +27,7 @@
             G.ui.put(this.world, this.regionsLayer, this.itemsLayer, this.valueLayer);
             this.band = el('div.tg-band');
             this.start = el('div.tg-start');
-            this.hint = el('div.tg-board-hint', { text: 'Drag: move or select · Right-drag or wheel: look around · Double-click a name: rename · Right-click: what can be done' });
+            this.hint = el('div.tg-board-hint'); // (its words: App.labels)
             G.ui.put(this.el, this.world, this.band, this.start, this.hint);
             this.pan = { x: 40, y: 40 };
             this.zoom = 1;
@@ -72,7 +74,7 @@
                 if (item.card) {
                     let c = this.cards.get(item.id);
                     if (!c) {
-                        c = { el: el('div.tg-card', { dataset: { id: item.id, card: item.id } }), w: CARD_W, h: 0, drawn: false };
+                        c = { el: el('div.tg-card', { dataset: { id: item.id, card: item.id } }), w: G.frames.CARD_W, h: 0, drawn: false };
                         this.cards.set(item.id, c);
                         G.ui.put(this.itemsLayer, c.el);
                     }
@@ -134,7 +136,7 @@
             const v = item.value;
             let rows = (Array.isArray(v.members) ? v.members.length : 0) + (Array.isArray(v.entries) ? v.entries.length : 0);
             if (typeof v.text === 'string') rows += Math.min(24, v.text.split('\n').length);
-            return CARD_HEAD + CARD_ROW * (rows + 2);
+            return G.frames.CARD_HEAD + G.frames.CARD_ROW * (rows + 2);
         }
 
         // Where each item is: its own x, y, or for one that has none, a place beside what's there (cards under the
@@ -142,12 +144,12 @@
         placeAll(items) {
             let cardX = Infinity, cardBottom = -Infinity, frameX = Infinity, frameBottom = -Infinity;
             const sized = item => {
-                if (item.card) return { w: CARD_W, h: this.cards.get(item.id)?.drawn ? this.cards.get(item.id).h : this.cardHeight(item) };
+                if (item.card) return { w: G.frames.CARD_W, h: this.cards.get(item.id)?.drawn ? this.cards.get(item.id).h : this.cardHeight(item) };
                 const f = this.frames.get(item.id);
-                if (f && f.item === item) return { w: f.size.w, h: f.size.h + HEAD };
+                if (f && f.item === item) return { w: f.size.w, h: f.size.h + G.frames.HEAD };
                 const probe = f || new FrameView(this, item);
                 probe.refresh(item);
-                return { w: probe.size.w, h: probe.size.h + HEAD };
+                return { w: probe.size.w, h: probe.size.h + G.frames.HEAD };
             };
             const placed = [];
             for (const item of items) {
@@ -205,15 +207,15 @@
             }
             const choices = s.declarations.filter(d => d.common);
             this.start.replaceChildren(el('div.tg-start-in', null,
-                el('div.tg-start-title', { text: 'What do you want to make?' }),
-                el('div.tg-start-sub', { text: 'A game is made of data, and of code that runs on it. Start with either.' }),
+                el('div.tg-start-title', { text: w('start.title') }),
+                el('div.tg-start-sub', { text: w('start.sub') }),
                 el('div.tg-start-choices', null, choices.map(d => el('button.tg-start-choice', {
                     type: 'button', dataset: { kind: d.kind }, onpointerdown: e => e.stopPropagation(),
                     onclick: () => this.app.addDecl(d.kind),
                 }, el('span.tg-chip.tg-chip-' + (d.group || 'more').toLowerCase(), { text: s.groups.find(g => g.name === d.group)?.title || d.group }),
                 el('span.tg-start-name', { text: d.title }), el('span.tg-start-summary', { text: d.summary })))),
-                button('More…', e => G.pickers.addMenu(this.app, 0, 0, { anchor: e.currentTarget }), 'Everything a file can have', 'tg-button.tg-start-more'),
-                el('div.tg-start-hint', { text: 'Later: + Add, or a right click (a long press, on a touch screen) anywhere on the board.' })));
+                button(w('start.more'), e => G.pickers.addMenu(this.app, 0, 0, { anchor: e.currentTarget }), w('start.more.tip'), 'tg-button.tg-start-more'),
+                el('div.tg-start-hint', { text: w('start.hint') })));
             this.start.style.display = 'flex';
         }
 
@@ -246,7 +248,7 @@
                 if (on) c.el.style.height = '';
             }
             for (const f of this.frames.values()) {
-                const on = seen(f.x, f.y, f.size.w, f.size.h + HEAD);
+                const on = seen(f.x, f.y, f.size.w, f.size.h + G.frames.HEAD);
                 const mode = !on ? 'none' : far ? 'far' : 'near';
                 if (mode !== f.mode || (f.dirty && mode !== 'none')) {
                     if (mode === 'none' && (f.el.contains(document.activeElement) && document.activeElement !== document.body || this.drag?.frame === f)) continue;
@@ -293,7 +295,7 @@
                 if (item.region || !item.namespace) continue;
                 const c = this.cards.get(item.id), f = this.frames.get(item.id);
                 if (c) grow(item.namespace, c.x, c.y, c.w, c.h);
-                else if (f) grow(item.namespace, f.x, f.y, f.size.w, f.size.h + HEAD);
+                else if (f) grow(item.namespace, f.x, f.y, f.size.w, f.size.h + G.frames.HEAD);
             }
             const seen = new Set();
             let fallback = 0;
@@ -315,9 +317,9 @@
                 r.el.replaceChildren(el('div.tg-region-head', null,
                     el('span.tg-chip.tg-chip-more', { text: item.spec?.title || 'Namespace', title: item.spec?.summary }),
                     G.ui.nameText(v.name ?? '', x => this.app.edit(() => { v.name = x; }), { className: 'tg-name', placeholder: 'Name', fk: `${v.id}:name`,
-                        check: x => (/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/.test(x) ? null : 'Names joined by dots, like Game.Combat') }),
-                    button('+ Add', e => G.pickers.addMenu(this.app, 0, 0, { anchor: e.currentTarget, namespace: v }), 'Add a declaration to this namespace', 'tg-button'),
-                    button('⋯', e => G.menus.contextMenu(this.app, { kind: 'region', item }, e.clientX, e.clientY, { anchor: e.currentTarget }), 'What can be done with it (or right-click it)', 'tg-more')));
+                        check: x => (/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/.test(x) ? null : w('check.namespace')) }),
+                    button(w('toolbar.add'), e => G.pickers.addMenu(this.app, 0, 0, { anchor: e.currentTarget, namespace: v }), w('region.add.tip'), 'tg-button'),
+                    button(w('more'), e => G.menus.contextMenu(this.app, { kind: 'region', item }, e.clientX, e.clientY, { anchor: e.currentTarget }), w('more.tip'), 'tg-more')));
             }
             for (const [id, r] of this.regions) if (!seen.has(id)) { r.el.remove(); this.regions.delete(id); }
         }
@@ -325,7 +327,7 @@
         applyTransform() {
             this.world.style.transform = `translate(${this.pan.x}px, ${this.pan.y}px) scale(${this.zoom})`;
             // The grid's dots stay apart as the board gets small
-            let grid = 24 * this.zoom;
+            let grid = G.frames.GRID * this.zoom;
             while (grid < 18) grid *= 2;
             this.el.style.setProperty('--tg-grid-size', grid + 'px');
             this.el.style.backgroundPosition = `${this.pan.x}px ${this.pan.y}px`;
@@ -404,7 +406,7 @@
             const c = this.cards.get(id), f = this.frames.get(id);
             const r = this.el.getBoundingClientRect();
             const w = r.width || 800, z = this.zoom, m = 24;
-            const box = c ? { x: c.x, y: c.y, w: c.w, h: Math.max(c.h, 100) } : f ? { x: f.x, y: f.y, w: Math.min(f.size.w, (w - 2 * m) / z), h: Math.min(f.size.h + HEAD, 320) } : null;
+            const box = c ? { x: c.x, y: c.y, w: c.w, h: Math.max(c.h, 100) } : f ? { x: f.x, y: f.y, w: Math.min(f.size.w, (w - 2 * m) / z), h: Math.min(f.size.h + G.frames.HEAD, 320) } : null;
             if (box) this.bringIn(box, m);
         }
 
@@ -412,7 +414,7 @@
         // it takes (no less than 0.6): what was just made isn't pushed off screen by what's made after it
         showWith(id) {
             const c = this.cards.get(id), f = this.frames.get(id);
-            const box = c ? { x0: c.x, y0: c.y, x1: c.x + c.w, y1: c.y + Math.max(c.h, 100) } : f ? { x0: f.x, y0: f.y, x1: f.x + f.size.w, y1: f.y + Math.min(f.size.h + HEAD, 320) } : null;
+            const box = c ? { x0: c.x, y0: c.y, x1: c.x + c.w, y1: c.y + Math.max(c.h, 100) } : f ? { x0: f.x, y0: f.y, x1: f.x + f.size.w, y1: f.y + Math.min(f.size.h + G.frames.HEAD, 320) } : null;
             if (!box) return;
             const r = this.el.getBoundingClientRect();
             const w = r.width || 800, h = r.height || 600, m = 32;
@@ -420,7 +422,7 @@
             const all = { ...box };
             for (const [other, x] of [...this.cards, ...this.frames]) {
                 if (other === id) continue;
-                const bw = x.w ?? x.size.w, bh = x.h ?? x.size.h + HEAD;
+                const bw = x.w ?? x.size.w, bh = x.h ?? x.size.h + G.frames.HEAD;
                 if (x.x < view.x1 && x.x + bw > view.x0 && x.y < view.y1 && x.y + bh > view.y0) {
                     all.x0 = Math.min(all.x0, x.x); all.y0 = Math.min(all.y0, x.y); all.x1 = Math.max(all.x1, x.x + bw); all.y1 = Math.max(all.y1, x.y + Math.min(bh, 320));
                 }
@@ -437,7 +439,7 @@
         showNode(frame, id) {
             const v = frame?.mode === 'near' ? frame.views.get(frame.statementOf(id)) || frame.views.get(id) : null;
             if (!v?.el) return;
-            this.bringIn({ x: frame.x + v.x, y: frame.y + HEAD + v.y, w: (v.el.offsetWidth || 160) + 24, h: (v.el.offsetHeight || 80) + 24 }, 40);
+            this.bringIn({ x: frame.x + v.x, y: frame.y + G.frames.HEAD + v.y, w: (v.el.offsetWidth || 160) + 24, h: (v.el.offsetHeight || 80) + 24 }, 40);
         }
 
         // Moves the board no more than it takes for a box of it to be in view, `m` from the edges
@@ -467,6 +469,8 @@
                 x.classList.remove('tg-has-error', 'tg-has-warning');
                 delete x.dataset.problem;
             }
+            for (const x of this.world.querySelectorAll('.tg-problem-text, .tg-problem-above')) x.remove();
+            const said = new Map(); // Where each problem's words are written out: the element they go after or in -> [text]
             const counts = new Map();
             for (const d of lang.diagnostics) {
                 if (!d.node) continue;
@@ -485,6 +489,23 @@
                 // Each problem with its note, one after the other (see over())
                 const text = (error ? 'E' : 'W') + this.wordsOf(d, hole) + (d.note && !hole ? '\n' + d.note : '');
                 target.dataset.problem = target.dataset.problem ? target.dataset.problem + '\u0001' + text : text;
+                // ...and written out, so it's read without the pointer: under its row, or at the foot of its node
+                const at = target.closest('.tg-node') || target;
+                if (!said.has(at)) said.set(at, []);
+                said.get(at).push({ text: this.wordsOf(d, hole), error });
+            }
+            for (const [at, lines] of said) {
+                for (const { text, error } of lines) {
+                    const line = el('div.tg-problem-text' + (error ? '' : '.tg-problem-text-warning'), { text });
+                    // (a frame's over it, so nothing in it moves as its problems come and go)
+                    if (at.matches('.tg-node')) at.append(line);
+                    else if (at.matches('.tg-frame-head')) {
+                        let above = at.parentElement.querySelector(':scope > .tg-problem-above');
+                        if (!above) at.parentElement.append(above = el('div.tg-problem-above'));
+                        above.append(line);
+                    }
+                    else at.after(line);
+                }
             }
             if (shown !== undefined && this.hover?.dataset?.problem !== shown) {
                 tooltip(0, 0, null);
@@ -513,7 +534,7 @@
 
         // A problem's words: the compiler's, or the editor's own for an input with nothing in it
         wordsOf(d, hole = this.holeOf(d)) {
-            return hole ? `Pick what goes in '${hole.label}'` : d.message;
+            return hole ? w('problem.hole', { input: hole.label }) : d.message;
         }
 
         // What reads the same thing lights with it: over a Get (or a Set's name), the entry's row of that variable (or
@@ -538,6 +559,137 @@
                 for (const x of frameEl.querySelectorAll('[data-pin]')) if (x.dataset.pin === read.slice(4)) x.closest('.tg-entry-row')?.classList.add('tg-lit');
             } else if (read.startsWith('local:')) {
                 frameEl.querySelector(`.tg-pin[data-port="${read.slice(6)}|o|d|local"]`)?.classList.add('tg-lit');
+            }
+        }
+
+        // What the board drew, as every graph editor writes it for the same graph (tools/tide-graph/test/drawn/README.md):
+        // each frame's, card's and node's box on the board, its words and its pins, and each wire with its colour. Every
+        // card and frame is drawn near for it, at the zoom the board is at (the tests' is 1).
+        drawn(graph) {
+            const z = this.zoom;
+            for (const c of this.cards.values()) {
+                if (!c.drawn) { c.el.replaceChildren(G.cards.render(this, c.item), el('div.tg-far-label', { text: this.editor.doc.titleOf(c.item) })); c.drawn = true; c.dirty = false; }
+                c.el.style.height = '';
+            }
+            for (const f of this.frames.values()) if (f.mode !== 'near') f.render('near');
+            const origin = this.world.getBoundingClientRect();
+            const box = e => {
+                const r = e.getBoundingClientRect();
+                return [Math.round((r.left - origin.left) / z), Math.round((r.top - origin.top) / z), Math.round(r.width / z), Math.round(r.height / z)];
+            };
+            const hex = color => {
+                const m = /rgba?\((\d+), (\d+), (\d+)(?:, ([\d.]+))?\)/.exec(color || '');
+                if (!m || (m[4] !== undefined && Number(m[4]) === 0)) return null;
+                return '#' + [m[1], m[2], m[3]].map(v => Number(v).toString(16).padStart(2, '0')).join('');
+            };
+            const words = e => (e ? e.textContent.replace(/\s+/g, ' ').trim() : '');
+            const shown = (e, skip) => {
+                const parts = [];
+                const walk = x => {
+                    if (x.nodeType === 3) { if (x.textContent.trim()) parts.push(x.textContent.trim()); return; }
+                    if (x.nodeType !== 1 || skip(x)) return;
+                    if (x.matches('input[type="checkbox"]')) { parts.push(x.checked ? 'true' : 'false'); return; }
+                    if (x.matches('.tg-path')) { parts.push(x.textContent.replace(/\s+/g, '')); return; } // A chip is one word: Phase.Running
+                    if (x.matches('.tg-inline-quote, .tg-value-bool > span')) return;
+                    if (x.matches('input, textarea')) { parts.push(x.value || x.placeholder || ''); return; }
+                    if (x.matches('select')) { parts.push(x.value); return; }
+                    for (const child of x.childNodes) walk(child);
+                };
+                walk(e);
+                return parts.filter(Boolean).join(' ');
+            };
+            const out = { graph, frames: [], cards: [], nodes: [], wires: [] };
+            for (const [id, c] of this.cards) {
+                const head = c.el.querySelector('.tg-card-head');
+                out.cards.push({
+                    id, box: box(c.el), chip: words(head?.querySelector('.tg-chip')), title: words(head?.querySelector('.tg-name')),
+                    rows: [...c.el.querySelectorAll('.tg-row')].map(r => ({ label: words(r.querySelector('.tg-row-name')), shown: words(r.querySelector('.tg-type-name')) || null })),
+                });
+            }
+            const pinOf = p => (p.exec ? (p.input ? 'exec-in' : 'exec-out') : p.input ? 'in' : 'out');
+            for (const [id, f] of this.frames) {
+                out.frames.push({ id, box: box(f.el), chip: words(f.head.querySelector('.tg-chip')), title: words(f.head.querySelector('.tg-name, .tg-frame-title')) });
+                // A node's pins, top to bottom and then left to right, as they're seen: what each is called (or the
+                // operator in its place), its kind, its type's colour, and what's shown in it. The entry's are what it
+                // takes: its name, and its type shown; a filter's has no pin.
+                const rowsOf = (record, entry) => {
+                    const rows = [];
+                    const at = e => { const r = e.getBoundingClientRect(); return { y: Math.round((r.top + r.height / 2) / z / 6), x: r.left / z }; }; // (rows 6 px apart are one row)
+                    for (const p of f.ports.values()) {
+                        if (p.view !== record || p.row.closest('.tg-node-sub')) continue;
+                        const lead = p.row.querySelector(':scope > .tg-op');
+                        const param = entry ? p.row.closest('.tg-entry-row') : null;
+                        const label = lead ? words(lead) : param ? words(param.querySelector('.tg-entry-name')) : words(p.row.querySelector(':scope > .tg-port-label'));
+                        const text = param ? words(param.querySelector('.tg-type')) : shown(p.row, x => x.matches('.tg-dot, .tg-port-label, .tg-op, .tg-row-empty, .tg-row-pick, .tg-port-add'));
+                        rows.push({ ...at(p.dot), row: { label, pin: pinOf(p.port), color: p.port.exec ? null : hex(p.dot.style.backgroundColor), shown: text || null } });
+                    }
+                    if (entry) {
+                        for (const r of record.el.querySelectorAll('.tg-entry-row')) {
+                            if (r.querySelector('.tg-pin')) continue;
+                            rows.push({ ...at(r), row: { label: words(r.querySelector('.tg-entry-name')) || words(r.querySelector('.tg-mode')), pin: 'none', color: null, shown: words(r.querySelector('.tg-type')) || null } });
+                        }
+                    }
+                    return rows.sort((p, q) => p.y - q.y || p.x - q.x).map(r => r.row);
+                };
+                for (const [nid, v] of f.views) {
+                    if (v.note) continue;
+                    const e = v.el;
+                    const entry = nid === ENTRY;
+                    const shape = entry ? 'entry' : e.classList.contains('tg-get') ? 'get' : e.classList.contains('tg-knot') ? 'knot' : 'node';
+                    const header = e.querySelector(entry ? '.tg-entry-head' : '.tg-node-header');
+                    const title = entry ? [words(header?.querySelector('.tg-entry-sentence'))]
+                        : shape === 'get' ? [words(e.querySelector('.tg-get-name'))]
+                            : shape === 'knot' ? []
+                                : [shown(header, x => x.matches('.tg-port, .tg-more, .tg-node-tag, .tg-op-button, select')), ...(e.querySelector('.tg-node-sub') ? [shown(e.querySelector('.tg-node-sub'), x => x.matches('.tg-dot, .tg-row-empty'))] : [])];
+                    out.nodes.push({
+                        id: entry ? id : nid, frame: id, box: box(e), shape,
+                        header: header ? hex(getComputedStyle(header).backgroundColor) : null,
+                        title, rows: rowsOf(v, entry),
+                    });
+                }
+                // The wires, as drawWires draws them: data from a node's value, arrows from a statement's outputs
+                const g = f.graph;
+                if (!g) continue;
+                const s = this.schema;
+                const a = f.analysis;
+                const exec = G.schemaNow.look.colors.exec[G.mode || 'dark'];
+                for (const n of Doc.nodes(g)) {
+                    const merged = a.merged.get(n.id);
+                    for (const p of s.ports(n)) {
+                        if (!p.path) continue;
+                        const from = s.wire(n, p.path);
+                        if (!from) continue;
+                        if (p.exec) out.wires.push({ from: [n.id, p.path.join('.')], to: [from, 'in'], color: exec });
+                        else if (!(merged === from && G.samePath(p.path, ['value'])) && !a.folded.has(from)) out.wires.push({ from: [from, 'value'], to: [n.id, p.path.join('.')], color: f.wireColor(from) });
+                    }
+                }
+                if (g.entry) out.wires.push({ from: [id, 'start'], to: [g.entry, 'in'], color: exec });
+            }
+            const byId = (x, y) => x.id - y.id;
+            out.frames.sort(byId);
+            out.cards.sort(byId);
+            out.nodes.sort((x, y) => x.id - y.id || x.frame - y.frame);
+            const key = w => [w.to[0], w.to[1], w.from[0], w.from[1]];
+            out.wires.sort((x, y) => {
+                const p = key(x), q = key(y);
+                for (let i = 0; i < 4; i++) if (p[i] !== q[i]) return typeof p[i] === 'number' ? p[i] - q[i] : String(p[i]) < String(q[i]) ? -1 : 1;
+                return 0;
+            });
+            return out;
+        }
+
+        // A variable of My game under the pointer: its Gets and where it comes from light, as over a Get (null: none)
+        lightRead(frame, read) {
+            const key = frame && read ? frame.key + '\n' + read : null;
+            if (key === this.lit) return;
+            this.lit = key;
+            for (const x of this.world.querySelectorAll('.tg-lit')) x.classList.remove('tg-lit');
+            if (!key || frame.mode !== 'near') return;
+            for (const x of frame.el.querySelectorAll('[data-read]')) if (x.dataset.read === read) x.classList.add('tg-lit');
+            if (read.startsWith('pin:')) {
+                for (const x of frame.el.querySelectorAll('[data-pin]')) if (x.dataset.pin === read.slice(4)) x.closest('.tg-entry-row')?.classList.add('tg-lit');
+            } else if (read.startsWith('local:')) {
+                frame.el.querySelector(`.tg-pin[data-port="${read.slice(6)}|o|d|local"]`)?.classList.add('tg-lit');
             }
         }
 
@@ -582,7 +734,7 @@
             let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
             const add = (x, y, w, h) => { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x + w); y1 = Math.max(y1, y + h); };
             for (const [id, c] of this.cards) if (!ids || ids.has(id)) add(c.x, c.y, c.w, c.h);
-            for (const [id, f] of this.frames) if (!ids || ids.has(id)) add(f.x, f.y, f.size.w, f.size.h + HEAD);
+            for (const [id, f] of this.frames) if (!ids || ids.has(id)) add(f.x, f.y, f.size.w, f.size.h + G.frames.HEAD);
             return x0 === Infinity ? null : { x0, y0, x1, y1 };
         }
 
@@ -605,8 +757,8 @@
                     for (const id of ed.selection) {
                         const v = f.views.get(id);
                         if (!v) continue;
-                        x0 = Math.min(x0, f.x + v.left); y0 = Math.min(y0, f.y + HEAD + v.top);
-                        x1 = Math.max(x1, f.x + v.left + v.w); y1 = Math.max(y1, f.y + HEAD + v.top + v.h);
+                        x0 = Math.min(x0, f.x + v.left); y0 = Math.min(y0, f.y + G.frames.HEAD + v.top);
+                        x1 = Math.max(x1, f.x + v.left + v.w); y1 = Math.max(y1, f.y + G.frames.HEAD + v.top + v.h);
                     }
                     if (x0 !== Infinity) b = { x0, y0, x1, y1 };
                 }
@@ -643,7 +795,7 @@
                 // A value shown in an input is where its reader is
                 const reader = f.analysis.shown.get(id)?.node;
                 const at = f.analysis.byId.get(f.analysis.mergedInto.get(reader ?? id) ?? reader ?? id) || n;
-                target = { x: f.x + f.dx(at) + 80, y: f.y + HEAD + f.dy(at) + 40 };
+                target = { x: f.x + f.dx(at) + 80, y: f.y + G.frames.HEAD + f.dy(at) + 40 };
             } else if (f) {
                 // A frame by its start: its title and its entry at the top left
                 this.pan = { x: Math.round(Math.min(60, w * 0.08) - f.x * this.zoom), y: Math.round(Math.min(60, h * 0.1) - f.y * this.zoom) };
@@ -678,10 +830,10 @@
         // nothing is there, else under the last of its kind
         freePlace(isFrame, at, size = null) {
             const r = this.el.getBoundingClientRect();
-            const w = size?.w ?? (isFrame ? 620 : CARD_W), h = size?.h ?? (isFrame ? 220 : 130);
+            const w = size?.w ?? (isFrame ? 620 : G.frames.CARD_W), h = size?.h ?? (isFrame ? 220 : 130);
             const hits = (x, y) => {
                 for (const card of this.cards.values()) if (x < card.x + card.w + 20 && x + w > card.x - 20 && y < card.y + card.h + 20 && y + h > card.y - 20) return true;
-                for (const f of this.frames.values()) if (x < f.x + f.size.w + 20 && x + w > f.x - 20 && y < f.y + f.size.h + HEAD + 20 && y + h > f.y - 20) return true;
+                for (const f of this.frames.values()) if (x < f.x + f.size.w + 20 && x + w > f.x - 20 && y < f.y + f.size.h + G.frames.HEAD + 20 && y + h > f.y - 20) return true;
                 return false;
             };
             if (at) {
@@ -699,7 +851,7 @@
             if (!hits(want.x, want.y)) return want;
             let x = Infinity, bottom = -Infinity;
             for (const card of this.cards.values()) if (!isFrame) { x = Math.min(x, card.x); bottom = Math.max(bottom, card.y + card.h); }
-            for (const f of this.frames.values()) if (isFrame) { x = Math.min(x, f.x); bottom = Math.max(bottom, f.y + f.size.h + HEAD); }
+            for (const f of this.frames.values()) if (isFrame) { x = Math.min(x, f.x); bottom = Math.max(bottom, f.y + f.size.h + G.frames.HEAD); }
             if (x === Infinity) {
                 // The first of its kind: beside the other kind's column
                 const b = this.bounds();
@@ -806,7 +958,7 @@
             if (!this.editor || this.editor.error) return;
             const f = this.frameAt(target);
             if (f) {
-                if (!f.graph && !f.isValue) { toast(`${this.schema.keyLabel('extern')}: this one has no nodes`); return; }
+                if (!f.graph && !f.isValue) { toast(w('toast.externNoNodes', { extern: this.schema.keyLabel('extern') })); return; }
                 if (f.mode !== 'near') { this.reveal(f.item.id); return; }
                 G.pickers.nodeSearch(this.app, f, clientX, clientY, null);
                 return;
@@ -873,6 +1025,8 @@
                 // isn't its pin is part of its node: pressed, it moves the node.
                 let port = this.portAt(frame, e.target);
                 const onPin = !!e.target.closest('.tg-dot');
+                // Alt and a click anywhere on a filled input's row empties it
+                if (port && e.altKey && port.input && !port.exec && frame.wireOf(port)) { frame.emptyInput(port); return; }
                 if (port && port.input && !port.exec && !onPin && !frame.hasNodeWire(port)) port = null;
                 if (port) {
                     if (e.altKey) { frame.breakLinks(port); return; }
@@ -1224,7 +1378,7 @@
                     let why = null;
                     if (!f.fitsPort(d.from, port)) {
                         const inp = port.input ? port : d.from;
-                        why = f.isPlace(inp) ? f.changeable(f.startOf(port.input ? d.from : port)).why : `${port.label || 'it'} takes ${f.expectedType(inp) || 'something else'}`;
+                        why = f.isPlace(inp) ? f.changeable(f.startOf(port.input ? d.from : port)).why : w('why.takes', { input: port.label || w('it'), type: f.expectedType(inp) || w('why.somethingElse') });
                     }
                     if (!why) {
                         this.app.edit(doc => {
@@ -1238,7 +1392,7 @@
                             if (pending?.old && !why) doc.dropValue(f.graph, pending.old);
                         });
                     }
-                    if (why) { toast(`That wire can't be: ${why}.`); f.drawWires(); }
+                    if (why) { toast(w('toast.cantWire', { why })); f.drawWires(); }
                     return;
                 }
                 if (d.taken) {
@@ -1250,8 +1404,7 @@
                 f.drawWires();
                 if (moved && !inFrame) {
                     const other = this.frameAt(over);
-                    toast(other ? "A wire can't leave its frame. To use a value in other code, keep it in a component or send it with an event."
-                        : 'A wire stays inside its frame: drop it on a pin, or inside the frame to add what it goes to.');
+                    toast(other ? w('toast.wireLeavesFrame') : w('toast.wireStaysInFrame'));
                     return;
                 }
                 // A click on a pin, or a wire dropped on empty space: what can go there, as Blueprint's actions for

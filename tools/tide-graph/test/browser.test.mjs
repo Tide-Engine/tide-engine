@@ -99,6 +99,26 @@ async function makeSpin(p) {
     await p.until(`document.querySelectorAll('.tg-entry-row').length === 1`, 'a row for what it takes');
 }
 
+// A drawn file as the editors write it: one frame, card, node or wire a line, so a change reads as a diff
+function writeDrawn(d) {
+    const list = key => `  ${JSON.stringify(key)}: [\n${d[key].map(x => '    ' + JSON.stringify(x)).join(',\n')}\n  ]`;
+    return `{\n  "graph": ${JSON.stringify(d.graph)},\n${['frames', 'cards', 'nodes', 'wires'].map(list).join(',\n')}\n}\n`;
+}
+
+// What an editor drew against what it should have: every box within 4 px, everything else exactly
+function compareDrawn(have, want, name) {
+    const near = (a, c, what) => assert.ok(a.length === 4 && a.every((v, i) => Math.abs(v - c[i]) <= 4), `${name}: ${what}'s box ${JSON.stringify(a)}, not ${JSON.stringify(c)}`);
+    for (const key of ['frames', 'cards', 'nodes']) {
+        assert.deepEqual(have[key].map(x => x.id), want[key].map(x => x.id), `${name}: the ${key}`);
+        have[key].forEach((x, i) => {
+            const c = want[key][i];
+            near(x.box, c.box, `${key.slice(0, -1)} ${x.id}`);
+            assert.deepEqual({ ...x, box: null }, { ...c, box: null }, `${name}: ${key.slice(0, -1)} ${x.id}`);
+        });
+    }
+    assert.deepEqual(have.wires, want.wires, `${name}: the wires`);
+}
+
 describe('the graph editor in a browser', { skip }, () => {
     let b;
     before(async () => { b = await launch(browser); });
@@ -131,7 +151,7 @@ describe('the graph editor in a browser', { skip }, () => {
         assert.equal(d.decls.length, 1);
         const wobble = d.decls[0];
         assert.deepEqual([wobble.kind, wobble.name], ['component', 'Wobble']);
-        assert.deepEqual(wobble.members.map(m => [m.kind, m.name, m.type]), [['field', 'frequency', 'int'], ['field', 'phase', 'float']]);
+        assert.deepEqual(wobble.members.map(m => [m.kind, m.name, m.type]), [['field', 'frequency', 'int'], ['field', 'phase', 'int']], 'a new field takes the type of the one before it');
         assert.deepEqual(wobble.members[0].default.nodes.map(n => [n.k, n.text]), [['int', '2']], 'the value typed in its control is its literal');
         assert.ok(Number.isInteger(wobble.x) && Number.isInteger(wobble.y), 'the card has its place');
         assert.equal(await p.evaluate(`document.querySelector('.tg-start').style.display`), 'none');
@@ -150,7 +170,7 @@ describe('the graph editor in a browser', { skip }, () => {
         await p.type('Nonsense');
         assert.match(await text(p, '.tg-type-picker .tg-picker-none'), /No type called "Nonsense"/);
         await p.key('Enter');
-        assert.equal((await doc(p)).decls[0].members[1].type, 'float', 'nothing was picked, nothing changed');
+        assert.equal((await doc(p)).decls[0].members[1].type, 'int', 'nothing was picked, nothing changed');
         await p.key('Escape');
         // A builder asks for what it holds, with the same picker
         await p.clickOn('.tg-card .tg-row:nth-child(2) .tg-type');
@@ -162,7 +182,7 @@ describe('the graph editor in a browser', { skip }, () => {
         await p.key('Enter');
         await p.until(`app.editor.doc.root.decls[0].members[1].type === 'List<float3>'`, 'a list of float3');
         await p.evaluate(`app.command('undo')`);
-        assert.equal((await doc(p)).decls[0].members[1].type, 'float');
+        assert.equal((await doc(p)).decls[0].members[1].type, 'int');
 
         await makeSpin(p);
         d = await doc(p);
@@ -835,6 +855,149 @@ describe('the graph editor in a browser', { skip }, () => {
         assert.equal(await text(p, '.tg-frame .tg-set-target'), 'x', 'Set x');
         assert.ok(await p.evaluate(`[...document.querySelectorAll('.tg-frame .tg-get-member .tg-get-name')].filter(n => n.textContent === 'localScale').length === 2`), 'Gets of localScale, their Target a Get of transform');
         assert.deepEqual(b.errors, []);
+    });
+
+    test("one look from the schema in dark and light with the font Inter, its words, and what the Unity window has", async () => {
+        const p = await openEditor(b, { text: SPIN, schema, scratch });
+        await p.evaluate(`app.open.details = true; app.open.mygame = true; app.showPanels(); app.renderPanels(); app.board.zoomAt(1 / app.board.zoom); app.reveal(5)`);
+        await p.until(`document.fonts.check('13px Inter') && document.fonts.status === 'loaded'`, 'the font');
+        const look = schema.look, words = schema.words;
+        const rgb = h => `rgb(${[1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16)).join(', ')})`;
+        const style = (selector, prop) => p.evaluate(`getComputedStyle(document.querySelector(${JSON.stringify(selector)})).${prop}`);
+        // The schema's colours, size and font, in dark
+        assert.equal(await style('body', 'backgroundColor'), rgb(look.colors.board.dark));
+        assert.equal(await style('body', 'fontSize'), look.sizes.font + 'px');
+        assert.match(await style('body', 'fontFamily'), /^"?Inter"?/);
+        assert.equal(await style('.tg-node[data-id="13"] .tg-node-header', 'backgroundColor'), rgb(look.headers.flow.dark));
+        assert.equal(await style('.tg-entry-head', 'backgroundColor'), rgb(look.headers.entry.dark));
+        assert.equal(await style('.tg-frame', 'backgroundColor'), rgb(look.colors.frame.dark));
+        // A type's colour: the look's, else a hue of its name, as #rrggbb
+        assert.equal(await p.evaluate(`TideGraph.ui.typeColor('float')`), look.types.float);
+        let h = 0;
+        for (const c of 'Wobble') h = (h * 31 + c.charCodeAt(0)) >>> 0;
+        assert.equal(await p.evaluate(`getComputedStyle(Object.assign(document.body.appendChild(document.createElement('i')), { style: 'color: hsl(${h % 360}, ${look.typeHue.saturation}%, ${look.typeHue.lightness}%)' })).color`),
+            rgb(await p.evaluate(`TideGraph.ui.typeColor('Wobble')`)), 'the hue of a name, as CSS has it');
+        // A host says dark or light, and nothing else of its look is taken
+        await p.evaluate(`TideGraph.receive({ type: 'theme', dark: false, colors: { bg: '#ff0000', 'node-bg': '#00ff00' }, font: 'Courier New', fontSize: 20 })`);
+        assert.equal(await style('body', 'backgroundColor'), rgb(look.colors.board.light));
+        assert.equal(await style('body', 'fontSize'), look.sizes.font + 'px');
+        assert.match(await style('body', 'fontFamily'), /^"?Inter"?/);
+        await p.until(`getComputedStyle(document.querySelector('.tg-node[data-id="13"] .tg-node-header')).backgroundColor === ${JSON.stringify(rgb(look.headers.flow.light))}`, "light's header");
+        // ...and a VS Code webview by its body's class
+        await p.evaluate(`document.body.classList.add('vscode-dark')`);
+        await p.until(`getComputedStyle(document.body).backgroundColor === ${JSON.stringify(rgb(look.colors.board.dark))}`, 'dark again, from the class');
+        await p.evaluate(`document.body.classList.remove('vscode-dark')`);
+        // Its words are the schema's
+        assert.deepEqual(await p.evaluate(`['.tg-add', '.tg-mygame-button', '.tg-find', '.tg-details-button'].map(s => document.querySelector(s).textContent)`),
+            ['toolbar.add', 'toolbar.myGame', 'toolbar.find', 'toolbar.details'].map(k => words[k]));
+        assert.equal(await p.evaluate(`document.querySelector('.tg-board-hint').textContent`), words['board.hint']);
+
+        // How the board works, and Save, in the board's menu
+        await p.clickOn('.tg-board-more');
+        await p.until(`!!document.querySelector('.tg-menu-item[data-name="help"]')`, 'the board menu');
+        assert.equal(await p.evaluate(`document.querySelector('.tg-menu-item[data-name="save"] .tg-menu-hint').textContent`), 'Ctrl+S');
+        await p.evaluate(`document.querySelector('.tg-menu-item[data-name="save"]').click()`);
+        assert.ok(p.posted.some(m => m.type === 'save'), 'saved by the host');
+        await p.clickOn('.tg-board-more');
+        await p.until(`!!document.querySelector('.tg-menu-item[data-name="help"]')`, 'the board menu again');
+        await p.evaluate(`document.querySelector('.tg-menu-item[data-name="help"]').click()`);
+        await p.until(`!!document.querySelector('.tg-help')`, 'how the board works');
+        assert.equal(await p.evaluate(`document.querySelectorAll('.tg-help-row').length`), Object.keys(words).filter(k => /^help\.\d+$/.test(k)).length);
+        await p.key('Escape');
+
+        // Ctrl+P: My game's search; Enter goes to the first found, by its name or what it is
+        await p.click(900, 600);
+        await p.key('p', { modifiers: 2 });
+        await p.until(`document.activeElement?.classList.contains('tg-panel-filter')`, "My game's search");
+        await p.type('system');
+        await p.key('Enter');
+        await p.until(`app.editor.picked.has(5)`, 'the system found by what it is, and gone to');
+        await p.key('Escape');
+        assert.equal(await p.evaluate(`document.querySelector('.tg-panel-filter').value`), '', 'Escape empties the search');
+
+        // A variable of My game: over it, its Gets light; a click selects where it comes from
+        await p.until(`!!document.querySelector('.tg-mygame-var[data-var="wobble"]')`, 'the variables');
+        const variable = await p.center('.tg-mygame-var[data-var="wobble"] .tg-mygame-name');
+        await p.move(variable.x, variable.y);
+        await p.until(`document.querySelectorAll('.tg-get.tg-lit').length === 4 && !!document.querySelector('.tg-entry-row.tg-lit')`, "wobble's Gets lit from My game");
+        await p.click(variable.x, variable.y);
+        await p.until(`app.editor.row === 6`, "wobble's row on the entry selected");
+
+        // Alt and a click on a filled input's row empties it
+        const start = p.text;
+        const lhs = await p.center(`.tg-frame .tg-node[data-id="12"] .tg-port.tg-in[data-port="12|i|d|lhs"] .tg-port-label`);
+        await p.click(lhs.x, lhs.y, { modifiers: 1 });
+        await p.until(`!app.editor.doc.get(12).lhs`, 'emptied by Alt and a click');
+        await p.evaluate(`app.command('undo')`);
+        assert.equal(p.text, start);
+
+        // Problems are written out under what they're about: a node's at its foot, a frame's above it, grouped by kind
+        const range = { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } };
+        await p.evaluate(`TideGraph.receive(${JSON.stringify({ type: 'diagnostics', diagnostics: [
+            { severity: 1, message: 'no such field', data: { node: 12 }, range }, { severity: 2, message: 'never runs', data: { node: 5 }, range }] })})`);
+        await p.until(`document.querySelector('.tg-node[data-id="12"] .tg-problem-text')?.textContent === 'no such field'`, "the node's problem written out");
+        assert.equal(await text(p, '.tg-frame[data-id="5"] > .tg-problem-above .tg-problem-text'), 'never runs', "the frame's above it");
+        await p.clickOn('.tg-status');
+        await p.until(`document.querySelectorAll('.tg-problems-heading').length === 2`, 'the problems by kind');
+        assert.deepEqual(await p.evaluate(`[...document.querySelectorAll('.tg-problems-heading')].map(h => h.textContent)`), [words['problems.group.problems'], words['problems.group.look']]);
+        await p.key('Escape');
+        await p.evaluate(`TideGraph.receive({ type: 'diagnostics', diagnostics: [] })`);
+        assert.equal(await p.evaluate(`document.querySelectorAll('.tg-problem-text').length`), 0, 'gone with the next check');
+
+        // A name typed with spaces is made one, not refused
+        await p.evaluate(`app.reveal(1)`);
+        const named = '.tg-card[data-id="1"] .tg-card-head .tg-name';
+        await p.clickOn(named);
+        await p.clickOn(named);
+        await p.until(`document.activeElement?.classList.contains('tg-renaming')`, 'the name to type');
+        await p.type('my wobble');
+        await p.key('Enter');
+        await p.until(`app.editor.doc.root.decls[0].name === 'myWobble'`, '"my wobble" made myWobble');
+        await p.evaluate(`app.command('undo')`);
+
+        // A property's row has Add get and Add set in its menu; a scene can be a name alone (Details)
+        await p.evaluate(`app.addMember(app.editor.doc.items().find(i => i.id === 1), 'property')`);
+        await p.until(`document.activeElement?.classList.contains('tg-renaming')`, "the property's name to type");
+        await p.key('Escape');
+        const property = await p.evaluate(`app.editor.doc.root.decls[0].members.find(m => m.kind === 'property')`);
+        await p.until(`!!document.querySelector('.tg-card[data-id="1"] .tg-row[data-id="${property.id}"]')`, 'the property row');
+        await p.evaluate(`app.editor.doc.get(${property.id}).accessors.length = 0; app.edit(() => {})`);
+        const prow = await p.center(`.tg-card[data-id="1"] .tg-row[data-id="${property.id}"] .tg-row-tag`);
+        await p.click(prow.x, prow.y, { button: 'right' });
+        await p.until(`!!document.querySelector('.tg-context [data-name="add-get"]')`, "the property's menu");
+        assert.deepEqual(await p.evaluate(`[...document.querySelectorAll('.tg-context [data-name^="add-"]')].map(i => i.querySelector('.tg-menu-label').textContent)`), ['Add get', 'Add set']);
+        await p.key('Escape');
+        const scene = await p.evaluate(`app.addDecl('scene').id`);
+        await p.until(`document.activeElement?.classList.contains('tg-renaming')`, "the scene's name to type");
+        await p.key('Escape');
+        await p.evaluate(`app.editor.pick([${scene}])`);
+        await p.until(`!!document.querySelector('.tg-details [data-option="scene-empty"]')`, "a scene's Details");
+        await p.evaluate(`document.querySelector('.tg-details [data-option="scene-empty"] input').click()`);
+        await p.until(`app.editor.doc.root.decls.find(d => d.kind === 'scene').members === null`, 'scene Main;');
+        assert.deepEqual(b.errors, []);
+    });
+
+    // What the page drew for the fixtures, in dark at zoom 1, against the files every graph editor checks itself against
+    // (test/drawn/README.md): TIDE_GRAPH_DRAWN_WRITE=1 writes them
+    test('what it draws for spin, shapes and stars is what test/drawn has: boxes within 4 px, words and colours exactly', async () => {
+        const fixtures = [['spin.tidegraph', path.join(root, 'test', 'spin.tidegraph')], ['shapes.tidegraph', path.join(root, 'test', 'shapes.tidegraph')], ['stars.tidegraph', path.join(repo, 'docs', 'playground', 'stars.tidegraph')]];
+        const writing = process.env.TIDE_GRAPH_DRAWN_WRITE === '1';
+        for (const [name, file] of fixtures) {
+            const p = await openEditor(b, { text: fs.readFileSync(file, 'utf8'), schema, scratch });
+            await p.evaluate(`app.open.details = app.open.mygame = false; app.showPanels(); app.renderPanels(); app.board.zoomAt(1 / app.board.zoom)`);
+            await p.until(`document.fonts.check('13px Inter') && document.fonts.status === 'loaded'`, 'the font');
+            await p.sleep(100);
+            const drawn = await p.evaluate(`app.board.drawn(${JSON.stringify(name)})`);
+            const expected = path.join(root, 'test', 'drawn', name.replace(/\.tidegraph$/, '.json'));
+            assert.deepEqual(b.errors, []);
+            if (writing) {
+                fs.mkdirSync(path.dirname(expected), { recursive: true });
+                fs.writeFileSync(expected, writeDrawn(drawn));
+                continue;
+            }
+            const want = JSON.parse(fs.readFileSync(expected, 'utf8'));
+            compareDrawn(drawn, want, name);
+        }
     });
 
     test('a thousand-node file opens, draws what is on screen and pans; its text is untouched', async () => {

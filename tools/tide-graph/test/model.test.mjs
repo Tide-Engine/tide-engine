@@ -21,6 +21,7 @@ const G = load();
 const { Doc, Schema, Editor } = G;
 const schemaJson = JSON.parse(fs.readFileSync(path.join(repo, 'compiler/src/graph_schema.json'), 'utf8'));
 const schema = new Schema(schemaJson);
+G.schemaNow = schema; // The words the page's code says
 const tidec = findProgram('tidec', 'TIDE_TIDEC');
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'tide-graph-test-'));
 process.on('exit', () => fs.rmSync(scratch, { recursive: true, force: true }));
@@ -446,6 +447,42 @@ test('a new card or frame is written with its place where the schema puts it', (
     assert.deepEqual(mine.map(i => doc.titleOf(i)), ['Namestruct.Area', 'Namestruct.Size get']);
     assert.ok(mine.every(i => i.frame));
     assert.deepEqual([method.x, method.y], [400, 0]);
+});
+
+test("every word the page says is the schema's, and its look has every colour in dark and light", () => {
+    // What the page's code asks for by key (w('…'), W('…'), G.w, G.wk, a schema's word, a menu's M('…'))
+    const asked = new Set();
+    const src = path.join(repo, 'tools/tide-graph/src');
+    for (const f of fs.readdirSync(src)) {
+        const text = fs.readFileSync(path.join(src, f), 'utf8');
+        for (const m of text.matchAll(/\b(?:w|W|G\.w|G\.wk|s\.word|this\.schema\.word|wordKeys)\(\s*'([a-zA-Z][\w.]*[\w])'/g)) asked.add(m[1]);
+        for (const m of text.matchAll(/\bM\(\s*'([a-zA-Z][\w.]*)'/g)) asked.add('menu.' + m[1]);
+        for (const m of text.matchAll(/\bput\(this\.\w+, '([\w.]+)'\)/g)) { asked.add(m[1]); asked.add(m[1] + '.tip'); }
+    }
+    assert.ok(asked.size > 300, `${asked.size} words asked for`);
+    const words = schemaJson.words;
+    for (const key of asked) assert.ok(typeof words[key] === 'string' || typeof words[key]?.label === 'string', `the schema's words have '${key}'`);
+    for (const [key, v] of Object.entries(words)) {
+        if (key === 'about') continue;
+        assert.ok(typeof v === 'string' || (typeof v.label === 'string' && typeof v.keys === 'string'), `'${key}' is words, or a menu entry's label and keys`);
+    }
+    assert.equal(schema.word('toast.deleted', { what: 'Wobble' }), 'Deleted Wobble');
+    assert.equal(schema.wordKeys('menu.rename'), 'F2');
+    assert.equal(schema.word('menu.rename'), 'Rename');
+    // The look: every colour for dark and light, as #rrggbb or #rrggbbaa; every size a number; the font shipped
+    const look = schemaJson.look;
+    const hex = /^#[0-9a-f]{6}([0-9a-f]{2})?$/;
+    for (const [name, c] of [...Object.entries(look.colors), ...Object.entries(look.headers)]) {
+        assert.ok(hex.test(c.dark) && hex.test(c.light), `${name}: ${JSON.stringify(c)}`);
+    }
+    for (const cat of schemaJson.categories) assert.ok(look.headers[cat.name], `a header colour for ${cat.name}`);
+    for (const [type, c] of Object.entries(look.types)) assert.ok(/^#[0-9a-f]{6}$/.test(c), type);
+    for (const [name, v] of Object.entries(look.sizes)) assert.equal(typeof v, 'number', name);
+    for (const f of Object.values(look.font.files)) assert.ok(fs.existsSync(path.join(repo, 'tools/tide-graph/fonts', f)), f);
+    assert.ok(fs.existsSync(path.join(repo, 'tools/tide-graph/fonts', look.font.license)));
+    assert.equal(schema.headerColor('assign'), look.headers.flow.dark);
+    // The JetBrains plugin's copy of the schema is the compiler's
+    assert.equal(fs.readFileSync(path.join(repo, 'tools/tide-jetbrains/graph/graph_schema.json'), 'utf8'), fs.readFileSync(path.join(repo, 'compiler/src/graph_schema.json'), 'utf8'));
 });
 
 test('nothing is offered that a kind cannot have', () => {

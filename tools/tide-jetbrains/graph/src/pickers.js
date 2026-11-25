@@ -7,6 +7,7 @@
     const { picker } = G.ui;
     const { Doc } = G;
     const KIND = G.lang.KIND;
+    const w = (key, vars) => G.w(key, vars);
 
     const TYPE_KINDS = new Set([KIND.Struct, KIND.Class, KIND.Enum, KIND.Interface, KIND.TypeParameter, KIND.Event]);
 
@@ -43,8 +44,8 @@
         if (!schema || app.editor.error) return null;
         const g = group ? schema.groups.find(x2 => x2.name === group) : null;
         return picker({
-            x, y, anchor, className: 'tg-add-menu', placeholder: 'What do you want to make?',
-            title: namespace ? `Add to ${namespace.name}` : g ? `Add to ${g.title}: ${g.summary}` : null,
+            x, y, anchor, className: 'tg-add-menu', placeholder: w('start.title'),
+            title: namespace ? w('picker.add.to', { name: namespace.name }) : g ? w('mygame.addTo', { group: g.title, summary: g.summary }) : null,
             entries: addEntries(schema, group),
             onPick: entry => app.addDecl(entry.kind, { namespace, at }),
         });
@@ -92,7 +93,7 @@
                     if (!offered || offered.has(t)) add(t, { group: group('common'), color: G.ui.typeColor(t), help: docOf(offered?.get(t)) });
                 }
             }
-            for (const t of own) add(t, { group: group('own'), detail: 'type parameter', summary: 'Whatever type it is used with' });
+            for (const t of own) add(t, { group: group('own'), detail: w('picker.type.param'), summary: w('picker.type.param.summary') });
             for (const d of local) {
                 // What the file declares, where tidels says it goes (or wherever, before it answers)
                 if (offered && !offered.has(d.name)) continue;
@@ -122,7 +123,7 @@
                     if (schema.typePicker.builders?.some(b => b.type.startsWith(t + '<'))) continue;
                     add(t, { group: group('rest'), color: G.ui.typeColor(t), help: docOf(offered?.get(t)) });
                 }
-                if (allow.void) add('void', { group: group('rest'), summary: 'Nothing' });
+                if (allow.void) add('void', { group: group('rest'), summary: w('picker.nothing') });
             }
             for (const [name, item] of engine) add(name, { group: group('rest'), detail: item.detail, color: G.ui.typeColor(name), help: docOf(item) });
             return out;
@@ -141,9 +142,9 @@
         let p = null;
         p = picker({
             x, y, anchor, keep, typed, className: 'tg-type-picker', title,
-            placeholder: current ? `${current}  ·  search for a type` : 'Search for a type…',
-            entries: build(null), more: asked, status: 'Asking what fits here…',
-            empty: text => `No type called "${text}". Declare it first: a struct or an enum from + Add.`,
+            placeholder: current ? w('picker.type.current', { type: current }) : w('picker.type.search'),
+            entries: build(null), more: asked, status: w('picker.asking.fits'),
+            empty: text => w('picker.type.none', { text }),
             onPick: entry => {
                 if (entry.none) { onPick(undefined); return; }
                 if (entry.builder) {
@@ -174,9 +175,9 @@
         // A slot the schema says is a number (`counts`)
         if ((builder.counts || []).includes(i)) {
             picker({
-                x, y, keep: true, title, placeholder: 'A number…', entries: [2, 3, 4, 8, 16, 32, 64].map(n => ({ title: String(n), n: String(n) })),
-                free: text => (/^\d+$/.test(text) && Number(text) > 0 ? { title: text, n: text, detail: 'this many' } : null),
-                empty: 'A whole number, like 8',
+                x, y, keep: true, title, placeholder: w('picker.count'), entries: [2, 3, 4, 8, 16, 32, 64].map(n => ({ title: String(n), n: String(n) })),
+                free: text => (/^\d+$/.test(text) && Number(text) > 0 ? { title: text, n: text, detail: w('picker.count.many') } : null),
+                empty: w('picker.count.empty'),
                 onPick: entry => next(entry.n),
             });
             return;
@@ -220,10 +221,10 @@
             for (const d of doc.declared(['struct', 'enum', 'alias'])) entries.push({ title: d.name, key: d.name, type: d.name, group: FILE, detail: schema.declSpec(d.kind)?.title, color: G.ui.typeColor(d.name) });
         } else {
             for (const mode of schema.paramModes.filter(m => schema.modeIsFilter(m))) {
-                entries.push({ title: `${schema.modeLabel(mode)}…`, key: '\0' + mode, mode, group: 'Filters', summary: schema.modeHelp(mode), stay: true });
+                entries.push({ title: `${schema.modeLabel(mode)}…`, key: '\0' + mode, mode, group: w('picker.needs.filters'), summary: schema.modeHelp(mode), stay: true });
             }
         }
-        entries.push({ title: 'Another type…', key: '\0more', other: true, group: REST, summary: 'Anything else it takes: pick its type', stay: true });
+        entries.push({ title: w('picker.needs.other'), key: '\0more', other: true, group: REST, summary: w('picker.needs.other.summary'), stay: true });
         const lang = app.lang;
         // What the rest of the game has that it can take, once tidels says: after the file's own, before the rest
         const asked = lang.status !== 'unavailable'
@@ -240,10 +241,10 @@
             })
             : null;
         const p = picker({
-            x, y, anchor, className: 'tg-needs-picker', placeholder: called ? 'What does it take?' : 'What does it need?',
-            title: called ? `What ${doc.titleOf(item)} takes` : `What ${doc.titleOf(item)} needs`,
-            entries, more: asked, status: 'Asking what the game has…',
-            empty: text => `Nothing called "${text}" to take.`,
+            x, y, anchor, className: 'tg-needs-picker', placeholder: called ? w('picker.takes') : w('picker.needs'),
+            title: w(called ? 'picker.takes.title' : 'picker.needs.title', { name: doc.titleOf(item) }),
+            entries, more: asked, status: w('picker.asking.game'),
+            empty: text => w('picker.needs.none', { text }),
             onPick: entry => {
                 const r = p.el.getBoundingClientRect();
                 if (entry.other) {
@@ -263,11 +264,11 @@
     // The node search of a frame: what can go where it was opened
 
     function placeholderOf(context) {
-        if (context?.member) return 'A member of its value…';
+        if (context?.member) return w('search.member');
         const from = context?.from;
-        if (!from) return 'What should happen here?';
-        if (from.exec) return from.input ? 'What happens before it?' : 'What happens next?';
-        return from.input ? 'A value for it…' : 'What to do with this value?';
+        if (!from) return w('search.here');
+        if (from.exec) return from.input ? w('search.before') : w('search.next');
+        return from.input ? w('search.value') : w('search.use');
     }
 
     // What the editor knows without tidels: the schema's kinds of node, the frame's locals and pins
@@ -299,8 +300,8 @@
     function localMembers(app, type) {
         const s = app.editor.schema;
         return app.editor.doc.membersOf(type).map(m => (m.method
-            ? { title: `${m.name}(${m.method.join(', ')})`, key: 'm:' + m.name, detail: m.type, group: `Of ${type}`, color: s.color('method'), node: { k: 'method', fields: { name: m.name, args: m.method.map(() => null) } }, first: true }
-            : { title: m.name, key: 'm:' + m.name, detail: m.type, group: `Of ${type}`, color: G.ui.typeColor(m.type) || s.color('member'), node: { k: 'member', fields: { member: m.name } }, first: true }));
+            ? { title: `${m.name}(${m.method.join(', ')})`, key: 'm:' + m.name, detail: m.type, group: w('search.of', { type }), color: s.color('method'), node: { k: 'method', fields: { name: m.name, args: m.method.map(() => null) } }, first: true }
+            : { title: m.name, key: 'm:' + m.name, detail: m.type, group: w('search.of', { type }), color: G.ui.typeColor(m.type) || s.color('member'), node: { k: 'member', fields: { member: m.name } }, first: true }));
     }
 
     function nodeSearch(app, frame, clientX, clientY, context) {
@@ -321,7 +322,7 @@
                 // What the value has: by its node, or for a pin's by its type
                 const members = () => (memberNode ? lang.members(memberNode) : lang.membersOfType(memberType).then(items => ({ items, type: memberType })));
                 asked = app.checked().then(members).then(({ items, type }) => items.map(i => G.lang.entryOf(i, { member: true })).filter(Boolean)
-                    .map(e => ({ ...e, key: 'm:' + (e.node.fields.member ?? e.node.fields.name), group: `Of ${type || memberType || 'the value'}`, first: true })));
+                    .map(e => ({ ...e, key: 'm:' + (e.node.fields.member ?? e.node.fields.name), group: w('search.of', { type: type || memberType || w('search.theValue') }), first: true })));
             } else if (!valueOut && !context?.member) {
                 const flow = !!from?.exec;
                 const place = () => lang.placeFor(from?.exec ? (from.input ? { before: from.node } : { after: from.node > 0 ? from.node : 0 }) : from?.input && from.node > 0 ? { valueFor: frame.statementOf(from.node) } : null, frame.slot.owner);
@@ -332,19 +333,19 @@
                 });
             }
         }
-        const title = context?.member || (valueOut && memberType) ? `Of ${memberType || 'its value'}` : null;
+        const title = context?.member || (valueOut && memberType) ? w('search.of', { type: memberType || w('search.itsValue') }) : null;
         // What fits where a wire was dropped comes first; everything else when asked (as Blueprint's "Context
         // Sensitive" off)
-        const EVERYTHING = { title: 'Show everything', summary: 'What goes anywhere in this code, not only what fits here', key: '\0all', group: 'Or', all: true, stay: true, untyped: true };
+        const EVERYTHING = { title: w('search.everything'), summary: w('search.everything.summary'), key: '\0all', group: w('picker.or'), all: true, stay: true, untyped: true };
         const p = picker({
             x: clientX, y: clientY, className: 'tg-node-search', placeholder: placeholderOf(context), title,
             entries: from && !context?.member ? [...entries, EVERYTHING] : entries, more: asked,
-            empty: text => `Nothing called "${text}" here.`,
+            empty: text => w('search.none', { text }),
             onPick: entry => {
                 if (entry.all) {
                     const place = () => lang.placeFor(null, frame.slot.owner);
                     p.reset({
-                        entries: catalog(app, frame, null), title: 'Everything', placeholder: 'What should happen here?',
+                        entries: catalog(app, frame, null), title: w('search.everything.title'), placeholder: w('search.here'),
                         more: lang.status === 'unavailable' ? null : app.checked().then(() => lang.completion(place())).then(items => items.map(i => G.lang.entryOf(i, {})).filter(Boolean).map(e => ({ ...e, key: 'c:' + e.title, summary: undefined }))),
                     });
                     return;
@@ -427,11 +428,11 @@
         const current = frame.wireOf(port);
         const path = current && frame.analysis.folded.has(current) ? doc.pathNodes(g, current) : [];
         const key = G.frames.portKey(port);
-        const label = frame.ports.get(key)?.label || 'value';
+        const label = frame.ports.get(key)?.label || w('value.input');
         const reader = port.node > 0 ? port.node : 0;
-        const HAS = 'What this code has', GAME = s.typeGroup('game'), REST = s.typeGroup('rest'), WORK = 'Work it out', READ = 'Only read here';
-        const ALL = { title: "Show what doesn't fit too", key: '\0all', group: 'Or', all: true, stay: true, untyped: true };
-        const BACK = { title: '‹ Back', key: '\0back', group: 'Something else', back: true, stay: true, untyped: true };
+        const HAS = w('value.has'), GAME = s.typeGroup('game'), REST = s.typeGroup('rest'), WORK = w('value.work.group'), READ = w('value.readOnly');
+        const ALL = { title: w('value.all'), key: '\0all', group: w('picker.or'), all: true, stay: true, untyped: true };
+        const BACK = { title: w('value.back'), key: '\0back', group: w('value.else'), back: true, stay: true, untyped: true };
         const startOf = n => (n.k === 'local' ? { local: n.ref } : n.k === 'member' ? { shorthand: n.member } : n.k === 'name' ? { name: n.name } : { word: n.k });
         const textOf = b => [b.start.name ?? b.start.word ?? (b.start.shorthand ? '.' + b.start.shorthand : s.declaredLocal(Doc.nodeIn(g, b.start.local) || {}) || '?'), ...b.members].join('.');
         const colour = type => G.ui.typeColor(type) || undefined;
@@ -487,12 +488,12 @@
             const choices = want ? doc.enumMembers(want) || lang.choices[name] : null;
             for (const c of choices || []) own.push({ title: `${name}.${c}`, key: 'e:' + c, group: name, color: colour(want), make: pathOf({ start: { name }, members: [c] }) });
             if (control === 'tick') {
-                own.push({ title: 'yes', detail: 'true', key: '\0yes', group: want, make: (d, graph, at) => d.makeLiteral(graph, 'bool', true, at) },
-                    { title: 'no', detail: 'false', key: '\0no', group: want, make: (d, graph, at) => d.makeLiteral(graph, 'bool', false, at) });
+                own.push({ title: w('value.yes'), detail: 'true', key: '\0yes', group: want, make: (d, graph, at) => d.makeLiteral(graph, 'bool', true, at) },
+                    { title: w('value.no'), detail: 'false', key: '\0no', group: want, make: (d, graph, at) => d.makeLiteral(graph, 'bool', false, at) });
             }
             if (control === 'vector' || control === 'colour') {
                 const size = control === 'colour' ? 3 : G.values.vectorSize(want, s);
-                own.push({ title: `${want}(…)`, summary: control === 'colour' ? 'Its red, green and blue, to fill in' : 'A number for each axis, to fill in', key: '\0new', group: want, color: colour(want),
+                own.push({ title: `${want}(…)`, summary: control === 'colour' ? w('value.colour') : w('value.vector'), key: '\0new', group: want, color: colour(want),
                     make: (d, graph, at) => {
                         const call = d.newNode('call', at.x, at.y, { name: want, args: [] });
                         Doc.nodes(graph).push(call);
@@ -519,17 +520,17 @@
                 };
                 for (const pin of frame.pins) offer(pin.name, pin.type, { name: pin.name });
                 for (const d of frame.localsBefore(reader)) offer(s.declaredLocal(d), frame.typeOfPort({ local: d.id }), { local: d.id });
-                if (!out.length) out.push({ title: 'Nothing here can be changed yet', summary: readOnly.length ? 'What this code only reads is below: make one of them "' + s.modeLabel('mut') + '" on the entry' : 'Add what it changes on the entry: + needs…', key: '\0none', group: HAS, disabled: true, why: 'Nothing to change' });
+                if (!out.length) out.push({ title: w('value.nothingToChange'), summary: readOnly.length ? w('value.makeChangeable', { mode: s.modeLabel('mut') }) : w('value.addChange'), key: '\0none', group: HAS, disabled: true, why: w('why.nothingToChange') });
                 out.push(...readOnly);
-                if (current) out.push({ title: 'Nothing', summary: 'Empty it', key: '\0clear', group: 'Or', clear: true, untyped: true });
+                if (current) out.push({ title: w('value.nothing'), summary: w('menu.empty'), key: '\0clear', group: w('picker.or'), clear: true, untyped: true });
                 return out;
             }
             // The game's own, then "Work it out…", then what the engine has (its namespaces' functions are calls too)
             out.push(...(game || []).filter(e => e.group !== REST));
-            out.push({ title: 'Work it out…', summary: 'An operator or a call: a node, wired in', key: '\0work', group: WORK, work: true, drill: true, stay: true, untyped: true });
+            out.push({ title: w('menu.work'), summary: w('value.work.summary'), key: '\0work', group: WORK, work: true, drill: true, stay: true, untyped: true });
             out.push(...(game || []).filter(e => e.group === REST));
             out.push(...workEntries().map(e => ({ ...e, typed: true })));
-            if (current) out.push({ title: 'Nothing', summary: 'Empty it', key: '\0clear', group: 'Or', clear: true, untyped: true });
+            if (current) out.push({ title: w('value.nothing'), summary: w('menu.empty'), key: '\0clear', group: w('picker.or'), clear: true, untyped: true });
             if (left) out.push(ALL);
             return out;
         };
@@ -558,18 +559,18 @@
                         start: item.kind === KIND.Keyword ? { word: 'this' } : { name }, type, drill: open(type), stay: open(type) && type !== want, into: open(type) && type !== want });
                 } else if (item.kind === KIND.Enum && item.detail === 'enum') {
                     if (!fit(name) && skip()) continue;
-                    to.push({ title: name, key: 'n:' + name, detail: 'its choices', group, color: colour(name), help, start: { name }, named: true, drill: true, stay: true, into: true });
+                    to.push({ title: name, key: 'n:' + name, detail: w('value.choices'), group, color: colour(name), help, start: { name }, named: true, drill: true, stay: true, into: true });
                 } else if (item.kind === KIND.Module) {
-                    to.push({ title: name, key: 'n:' + name, detail: 'its functions', summary: item.detail, group, help, start: { name }, named: true, drill: true, stay: true, into: true });
+                    to.push({ title: name, key: 'n:' + name, detail: w('value.functions'), summary: item.detail, group, help, start: { name }, named: true, drill: true, stay: true, into: true });
                 } else if (item.kind === KIND.Function || item.kind === KIND.Method) {
                     // A call is offered where what it gives can go: not one that gives nothing
                     const gives = resultIn(item.detail);
                     if (gives === '' || (gives && !fit(gives) && skip())) continue;
                     const params = G.lang.paramNames(item);
-                    to.push({ title: `${name}(${params.join(', ')})`, key: 'f:' + name, detail: gives || 'a call', group, color: colour(gives) || s.color('call'), help, keywords: name, make: nodeOf('call', { name, args: params.map(() => null) }) });
+                    to.push({ title: `${name}(${params.join(', ')})`, key: 'f:' + name, detail: gives || w('value.call'), group, color: colour(gives) || s.color('call'), help, keywords: name, make: nodeOf('call', { name, args: params.map(() => null) }) });
                 } else if ((item.kind === KIND.Struct || item.kind === KIND.Class) && own && ['struct', 'component', 'event'].includes(item.detail)) {
                     if (!fit(name) && skip()) continue;
-                    to.push({ title: `${name} { … }`, key: 't:' + name, detail: `a new ${item.detail}`, group, color: colour(name), help, keywords: name, make: nodeOf('literal', { type: name, inits: [] }) });
+                    to.push({ title: `${name} { … }`, key: 't:' + name, detail: w('value.new', { kind: item.detail }), group, color: colour(name), help, keywords: name, make: nodeOf('literal', { type: name, inits: [] }) });
                 }
             }
             return [...mine, ...rest];
@@ -593,7 +594,7 @@
                     const gives = resultIn(item.detail);
                     if (place || gives === '' || (gives && !fit(gives) && skip())) continue;
                     const params = G.lang.paramNames(item);
-                    out.push({ title: `${name}(${params.join(', ')})`, key: 'm:' + name, detail: gives || 'a call', color: colour(gives) || s.color('method'), help: docOf(item), keywords: name, make: methodOf(b, name, params.length) });
+                    out.push({ title: `${name}(${params.join(', ')})`, key: 'm:' + name, detail: gives || w('value.call'), color: colour(gives) || s.color('method'), help: docOf(item), keywords: name, make: methodOf(b, name, params.length) });
                 } else {
                     const type = typeIn(item.detail);
                     if (!fit(type) && !open(type) && skip()) continue;
@@ -604,7 +605,7 @@
             return out;
         };
         const localMembers = b => doc.membersOf(b.type).filter(m => (m.method ? !place : fit(m.type) || open(m.type) || !skip())).map(m => (m.method
-            ? { title: `${m.name}(${m.method.join(', ')})`, key: 'm:' + m.name, detail: 'a call', color: s.color('method'), keywords: m.name, make: methodOf(b, m.name, m.method.length) }
+            ? { title: `${m.name}(${m.method.join(', ')})`, key: 'm:' + m.name, detail: w('value.call'), color: s.color('method'), keywords: m.name, make: methodOf(b, m.name, m.method.length) }
             : { title: m.name, key: 'm:' + m.name, detail: m.type, color: colour(m.type), field: m.name, type: m.type, drill: open(m.type), into: !fit(m.type), stay: !fit(m.type) }));
 
         let lastGame = null;
@@ -613,22 +614,22 @@
             if (!base) {
                 const game = gameEntries();
                 p.reset({
-                    entries: top(lastGame), title: place ? `What does it change? Something this code can change.` : `What goes in '${label}'?${want ? ` A ${want}.`.replace(/^ A ([aeiou])/i, ' An $1') : ''}`,
-                    placeholder: place ? 'Search…' : s.control(want) === 'whole' || s.control(want) === 'decimal' ? 'Type a number, or search…' : s.control(want) === 'text' ? 'Type the text, or search…' : want ? 'Search…' : 'Search, or type a number…',
+                    entries: top(lastGame), title: place ? w('value.change.title') : w(want ? 'value.title.typed' : 'value.title', { input: label, article: /^[aeiou]/i.test(want || '') ? w('an') : w('a'), type: want }),
+                    placeholder: place ? w('value.search') : s.control(want) === 'whole' || s.control(want) === 'decimal' ? w('value.search.number') : s.control(want) === 'text' ? w('value.search.text') : want ? w('value.search') : w('value.search.any'),
                     more: game.then(entries => { lastGame = entries; if (!base) p.refill(top(entries)); return []; }),
                 });
             } else if (base.work) {
-                p.reset({ entries: [...workEntries().map(e => ({ ...e, group: undefined })), BACK], title: `'${label}': work it out`, placeholder: 'An operator or a call…' });
+                p.reset({ entries: [...workEntries().map(e => ({ ...e, group: undefined })), BACK], title: w('value.work.title', { input: label }), placeholder: w('value.work.search') });
             } else {
                 const text = textOf(base);
-                const whole = base.named || !fit(base.type) ? [] : [{ title: text, key: '\0itself', detail: base.type || undefined, summary: 'All of it', color: colour(base.type), itself: true }];
+                const whole = base.named || !fit(base.type) ? [] : [{ title: text, key: '\0itself', detail: base.type || undefined, summary: w('value.whole'), color: colour(base.type), itself: true }];
                 const local = base.type ? localMembers(base) : [];
                 const choices = base.named ? (doc.enumMembers(base.start.name) || []).map(c => ({ title: c, key: 'm:' + c, field: c, color: colour(base.start.name) })) : [];
                 // What something has comes before all of it where a field is what's likely meant: something to change
                 const first = place || (want && base.type !== want) ? [...choices, ...local] : [...whole, ...choices, ...local];
                 const after = first.length === choices.length + local.length ? whole : [];
                 p.reset({
-                    entries: first, title: `${text}: which of it?`, placeholder: `Of ${text}…`,
+                    entries: first, title: w('value.which', { name: text }), placeholder: w('value.of', { name: text }),
                     more: memberEntries(base).then(found => { const have = new Set(first.map(e => e.key)); return [...found.filter(e => !have.has(e.key)), ...after, ...(left ? [ALL] : []), BACK]; }),
                 });
             }
@@ -653,8 +654,8 @@
 
         p = picker({
             anchor, x, y, className: 'tg-value-picker', entries: [],
-            empty: text => (base ? `It has nothing called "${text}".` : `Nothing called "${text}" that goes here.`),
-            status: 'Asking what the game has…',
+            empty: text => (base ? w('value.none.of', { text }) : w('value.none', { text })),
+            status: w('picker.asking.game'),
             onDrill: drill,
             onBack: () => back(),
             free: (text, shown) => {
@@ -662,14 +663,14 @@
                 const control = s.control(want);
                 if (G.values.NUMBER.test(text) && (!control || control === 'whole' || control === 'decimal')) {
                     const kind = G.values.INT.test(text.replace(/^-/, '')) ? 'int' : 'float';
-                    return { title: text, key: '\0typed', detail: 'a number', make: (d, graph, at) => d.makeLiteral(graph, kind, text, at) };
+                    return { title: text, key: '\0typed', detail: w('value.number'), make: (d, graph, at) => d.makeLiteral(graph, kind, text, at) };
                 }
                 if (control === 'text' || (!control && /^["“]/.test(text))) {
                     const body = text.replace(/^["“]|["”]$/g, '');
                     // Text that is also the start of a name comes after the names
-                    return { title: `“${body}”`, key: '\0typed', detail: 'text', last: shown.length > 0 && control === 'text', make: (d, graph, at) => d.makeLiteral(graph, 'string', body, at) };
+                    return { title: `“${body}”`, key: '\0typed', detail: w('value.text'), last: shown.length > 0 && control === 'text', make: (d, graph, at) => d.makeLiteral(graph, 'string', body, at) };
                 }
-                if (control === 'char' && [...text].length === 1) return { title: `'${text}'`, key: '\0typed', detail: 'a character', make: (d, graph, at) => d.makeLiteral(graph, 'char', `'${text}'`, at) };
+                if (control === 'char' && [...text].length === 1) return { title: `'${text}'`, key: '\0typed', detail: w('value.char'), make: (d, graph, at) => d.makeLiteral(graph, 'char', `'${text}'`, at) };
                 return null;
             },
             onPick: entry => {
@@ -739,7 +740,7 @@
                 const in_ = item.frame ? (top?.group === 'More' && !item.member && !item.accessor ? 'More' : 'Behaviour') : top?.group;
                 if (in_ !== group.name) continue;
                 out.push({
-                    title: ed.doc.titleOf(item), key: String(item.id), id: item.id, detail: item.accessor ? schema.memberSpec('property')?.title || 'Property' : spec?.title || kind,
+                    title: ed.doc.titleOf(item), key: String(item.id), id: item.id, of: item.member || item.accessor ? item.type?.id : undefined, detail: item.accessor ? schema.memberSpec('property')?.title || w('details.property') : spec?.title || kind,
                     group: group.title, groupSummary: group.summary, problems: app.problemsIn(item.id),
                     tag: app.problemsIn(item.id) ? '!' : undefined,
                 });
@@ -751,8 +752,8 @@
     function jumpTo(app, { x, y, anchor } = {}) {
         if (!app.editor || app.editor.error) return null;
         return picker({
-            x: x ?? innerWidth / 2 - 180, y: y ?? 60, anchor, className: 'tg-jump', placeholder: 'Jump to…',
-            entries: contents(app), empty: text => `Nothing called "${text}" in this file.`,
+            x: x ?? innerWidth / 2 - 180, y: y ?? 60, anchor, className: 'tg-jump', placeholder: w('jump.search'),
+            entries: contents(app), empty: text => w('jump.none', { text }),
             onPick: entry => app.reveal(entry.id),
         });
     }

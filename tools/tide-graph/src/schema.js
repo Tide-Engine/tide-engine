@@ -65,6 +65,36 @@
             this.controlOf = new Map();
             for (const c of json.valueControls || []) for (const t of c.types || []) this.controlOf.set(t, c.control);
             this.enumControl = (json.valueControls || []).find(c => c.of === 'enum')?.control || 'choice';
+            // How the editors draw (colours, sizes, the font) and what they say: the same in each
+            this.look = json.look || {};
+            this.words = json.words || {};
+        }
+
+        // A node's title bar's colour, by its kind's category, in the page's dark or light (G.mode)
+        headerColor(k) {
+            const category = this.byK.get(k)?.category;
+            return this.look.headers?.[category]?.[G.mode || 'dark'] || null;
+        }
+
+        // An editor's own words (the schema's `words`): `key`'s text, its {names} filled from `vars`; a menu's entry is
+        // { label, keys }, and `w` gives its label
+        word(key, vars) {
+            let text = this.words[key];
+            if (text && typeof text === 'object') text = text.label;
+            if (typeof text !== 'string') {
+                if (!this.missing?.has(key)) {
+                    (this.missing ||= new Set()).add(key);
+                    console.error(`Tide graph: no words for '${key}' in the schema`);
+                }
+                return key;
+            }
+            return vars ? text.replace(/\{(\w+)\}/g, (all, name) => (vars[name] !== undefined && vars[name] !== null ? String(vars[name]) : all)) : text;
+        }
+
+        // A menu entry's keys, as its words say them ('' for none)
+        wordKeys(key) {
+            const entry = this.words[key];
+            return entry && typeof entry === 'object' ? entry.keys || '' : '';
         }
 
         // What a node's flag, an input or an exec output is called on its node; a key with no entry is shown as it is
@@ -348,4 +378,8 @@
 
     G.Schema = Schema;
     G.samePath = samePath;
+    // The page's words (the schema in use's: the app sets G.schemaNow), `w('menu.rename')`, `w('toast.deleted', { what })`;
+    // a menu entry's keys by wk
+    G.w = (key, vars) => (G.schemaNow ? G.schemaNow.word(key, vars) : key);
+    G.wk = key => (G.schemaNow ? G.schemaNow.wordKeys(key) : '');
 })(globalThis.TideGraph = globalThis.TideGraph || {});

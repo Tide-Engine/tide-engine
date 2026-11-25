@@ -7,14 +7,22 @@
     const { el, field, button, menu, popup, typeColor } = G.ui;
     const { set } = G.json;
 
+    const w = (key, vars) => G.w(key, vars);
     const NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
-    const checkName = v => (NAME.test(v) ? null : v === '' ? 'It needs a name' : 'A name is letters, digits and _, and starts with a letter');
-    const checkPath = v => (/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/.test(v) ? null : 'Names joined by dots, like Game.Combat');
+    const checkName = v => (NAME.test(v) ? null : v === '' ? w('check.nameNeeded') : w('check.nameLetters'));
+    // What's typed for a name, made one: words joined with each after the first capitalised ("my speed" is mySpeed),
+    // anything else left out, and _ before a digit it would start with ("2nd" is _2nd)
+    const cleanName = text => {
+        const words = String(text).trim().split(/[^A-Za-z0-9_]+/).filter(Boolean);
+        const joined = words.map((word, i) => (i ? word[0].toUpperCase() + word.slice(1) : word)).join('');
+        return /^[0-9]/.test(joined) ? '_' + joined : joined;
+    };
+    const checkPath = v => (/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/.test(v) ? null : w('check.namespace'));
 
     // A type, shown as a chip and changed by the type picker: never typed free. Typing a letter on it opens the
     // picker with that letter.
-    function typeChip(app, { type, at = 0, onPick, allow, own, fk, kinds, details, ask, title, placeholder = 'pick a type', plain }) {
-        const b = el('button.tg-type' + (type ? '' : '.tg-unset'), { type: 'button', title: title ?? (type ? `${type} · click to change` : 'Pick a type') },
+    function typeChip(app, { type, at = 0, onPick, allow, own, fk, kinds, details, ask, title, placeholder = w('node.pickType'), plain }) {
+        const b = el('button.tg-type' + (type ? '' : '.tg-unset'), { type: 'button', title: title ?? (type ? w('type.change', { type }) : w('type.pick')) },
             type ? el('span.tg-type-dot', { style: { background: typeColor(type) } }) : null,
             el('span.tg-type-name', { text: type || placeholder }));
         if (fk) b.dataset.fk = fk;
@@ -39,7 +47,7 @@
 
     function form(title, body, { x, y, anchor, done, help }) {
         let p = null;
-        const ok = button('Done', () => p.close(), null, 'tg-button.tg-primary');
+        const ok = button(w('value.done'), () => p.close(), null, 'tg-button.tg-primary');
         p = popup({
             x, y, anchor, className: 'tg-popup tg-form',
             content: [el('div.tg-form-title', { text: title }), help ? el('div.tg-form-help', { text: help }) : null, body, el('div.tg-form-actions', null, ok)],
@@ -71,7 +79,7 @@
                     if (c.width) input.style.width = c.width;
                     return input;
                 }),
-                button('×', () => { state.splice(i, 1); draw(); }, 'Remove', 'tg-icon'))),
+                button(w('close'), () => { state.splice(i, 1); draw(); }, w('form.delete'), 'tg-icon'))),
                 button('+ ' + addLabel, () => { state.push(blank()); draw(state.length - 1); }, null, 'tg-add-row'));
             if (focus !== undefined) list.children[focus]?.querySelector('input')?.focus();
         };
@@ -94,8 +102,8 @@
         promptRows({
             ...at, title: s.keyLabel('attributes'), help: s.keyHelp('attributes'),
             rows: old.map(a => ({ id: a.id, name: a.name, args: a.args ?? '' })),
-            columns: [{ key: 'name', placeholder: 'Stage', width: '8em', check: checkName }, { key: 'args', placeholder: 'what is in its ( ), if any', mono: true }],
-            addLabel: 'attribute', blank: () => ({ name: 'Sparse', args: '' }),
+            columns: [{ key: 'name', placeholder: 'Stage', width: '8em', check: checkName }, { key: 'args', placeholder: w('attributes.args'), mono: true }],
+            addLabel: w('attributes.row'), blank: () => ({ name: 'Sparse', args: '' }),
             onDone: rows => app.edit(doc => {
                 const next = rows.map(r => {
                     const a = {};
@@ -111,7 +119,7 @@
 
     function editNote(app, v, order, at) {
         const s = app.editor.schema;
-        promptText({ ...at, title: s.keyLabel('comment'), help: s.keyHelp('comment'), value: v.comment, multiline: true, placeholder: 'What it is for…',
+        promptText({ ...at, title: s.keyLabel('comment'), help: s.keyHelp('comment'), value: v.comment, multiline: true, placeholder: w('note.placeholder'),
             onDone: text => app.edit(() => set(v, 'comment', text.trim() ? text : undefined, order)) });
     }
 
@@ -155,7 +163,12 @@
             const list = v[rk.key];
             if (rk.kind === 'entry') made = d.newNamed(d.uniqueName(list, 'name'), 'int', '0');
             else if (rk.kind === 'enum') made = { id: d.newId(), name: d.uniqueName(list, 'Choice') };
-            else made = d.newElement('field', true, d.uniqueName(list, 'value'));
+            else {
+                // A new field takes the type of the one before it, as fields of one kind come together
+                made = d.newElement('field', true, d.uniqueName(list, 'value'));
+                const before = after?.kind === 'field' ? after : [...list].reverse().find(m => m?.kind === 'field');
+                if (before?.type) set(made, 'type', before.type, d.schema.memberOrder('field'));
+            }
             const at = after ? list.indexOf(after) : -1;
             list.splice(at < 0 ? list.length : at + 1, 0, made);
         });
@@ -193,7 +206,7 @@
         const head = el('div.tg-card-head', { dataset: { handle: item.id } }, el('span.tg-chip.tg-chip-' + (spec?.group || 'More').toLowerCase(), { text: spec?.title || v.kind, title: spec?.summary }));
         if (has('name')) {
             G.ui.put(head, G.ui.nameText(v.name, x => app.renameDecl(item, x), {
-                className: 'tg-name', placeholder: 'Name', check: checkName, fk: `${v.id}:name`,
+                className: 'tg-name', placeholder: w('placeholder.name'), check: checkName, fk: `${v.id}:name`,
                 // A new card's first Enter goes on to its first row
                 onEnter: () => { if (rk && !rowsOf().length) addRow(null); },
             }));
@@ -202,7 +215,7 @@
         }
         G.ui.put(head, el('span.tg-badge', { dataset: { badge: item.id } }),
             plus ? button('+', () => addRow(rowsOf().at(-1) || null), plus, 'tg-icon.tg-card-add') : null,
-            button('⋯', e => G.menus.contextMenu(app, { kind: 'card', item }, e.clientX, e.clientY, { anchor: e.currentTarget }), 'What can be done with it (or right-click it)', 'tg-more'));
+            button(w('more'), e => G.menus.contextMenu(app, { kind: 'card', item }, e.clientX, e.clientY, { anchor: e.currentTarget }), w('more.tip'), 'tg-more'));
         G.ui.put(card, head);
         const tags = tagsOf(app, item);
         if (tags.length) G.ui.put(card, el('div.tg-tags', null, tags));
@@ -230,49 +243,49 @@
                     G.ui.put(rows, rowOf(m,
                         m.kind === 'tweak' ? el('span.tg-row-tag', { text: mspec.title.toLowerCase(), title: mspec.summary }) : null,
                         m.local ? el('span.tg-row-tag', { text: 'local', title: `${s.keyLabel('local')}: ${s.keyHelp('local')}` }) : null,
-                        name(m, 'name', { onEnter: nextRow(m) }),
+                        name(m, w('placeholder.lower'), { onEnter: nextRow(m) }),
                         typeChip(app, { type: m.type, at: m.id, own, fk: `${m.id}:type`, onPick: t => edit(d => { set(m, 'type', t, order); delete m[valueKey]; if (m.kind === 'tweak') set(m, 'value', defaultValue(app, d, t), order); }) }),
                         G.values.control(app, { holder: m, key: valueKey, type: m.type, slot: { owner: m.id, key: valueKey }, order, fk: `${m.id}:value`, required: m.kind === 'tweak', label: s.keyLabel(valueKey), onEnter: nextRow(m) })));
                 } else if (m.kind === 'property') {
                     const accessors = Array.isArray(m.accessors) ? m.accessors : [];
                     G.ui.put(rows, rowOf(m,
                         el('span.tg-row-tag', { text: mspec.title.toLowerCase(), title: mspec.summary }),
-                        name(m, 'Name'),
+                        name(m, w('placeholder.name')),
                         typeChip(app, { type: m.type, at: m.id, own, fk: `${m.id}:type`, onPick: t => edit(() => set(m, 'type', t, order)) }),
                         el('span.tg-row-links', null,
-                            accessors.map(a => button(a.word, () => app.reveal(a.id), `Go to its ${a.word} code`, 'tg-link')),
+                            accessors.map(a => button(a.word, () => app.reveal(a.id), w('card.accessor.go', { word: a.word }), 'tg-link')),
                             ['get', 'set'].filter(w => !accessors.some(a => a.word === w)).map(w => button('+ ' + w, () => {
                                 let made;
                                 edit(d => { if (!Array.isArray(m.accessors)) set(m, 'accessors', [], order); made = d.newAccessor(w); m.accessors.push(made); });
                                 if (made) app.reveal(made.id);
-                            }, `Give it code for ${w}`, 'tg-link.tg-link-add')))));
+                            }, G.w('card.accessor.add', { word: w }), 'tg-link.tg-link-add')))));
                 } else if (mspec?.body) {
                     const title = m.kind === 'operator' ? `operator ${m.op ?? ''}` : m.name ?? mspec.title;
                     G.ui.put(rows, rowOf(m,
                         el('span.tg-row-tag', { text: mspec.title.toLowerCase(), title: mspec.summary }),
-                        button(title + ' →', () => app.reveal(m.id), 'Its code is a frame on the board: go to it', 'tg-link.tg-row-code')));
+                        button(title + ' →', () => app.reveal(m.id), w('card.code.go'), 'tg-link.tg-row-code')));
                 } else {
                     G.ui.put(rows, rowOf(m,
                         el('span.tg-row-tag', { text: (mspec?.title || 'text').toLowerCase(), title: mspec?.summary }),
-                        button(firstLine(m.text || '') || '(empty)', e => promptText({ x: e.clientX, y: e.clientY, title: mspec?.title || 'Tide text', help: mspec?.summary, value: m.text, multiline: true, mono: true,
-                            onDone: text => edit(() => { m.text = text; }) }), 'Members written as Tide text: click to edit', 'tg-link.tg-row-text.tg-mono')));
+                        button(firstLine(m.text || '') || w('card.text.empty'), e => promptText({ x: e.clientX, y: e.clientY, title: mspec?.title || w('card.text.title'), help: mspec?.summary, value: m.text, multiline: true, mono: true,
+                            onDone: text => edit(() => { m.text = text; }) }), w('card.text.tip'), 'tg-link.tg-row-text.tg-mono')));
                 }
             }
         } else if (isEnum) {
             for (const m of rowsOf()) {
                 G.ui.put(rows, rowOf(m,
-                    name(m, 'Name', { onEnter: nextRow(m) }),
-                    G.values.control(app, { holder: m, key: 'value', type: 'int', slot: { owner: m.id, key: 'value' }, order: s.element('enumMember'), fk: `${m.id}:value`, label: 'Its number, when it matters', onEnter: nextRow(m), none: 'auto' })));
+                    name(m, w('placeholder.name'), { onEnter: nextRow(m) }),
+                    G.values.control(app, { holder: m, key: 'value', type: 'int', slot: { owner: m.id, key: 'value' }, order: s.element('enumMember'), fk: `${m.id}:value`, label: w('card.enum.number'), onEnter: nextRow(m), none: 'auto' })));
             }
         } else if (rk?.kind === 'entry') {
             for (const m of rowsOf()) {
                 G.ui.put(rows, rowOf(m,
-                    name(m, 'name', { onEnter: nextRow(m) }),
+                    name(m, w('placeholder.lower'), { onEnter: nextRow(m) }),
                     G.values.control(app, { holder: m, key: 'value', type: null, slot: { owner: m.id, key: 'value' }, order: s.element('entry'), fk: `${m.id}:value`, required: true, onEnter: nextRow(m) })));
             }
         }
         // An empty card says what goes in it, and how
-        if (rk && !rowsOf().length) G.ui.put(rows, el('div.tg-rows-empty', { text: `Nothing yet: + on its title (${plus.replace(/…$/, '').toLowerCase()})` }));
+        if (rk && !rowsOf().length) G.ui.put(rows, el('div.tg-rows-empty', { text: w('card.rows.empty', { what: plus.replace(/…$/, '').toLowerCase() }) }));
         if (has('type')) {
             // One value: a constant, an asset, another name for a type
             G.ui.put(rows, el('div.tg-row.tg-row-single', { dataset: { id: v.id } },
@@ -288,7 +301,7 @@
         }
         if (has('text') && !rk) {
             const lines = String(v.text ?? '').split('\n').length;
-            const text = field(v.text ?? '', x => edit(() => { v.text = x; }), { multiline: true, rows: Math.max(2, Math.min(24, lines)), className: 'tg-input.tg-card-text', mono: true, placeholder: '// Declarations written as Tide', fk: `${v.id}:text` });
+            const text = field(v.text ?? '', x => edit(() => { v.text = x; }), { multiline: true, rows: Math.max(2, Math.min(24, lines)), className: 'tg-input.tg-card-text', mono: true, placeholder: w('card.text.placeholder'), fk: `${v.id}:text` });
             G.ui.put(rows, text);
         }
         G.ui.put(card, rows);
@@ -326,27 +339,27 @@
         const components = Array.isArray(p.components) ? p.components : [];
         const out = el('div.tg-prefab', { style: { marginLeft: depth ? '14px' : '0' } });
         G.ui.put(out, el('div.tg-row', { dataset: { id: p.id } },
-            el('span.tg-row-tag', { text: list ? 'entity' : 'root' }),
-            list ? G.ui.nameText(p.name ?? '', x => edit(() => set(p, 'name', x || undefined, order)), { className: 'tg-row-name', placeholder: 'name', check: x => (x === '' ? null : checkName(x)), fk: `${p.id}:name` })
+            el('span.tg-row-tag', { text: list ? w('prefab.entity') : w('prefab.root') }),
+            list ? G.ui.nameText(p.name ?? '', x => edit(() => set(p, 'name', x || undefined, order)), { className: 'tg-row-name', placeholder: w('placeholder.lower'), check: x => (x === '' ? null : checkName(x)), fk: `${p.id}:name` })
                 : el('span.tg-row-name.tg-muted', { text: prefab.name ?? '' }),
-            list ? button('×', () => edit(() => { list.splice(list.indexOf(p), 1); }), 'Delete this entity', 'tg-icon.tg-row-remove') : null));
+            list ? button(w('close'), () => edit(() => { list.splice(list.indexOf(p), 1); }), w('prefab.entity.delete'), 'tg-icon.tg-row-remove') : null));
         const chips = el('div.tg-prefab-components');
         components.forEach((c, i) => {
             const root = G.Doc.nodeIn(c, c?.root);
             G.ui.put(chips, el('span.tg-prefab-component', null,
-                button(root ? root.type || root.name || s.title(root.k) : 'component', () => app.openValue({ owner: p.id, key: 'components', index: i }, null, null, null, null), 'Its values: open them', 'tg-value-graph'),
-                button('×', () => edit(() => { p.components.splice(i, 1); }), 'Delete this component', 'tg-icon')));
+                button(root ? root.type || root.name || s.title(root.k) : w('prefab.component'), () => app.openValue({ owner: p.id, key: 'components', index: i }, null, null, null, null), w('prefab.component.open'), 'tg-value-graph'),
+                button(w('close'), () => edit(() => { p.components.splice(i, 1); }), w('prefab.component.delete'), 'tg-icon')));
         });
-        G.ui.put(chips, button('+ component', e => G.pickers.typePicker(app, {
-            anchor: e.currentTarget, kinds: ['component'], details: ['component'], title: 'A component it has',
+        G.ui.put(chips, button(w('prefab.component.plus'), e => G.pickers.typePicker(app, {
+            anchor: e.currentTarget, kinds: ['component'], details: ['component'], title: w('prefab.component.add'),
             onPick: type => edit(d => {
                 if (!Array.isArray(p.components)) set(p, 'components', [], order);
                 const g = d.valueGraph('literal');
                 g.nodes[0].type = type;
                 p.components.push(g);
             }),
-        }), 'A component every one of these starts with', 'tg-add-row'));
-        G.ui.put(chips, button('+ child', () => {
+        }), w('prefab.component.plus.tip'), 'tg-add-row'));
+        G.ui.put(chips, button(w('prefab.child.plus'), () => {
             let made;
             edit(d => {
                 if (!Array.isArray(p.children)) set(p, 'children', [], order);
@@ -354,7 +367,7 @@
                 p.children.push(made);
             });
             if (made) app.board.focusSoon(`${made.id}:name`, true);
-        }, 'An entity that goes with it', 'tg-add-row'));
+        }, w('prefab.child.plus.tip'), 'tg-add-row'));
         G.ui.put(out, chips);
         for (const child of Array.isArray(p.children) ? p.children : []) {
             if (child && typeof child === 'object') G.ui.put(out, prefabRows(app, prefab, child, p.children, depth + 1));
@@ -362,5 +375,5 @@
         return out;
     }
 
-    G.cards = { render, typeChip, tagsOf, noteOf, promptText, promptRows, editNote, editAttributes, checkName, checkPath, defaultValue, attributeText, addRowTo, rowsKind, firstLine };
+    G.cards = { render, typeChip, tagsOf, noteOf, promptText, promptRows, editNote, editAttributes, checkName, cleanName, checkPath, defaultValue, attributeText, addRowTo, rowsKind, firstLine };
 })(globalThis.TideGraph = globalThis.TideGraph || {});

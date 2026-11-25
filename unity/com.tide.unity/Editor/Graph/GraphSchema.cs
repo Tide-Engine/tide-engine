@@ -77,7 +77,7 @@ namespace Tide.Editor
             public KindSpec[] Decls, Members;
             public Dictionary<string, string[]> Elements = new Dictionary<string, string[]>();
             public string[] AllModifiers, ParamModes, AssignOps, UnaryOps, StepOps, OperatorOps, Types;
-            public (string op, string title)[] BinaryOps;
+            public (string op, string title)[] BinaryOps, UnaryTitles;
             public Dictionary<string, (string title, Color color)> Categories = new Dictionary<string, (string, Color)>();
             public NodeSpec[] Nodes;
             public Dictionary<string, NodeSpec> ByKind;
@@ -94,6 +94,7 @@ namespace Tide.Editor
             public string InlineAbout;
             public string[] TypeCommon = Array.Empty<string>(), Rules = Array.Empty<string>();
             public TypeBuilder[] TypeBuilders = Array.Empty<TypeBuilder>();
+            public JValue Look, Words;
         }
 
         static Schema current;
@@ -249,7 +250,7 @@ namespace Tide.Editor
         static Schema Read(JValue j)
         {
             if (j == null || !j.IsObject || j.Arr("nodes") == null || j.Arr("declarations") == null || j.Get("elements") == null) return null;
-            var s = new Schema { Json = j, Root = Strings(j.Arr("root")) };
+            var s = new Schema { Json = j, Root = Strings(j.Arr("root")), Look = j.Get("look"), Words = j.Get("words") };
             KindSpec Kind(JValue d) => new KindSpec
             {
                 Kind = d.Str("kind"), Title = d.Str("title"), Group = d.Str("group"), Keys = Strings(d.Arr("keys")), Modifiers = Strings(d.Arr("modifiers")),
@@ -266,6 +267,7 @@ namespace Tide.Editor
             var ops = j.Get("operators");
             s.BinaryOps = (ops?.Arr("binary")?.Items ?? new List<JValue>()).Select(o => (o.Str("op"), o.Str("title") ?? o.Str("op"))).ToArray();
             s.UnaryOps = (ops?.Arr("unary")?.Items ?? new List<JValue>()).Select(o => o.Str("op")).ToArray();
+            s.UnaryTitles = (ops?.Arr("unary")?.Items ?? new List<JValue>()).Select(o => (o.Str("op"), o.Str("title") ?? o.Str("op"))).ToArray();
             s.AssignOps = Strings(ops?.Arr("assign"));
             s.StepOps = Strings(ops?.Arr("step"));
             s.OperatorOps = Strings(ops?.Arr("overloadable"));
@@ -471,11 +473,128 @@ namespace Tide.Editor
         public static string[] StepOps => S.StepOps;
         public static string[] OperatorOps => S.OperatorOps;
         public static (string op, string title)[] BinaryOps => S.BinaryOps;
+        public static (string op, string title)[] UnaryOpTitles => S.UnaryTitles;
         public static string[] BuiltinTypes => S.Types;
 
-        // A node category's colour, as the canvas draws its nodes' heads
-        public static Color ColorOf(string category) => category != null && S.Categories.TryGetValue(category, out var c) ? c.color : new Color(0.4f, 0.4f, 0.4f);
+        // A node category's colour: its bar on a node's title, and a wire's from a node of it whose type isn't known
+        public static Color ColorOf(string category) => category != null && S.Categories.TryGetValue(category, out var c) ? c.color : new Color32(0x77, 0x77, 0x77, 0xff);
         public static string CategoryTitle(string category) => category != null && S.Categories.TryGetValue(category, out var c) ? c.title : category;
+
+        // ---------------------------------------------------------------------------------------------------------
+        // The look (`look`): every colour in dark and light, the title bars' by category, the types' colours, the
+        // sizes at zoom 1 and the font, the same in every editor
+
+        // A colour of the look's by its name (board, text, accent...), in dark or light; clear when there's none
+        public static Color Look(string name, bool light) => Parse(LookHex(name, light)) ?? Color.clear;
+
+        public static string LookHex(string name, bool light) => S.Look?.Get("colors")?.Get(name)?.Str(light ? "light" : "dark");
+
+        // The look's colours by name, for the board's variables (USS's --tg-<name>)
+        public static IEnumerable<string> LookColors
+        {
+            get
+            {
+                var c = S.Look?.Get("colors");
+                return c != null && c.IsObject ? c.Keys : Enumerable.Empty<string>();
+            }
+        }
+
+        // A node's title bar by its kind's category (or "entry"), in dark or light; null for one the look hasn't
+        public static string HeaderHex(string category, bool light) => category == null ? null : S.Look?.Get("headers")?.Get(category)?.Str(light ? "light" : "dark");
+
+        // A value's type's colour as #rrggbb: the look's `types`, else a hue of its name with `typeHue`'s saturation and
+        // lightness (h = h * 31 + each UTF-16 unit, unsigned 32-bit; hue h mod 360). Null for no type.
+        public static string TypeHex(string type)
+        {
+            var look = S.Look;
+            if (string.IsNullOrEmpty(type) || look == null) return null;
+            var known = look.Get("types")?.Str(type);
+            if (known != null) return known;
+            uint h = 0;
+            foreach (var c in type) h = unchecked(h * 31 + c);
+            var hue = look.Get("typeHue");
+            return Hsl(h % 360, hue?.Get("saturation")?.Number ?? 55, hue?.Get("lightness")?.Number ?? 58);
+        }
+
+        public static Color? TypeColor(string type) => Parse(TypeHex(type));
+
+        // A colour by its hue (degrees), saturation and lightness (percent), as CSS's hsl() makes it #rrggbb
+        static string Hsl(double h, double s, double l)
+        {
+            s /= 100;
+            l /= 100;
+            var a = s * Math.Min(l, 1 - l);
+            string F(double n)
+            {
+                var k = (n + h / 30) % 12;
+                var c = l - a * Math.Max(-1, Math.Min(Math.Min(k - 3, 9 - k), 1));
+                return ((int)Math.Floor(c * 255 + 0.5)).ToString("x2");
+            }
+            return "#" + F(0) + F(8) + F(4);
+        }
+
+        public static Color? Parse(string hex) => hex != null && ColorUtility.TryParseHtmlString(hex, out var c) ? c : (Color?)null;
+
+        // A size of the look's in pixels at zoom 1 (font, row, header...), or `fallback` when it has none
+        public static float Size(string name, float fallback = 0) => S.Look?.Get("sizes")?.Get(name) is JValue v && v.Kind == JKind.Number ? (float)v.Number : fallback;
+
+        public static IEnumerable<string> Sizes
+        {
+            get
+            {
+                var s = S.Look?.Get("sizes");
+                return s != null && s.IsObject ? s.Keys : Enumerable.Empty<string>();
+            }
+        }
+
+        // The font's family and its files by weight ("regular", "bold"), which each editor ships
+        public static string FontFamily => S.Look?.Get("font")?.Str("family") ?? "Inter";
+        public static string FontFile(string weight) => S.Look?.Get("font")?.Get("files")?.Str(weight);
+
+        // ---------------------------------------------------------------------------------------------------------
+        // The words (`words`): every word the editors say of their own
+
+        static readonly HashSet<string> missing = new HashSet<string>();
+
+        // `key`'s words, each {name} filled from `fill` (name, value pairs); a menu's entry is its label. A key the
+        // schema hasn't is said as it is, and logged once.
+        public static string Word(string key, params string[] fill)
+        {
+            var v = Current?.Words?.Get(key);
+            var text = v == null ? null : v.Kind == JKind.String ? v.String : v.IsObject ? v.Str("label") : null;
+            if (text == null)
+            {
+                if (Current != null && missing.Add(key)) Debug.LogError($"Tide graph: no words for '{key}' in the schema");
+                return key;
+            }
+            if (fill.Length == 0 || text.IndexOf('{') < 0) return text;
+            var sb = new StringBuilder();
+            for (var i = 0; i < text.Length; i++)
+            {
+                var close = text[i] == '{' ? text.IndexOf('}', i + 1) : -1;
+                if (close > i + 1)
+                {
+                    var name = text.Substring(i + 1, close - i - 1);
+                    var at = -1;
+                    for (var f = 0; f + 1 < fill.Length; f += 2)
+                        if (fill[f] == name) at = f + 1;
+                    if (at >= 0 && fill[at] != null)
+                    {
+                        sb.Append(fill[at]);
+                        i = close;
+                        continue;
+                    }
+                }
+                sb.Append(text[i]);
+            }
+            return sb.ToString();
+        }
+
+        // Whether the schema has words for `key`
+        public static bool HasWord(string key) => Current?.Words?.Get(key) != null;
+
+        // A menu entry's keys, as its words say them ("" for none)
+        public static string WordKeys(string key) => Current?.Words?.Get(key) is JValue v && v.IsObject ? v.Str("keys") ?? "" : "";
 
         public static NodeSpec[] Nodes => S.Nodes;
 
@@ -647,7 +766,8 @@ namespace Tide.Editor
                 for (var i = 0; a != null && i < a.Items.Count; i++)
                 {
                     var name = names != null && i < names.Items.Count ? names.Items[i].String : null;
-                    var label = string.IsNullOrEmpty(name) ? $"{list.Label} {i + 1}" : name + ":";
+                    // One of a list alone is the list's word ("item"), but an argument, which is always counted
+                    var label = !string.IsNullOrEmpty(name) ? name + ":" : a.Items.Count == 1 && list.Key != "args" ? list.Label : $"{list.Label} {i + 1}";
                     ports.Add(new GraphPort { Node = id, Input = true, Path = new WirePath(list.Key, i), Label = label, Group = list.Key, Index = i });
                 }
             }

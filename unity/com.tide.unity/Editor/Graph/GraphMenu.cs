@@ -17,38 +17,33 @@ namespace Tide.Editor
         public const string Add = "add", Rename = "rename", Clipboard = "clipboard", Note = "note", Pin = "pin";
         public static readonly string[] Sections = { Add, Rename, Clipboard, Note };
 
-        // The menu's words and keys: the schema's (`menu`), where it has them
-        static string Word(string key, string fallback)
-        {
-            var said = GraphSchema.Available ? GraphSchema.Json?.Get("menu")?.Get(key) : null;
-            return said?.Str("label") ?? fallback;
-        }
+        // The menu's words and keys: the schema's (`words`, menu.<key>)
+        static string Word(string key, params string[] fill) => GraphSchema.Word("menu." + key, fill);
 
-        static string Keys(string key, string fallback)
-        {
-            var said = GraphSchema.Available ? GraphSchema.Json?.Get("menu")?.Get(key) : null;
-            return said?.Str("keys") ?? fallback;
-        }
+        static string Keys(string key) => GraphSchema.WordKeys("menu." + key);
 
-        public static string RenameWord => Word("rename", "Rename");
-        public static string DeleteWord => Word("delete", "Delete");
+        public static string RenameWord => Word("rename");
+        public static string DeleteWord => Word("delete");
+        public static string KeepLocalWord => Word("keepLocal");
+        public static string RerouteWord => Word("reroute");
 
         // "Add a field", "Add an input…": an add of a word the schema has (a kind's addRow, "+ choice"); what code
         // takes is "Add what it needs…"
         public static string AddA(string what)
         {
-            if (string.IsNullOrEmpty(what)) return Word("add", "Add");
+            if (string.IsNullOrEmpty(what)) return Word("addOwn", "title", "").Trim();
             what = GraphLook.LowerFirst(what.TrimStart('+').Trim());
-            if (what.TrimEnd('…') == "needs") return Word("addNeeds", "Add what it needs…");
+            var word = what.TrimEnd('…');
+            if (word == "needs") return Word("addNeed");
             var article = "aeiou".IndexOf(char.ToLowerInvariant(what[0])) >= 0 ? "an" : "a";
-            return $"{Word("add", "Add")} {article} {what}";
+            return Word(word.Length < what.Length ? "addOneMore" : "addOne", "article", article, "word", word);
         }
 
         // A kind of member to add: "Add a method"; one of its own goes by its name ("Add Sample"), text as it is
         public static string AddMember(string kind)
         {
             var title = GraphSchema.MemberTitle(kind);
-            if (GraphSchema.MemberOnce(kind) || kind == "text") return $"{Word("add", "Add")} {title}";
+            if (GraphSchema.MemberOnce(kind) || kind == "text") return Word("addOwn", "title", title);
             return AddA(title);
         }
 
@@ -75,21 +70,21 @@ namespace Tide.Editor
 
         static void Clipboard_(Builder b, Action cut, Action copy, Action paste, bool canPaste, Action duplicate, Action delete)
         {
-            if (cut != null) b.Put(Clipboard, Word("cut", "Cut"), Keys("cut", "Ctrl+X"), cut);
-            if (copy != null) b.Put(Clipboard, Word("copy", "Copy"), Keys("copy", "Ctrl+C"), copy);
-            if (paste != null) b.Put(Clipboard, Word("paste", "Paste"), Keys("paste", "Ctrl+V"), paste, !canPaste);
-            if (duplicate != null) b.Put(Clipboard, Word("duplicate", "Duplicate"), Keys("duplicate", "Ctrl+D"), duplicate);
-            if (delete != null) b.Put(Clipboard, DeleteWord, Keys("delete", "Del"), delete);
+            if (cut != null) b.Put(Clipboard, Word("cut"), Keys("cut"), cut);
+            if (copy != null) b.Put(Clipboard, Word("copy"), Keys("copy"), copy);
+            if (paste != null) b.Put(Clipboard, Word("paste"), Keys("paste"), paste, !canPaste);
+            if (duplicate != null) b.Put(Clipboard, Word("duplicate"), Keys("duplicate"), duplicate);
+            if (delete != null) b.Put(Clipboard, DeleteWord, Keys("delete"), delete);
         }
 
         static void Rename_(Builder b, Action rename)
         {
-            if (rename != null) b.Put(Rename, RenameWord, Keys("rename", "F2"), rename);
+            if (rename != null) b.Put(Rename, RenameWord, Keys("rename"), rename);
         }
 
         static void Note_(Builder b, Action note)
         {
-            if (note != null) b.Put(Note, GraphSchema.KeyInfo("comment").Label + "…", null, note, false, GraphSchema.KeyInfo("comment").Help);
+            if (note != null) b.Put(Note, Word("note"), null, note, false, GraphSchema.KeyInfo("comment").Help);
         }
 
         // ---------------------------------------------------------------------------------------------------------
@@ -107,8 +102,8 @@ namespace Tide.Editor
             {
                 if (frame.Graph != null)
                 {
-                    b.Put(Add, Word("addNode", "Add a node…"), Keys("addNode", "Space"), () => board.OpenSearch(frame, frame.FreePlace(new Vector2(40, 0), new Vector2(200, 80)), null));
-                    b.Put(Add, Word("addNote", "Add a note box"), null, () => board.AddNote(frame, frame.FreePlace(new Vector2(40, 0), new Vector2(300, 120))));
+                    b.Put(Add, Word("addNode"), Keys("addNode"), () => board.OpenSearch(frame, frame.FreePlace(new Vector2(40, 0), new Vector2(200, 80)), null));
+                    b.Put(Add, Word("addNote"), null, () => board.AddNote(frame, frame.FreePlace(new Vector2(40, 0), new Vector2(300, 120))));
                 }
                 // What its code takes, as its entry's last row adds it
                 var routine = frame.Routine;
@@ -213,11 +208,11 @@ namespace Tide.Editor
                 {
                     var w = word;
                     if (accessors != null && accessors.Items.Any(a => a.Str("word") == w)) continue;
-                    yield return ($"{Word("add", "Add")} “{GraphSchema.AccessorInfo(w).Label}”", () => item.Board.AddAccessor(e, w));
+                    yield return (Word("addAccessor", "word", $"“{GraphSchema.AccessorInfo(w).Label}”"), () => item.Board.AddAccessor(e, w));
                 }
             }
             if (e.Role == GraphRole.Param && m.Str("mode") == "query" && item is GraphFrame frame)
-                yield return (Word("addQueryNeeds", "Add what the query needs…"), () => frame.OpenNeeds(frame.Entry, m.Arr("query"), false, m));
+                yield return (Word("addQueryNeed"), () => frame.OpenNeeds(frame.Entry, m.Arr("query"), false, m));
         }
 
         // ---------------------------------------------------------------------------------------------------------
@@ -229,7 +224,7 @@ namespace Tide.Editor
             var p = pin.Port;
             var frame = pin.Frame;
             var board = frame.Board;
-            b.Put(Pin, Word("breakLinks", "Break links"), Keys("breakLinks", "Alt+click"), () => board.BreakLinks(pin), !pin.Connected && !p.IsRead);
+            b.Put(Pin, Word("breakLinks"), Keys("breakLinks"), () => board.BreakLinks(pin), !pin.Connected && !p.IsRead);
             // Where a new node for it goes: beside the pin, where there's room
             Vector2 Near() => frame.FreePlace(pin.View.Shown + (p.Input ? new Vector2(-240, pin.View.SizeNow.y + 30) : new Vector2(pin.View.SizeNow.x + 60, 0)), new Vector2(220, 90));
             if (p.Input && !p.Exec && p.Path != null)
@@ -238,24 +233,22 @@ namespace Tide.Editor
                 if (owner != null || p.Node == GraphFrame.ResultId)
                 {
                     var label = GraphNodeView.LabelOf(board.Window.Checked, owner, p.Path, p.Label);
-                    b.Put(Pin, Word("pickValue", "Pick a value…"), null, () => board.PickValue(frame, owner, p.Path, label, pin));
-                    b.Put(Pin, Word("workOut", "Work it out…"), null, () => board.WorkOut(frame, owner, p.Path, pin));
-                    b.Put(Pin, Word("emptyIt", "Empty it"), Keys("emptyIt", "Del"), () => frame.Empty(owner, p.Path, label), frame.WireAt(owner, p.Path) == 0);
+                    b.Put(Pin, Word("pick"), null, () => board.PickValue(frame, owner, p.Path, label, pin));
+                    b.Put(Pin, Word("work"), null, () => board.WorkOut(frame, owner, p.Path, pin));
+                    b.Put(Pin, Word("empty"), Keys("empty"), () => frame.Empty(owner, p.Path, label), frame.WireAt(owner, p.Path) == 0);
                 }
             }
             else if (!p.Input && !p.Exec)
             {
-                b.Put(Pin, Word("useIt", "Use it in a new node…"), null, () => board.OpenSearch(frame, Near(), p));
+                b.Put(Pin, Word("use"), null, () => board.OpenSearch(frame, Near(), p));
                 // Blueprint's Promote to Variable: worked out once, read where it was wired
                 if (!p.IsRead && frame.CanKeepAsLocal(p.Node))
-                    b.Put(Pin, Word("keepLocal", KeepLocalWord), null, () => frame.KeepAsLocal(p.Node), false, "A local is declared before the first step that reads this, with this as its value, and what this was wired to reads the local");
+                    b.Put(Pin, KeepLocalWord, null, () => frame.KeepAsLocal(p.Node), false, Word("keepLocal.summary"));
             }
-            else if (!p.Input && p.Exec) b.Put(Pin, Word("addNext", "Add what happens next…"), null, () => board.OpenSearch(frame, Near(), p));
-            else if (p.Node > 0) b.Put(Pin, Word("addBefore", "Add what happens before…"), null, () => board.OpenSearch(frame, Near(), p));
+            else if (!p.Input && p.Exec) b.Put(Pin, Word("next"), null, () => board.OpenSearch(frame, Near(), p));
+            else if (p.Node > 0) b.Put(Pin, Word("before"), null, () => board.OpenSearch(frame, Near(), p));
             return b.Done();
         }
-
-        public const string KeepLocalWord = "Keep it as a local", RerouteWord = "Add a reroute";
 
         // ---------------------------------------------------------------------------------------------------------
         // A data wire: a reroute on it where it was clicked, or the wire taken away
@@ -264,8 +257,8 @@ namespace Tide.Editor
         {
             var b = new Builder();
             var board = frame.Board;
-            b.Put(Add, Word("addReroute", RerouteWord), Keys("addReroute", "Double-click"), () => board.AddReroute(frame, wire, at), false, "A knot on the wire, to route it tidily: its value goes to any number of inputs");
-            b.Put(Pin, Word("breakLink", "Break this link"), null, () =>
+            b.Put(Add, RerouteWord, Keys("reroute"), () => board.AddReroute(frame, wire, at), false, Word("reroute.summary"));
+            b.Put(Pin, Word("breakLink"), null, () =>
             {
                 var reader = wire.Reader == GraphFrame.ResultId ? null : frame.ById.TryGetValue(wire.Reader, out var n) ? n : null;
                 if (reader != null || wire.Reader == GraphFrame.ResultId) frame.Empty(reader, wire.Path, GraphNodeView.LabelOf(board.Window.Checked, reader, wire.Path, null));

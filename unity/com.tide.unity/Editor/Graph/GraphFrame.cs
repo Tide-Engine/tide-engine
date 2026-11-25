@@ -75,6 +75,9 @@ namespace Tide.Editor
         static List<JValue> NodesOf(JValue graph) => graph?.Arr("nodes")?.Items ?? new List<JValue>();
         static bool IsLiteral(string k) => k == "int" || k == "float" || k == "string" || k == "bool" || k == "char";
         internal bool Declares(JValue n) => GraphSchema.DeclaresLocal(n);
+
+        // Whether its code gives a value back: a getter, or a function with a result
+        internal bool GivesBack => Owner?.Role == GraphRole.Accessor ? Owner.Value.Str("word") == "get" : !string.IsNullOrEmpty(Routine?.Str("returnType")) && Routine.Str("returnType") != "void";
         internal bool NameIsRead(string name) => readNames.Contains(name);
         internal bool LocalIsRead(int declares) => readLocals.Contains(declares);
 
@@ -382,28 +385,32 @@ namespace Tide.Editor
         // ---------------------------------------------------------------------------------------------------------
         // Size
 
+        // As the page sizes one before it's drawn: the entry's rows, and the nodes by tidec's sizes of them
         public override Vector2 Estimate()
         {
             Classify();
-            var entry = IsValue ? Vector2.zero : new GraphEntryView(this).Estimate();
-            var left = IsValue ? GraphLook.FramePad : GraphLook.FramePad + entry.x + GraphLook.EntryGap;
-            float top = GraphLook.FrameHead + 6, right = left + 200, bottom = top + entry.y, minX = 0, minY = 0;
-            foreach (var id in Visible())
-            {
-                var at = GraphDocument.PlaceOf(ById[id]);
-                minX = Mathf.Min(minX, at.x);
-                minY = Mathf.Min(minY, at.y);
-            }
+            var pad = GraphLook.FramePad;
+            var left = IsValue ? pad : pad + GraphLook.EntryWidth + GraphLook.EntryGap;
+            float x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+            var first = true;
             foreach (var id in Visible())
             {
                 var n = ById[id];
-                var at = GraphDocument.PlaceOf(n) - new Vector2(minX, minY);
+                var at = GraphDocument.PlaceOf(n);
                 var size = GraphNodeView.EstimateOf(n, CallOf(id), this);
-                right = Mathf.Max(right, left + at.x + size.x);
-                bottom = Mathf.Max(bottom, top + at.y + size.y);
+                if (first || at.x < x0) x0 = at.x;
+                if (first || at.y < y0) y0 = at.y;
+                if (first || at.x + size.x > x1) x1 = at.x + size.x;
+                if (first || at.y + size.y > y1) y1 = at.y + size.y;
+                first = false;
             }
-            if (IsValue) right += 160;
-            return new Vector2(right + GraphLook.FramePad, bottom + GraphLook.FrameBottom);
+            var ox = IsValue ? (first ? 0 : x0) : Mathf.Min(0, x0);
+            var oy = IsValue ? (first ? 0 : y0) : Mathf.Min(0, y0);
+            var entryH = IsValue ? 60 : 60 + GraphLook.CardRow * (GraphEntryView.RowsOf(this) + 1);
+            var w = left + (x1 - ox) + (IsValue ? 60 + 160 : 0) + GraphLook.FrameBottom;
+            var h = pad + Mathf.Max(y1 - oy, entryH) + GraphLook.FrameBottom;
+            return new Vector2(Mathf.Max(IsValue ? GraphLook.ValueFrameWidth : left + GraphLook.FrameRoomRight, w),
+                2 + GraphLook.FrameHead + Mathf.Max(IsValue ? GraphLook.ValueFrameHeight : GraphLook.FrameLeast, h));
         }
 
         // Where a node at (0, 0) is drawn, in the frame
@@ -464,46 +471,48 @@ namespace Tide.Editor
         internal void Arrange(bool place = true)
         {
             if (Level != GraphLevel.Near || nodes == null) return;
-            var entry = Entry != null ? Entry.SizeNow : Vector2.zero;
-            var left = IsValue ? GraphLook.FramePad : GraphLook.FramePad + entry.x + GraphLook.EntryGap;
-            var top = GraphLook.FrameHead + 6;
+            // As the page places them: the entry at the body's corner, the nodes right of it by the file's places
+            // from the least of them (and of 0 in code's frame, so that (0, 0) is always where it was)
+            var pad = GraphLook.FramePad;
+            var head = GraphLook.FrameHead;
+            var left = IsValue ? pad : pad + GraphLook.EntryWidth + GraphLook.EntryGap;
+            var top = head + pad;
             if (place)
             {
-                // The nodes' and notes' least place is where the node area starts, right of the entry
-                var min = Vector2.zero;
+                var min = IsValue ? new Vector2(float.MaxValue, float.MaxValue) : Vector2.zero;
                 foreach (var v in Views.Values) min = Vector2.Min(min, v.At);
                 foreach (var note in Notes.Values) min = Vector2.Min(min, note.At);
+                if (min.x == float.MaxValue) min = Vector2.zero;
                 origin = arranged = new Vector2(left, top) - min;
-                Entry?.MoveTo(new Vector2(GraphLook.FramePad, top));
+                Entry?.MoveTo(new Vector2(pad, top));
                 foreach (var v in Views.Values) v.MoveTo(origin + v.At);
                 foreach (var note in Notes.Values) note.MoveTo(origin + note.At);
             }
-            float right = left, bottom = top + entry.y;
-            foreach (var v in Views.Values)
+            float right = 0, bottom = 0;
+            void Take(Vector2 at, Vector2 size)
             {
-                var size = v.SizeNow;
-                right = Mathf.Max(right, v.Shown.x + size.x);
-                bottom = Mathf.Max(bottom, v.Shown.y + size.y);
+                right = Mathf.Max(right, at.x + size.x);
+                bottom = Mathf.Max(bottom, at.y + size.y);
             }
-            foreach (var note in Notes.Values)
-            {
-                right = Mathf.Max(right, note.Shown.x + note.Extent.x);
-                bottom = Mathf.Max(bottom, note.Shown.y + note.Extent.y);
-            }
+            if (Entry != null) Take(Entry.Shown, Entry.SizeNow);
+            foreach (var v in Views.Values) Take(v.Shown, v.SizeNow);
+            foreach (var note in Notes.Values) Take(note.Shown, note.Extent);
             if (Result != null)
             {
-                Result.MoveTo(new Vector2(right + (Views.Count > 0 ? 50 : 0), top));
-                right = Result.Shown.x + Result.SizeNow.x;
-                bottom = Mathf.Max(bottom, top + Result.SizeNow.y);
+                var root = Graph != null ? ViewOf(Graph.Wire("root")) : null;
+                Result.MoveTo(new Vector2(Views.Count > 0 ? right + 60 : pad, root != null && root != Result ? root.Shown.y : top));
+                Take(Result.Shown, Result.SizeNow);
             }
             if (hint != null)
             {
-                hint.style.left = left;
-                hint.style.top = top + 4;
-                if (hint.style.display == DisplayStyle.Flex) right = Mathf.Max(right, left + 300);
+                hint.style.left = pad + GraphLook.EntryWidth + 30;
+                hint.style.top = top + 1;
+                if (hint.style.display == DisplayStyle.Flex) Take(new Vector2(left, top), new Vector2(300, 30));
             }
-            var headWidth = head != null && !float.IsNaN(head.layout.width) ? 0 : 0;
-            var size2 = new Vector2(Mathf.Max(right + GraphLook.FramePad, 260 + headWidth), bottom + GraphLook.FrameBottom);
+            // It grows around them: as wide as they reach and the room under them, as high as its head, theirs and
+            // that room, and no less than the page's least
+            var size2 = new Vector2(Mathf.Max(IsValue ? GraphLook.ValueFrameWidth : left + GraphLook.FrameRoomRight, right + GraphLook.FrameBottom),
+                2 + head + Mathf.Max(IsValue ? GraphLook.ValueFrameHeight : GraphLook.FrameLeast, bottom - head + GraphLook.FrameBottom));
             wires?.MarkDirtyRepaint();
             if (Measured && (size2 - Size).sqrMagnitude < 0.25f) return;
             Size = size2;
@@ -637,7 +646,7 @@ namespace Tide.Editor
                 Notes[view.Id] = view;
                 notesLayer.Add(view);
             }
-            hint.text = g == null ? "Its code is written in C." : IsValue ? "Pick what the value is, on \"The value\"." : "Drag from the arrow to add what happens";
+            hint.text = g == null ? GraphSchema.Word("entry.extern", "extern", GraphSchema.KeyInfo("extern").Label) : IsValue ? GraphSchema.Word("value.empty") : "← " + GraphSchema.Word("frame.empty");
             hint.style.display = Views.Count == 0 ? DisplayStyle.Flex : DisplayStyle.None;
             Connections();
             Arrange();
@@ -675,9 +684,10 @@ namespace Tide.Editor
             }
             else
             {
-                head.Add(GraphLook.Kind(member ? GraphSchema.MemberTitle(kind) : GraphSchema.DeclTitle(kind), "Behaviour"));
+                head.Add(GraphLook.Kind(member ? GraphSchema.MemberTitle(kind) : GraphSchema.DeclTitle(kind), member ? "behaviour" : GraphSchema.DeclGroup(kind) ?? "more"));
                 var owner = member ? e.Owner?.Str("name") : null;
-                if (owner != null) head.Add(GraphLook.Text(owner + ".", "tg-frame-title", "tg-muted"));
+                // Spinner.Turn: what it's of, and its name, as one
+                if (owner != null) head.Add(GraphLook.Text(owner + ".", "tg-frame-title", "tg-frame-owner"));
                 if (v.Str("name") != null && kind != "operator")
                 {
                     var name = GraphLook.Name(v.Str("name"), Rename, "name", "tg-inline--title");
@@ -729,6 +739,7 @@ namespace Tide.Editor
             head.Add(new VisualElement { style = { flexGrow = 1 }, pickingMode = PickingMode.Ignore });
             // What the compiler says of the routine itself, in its title
             AddProblems(head, Id);
+            head.Add(Badge());
             if (Graph != null)
             {
                 var add = GraphLook.IconButton("plus", "Add a node (Space, or right-click in the frame)", () => Board.OpenSearch(this, FreePlace(new Vector2(40, 0), new Vector2(200, 80)), null));
@@ -816,24 +827,7 @@ namespace Tide.Editor
         internal void ApplyTypes()
         {
             if (Level != GraphLevel.Near) return;
-            var types = Window.Checked?.Types;
-            string TypeOf(int id)
-            {
-                if (id == 0) return null;
-                if (types != null && types.TryGetValue(id, out var t)) return t;
-                if (!ById.TryGetValue(id, out var n)) return null;
-                // A reroute passes on what's wired into it
-                for (var i = 0; i < 64 && n.Str("k") == "reroute"; i++)
-                {
-                    id = n.Wire("value");
-                    if (id == 0 || !ById.TryGetValue(id, out n)) return null;
-                    if (types != null && types.TryGetValue(id, out t)) return t;
-                }
-                if (n.Str("k") == "eval" && types != null && types.TryGetValue(n.Wire("value"), out t)) return t;
-                if (n.Str("k") == "name" && Reads.TryGetValue(n.Str("name") ?? "", out var read)) return read.Type;
-                if (n.Str("k") == "local" && ById.TryGetValue(n.Wire("ref"), out var d)) return d.Str("type");
-                return null;
-            }
+            string TypeOf(int id) => id == 0 ? null : TypeAt(id);
             foreach (var view in Views.Values.Append(Result).Where(v => v != null))
                 foreach (var (leaf, chip) in view.Chips) GraphNodeView.Tint(chip, TypeOf(leaf), Board.Light);
             foreach (var view in Views.Values)
@@ -845,8 +839,12 @@ namespace Tide.Editor
                     if (p.Exec) continue;
                     if (p.Local)
                     {
-                        if (ById.TryGetValue(p.Node, out var d) && d.Str("type") == null)
-                            pin.SetType(ById.Values.Where(n => n.Str("k") == "local" && n.Wire("ref") == p.Node).Select(n => TypeOf(n.Wire("id"))).FirstOrDefault(t => t != null));
+                        // Its declared type, else what a check found of a read of it, else of its value
+                        var declared = ById.TryGetValue(p.Node, out var d) ? d.Str("type") : null;
+                        var types = Window.Checked?.Types;
+                        string Found(int id) => types != null && types.TryGetValue(id, out var t) ? t : null;
+                        pin.SetType(!string.IsNullOrEmpty(declared) ? declared
+                            : ById.Values.Where(n => n.Str("k") == "local" && n.Wire("ref") == p.Node).Select(n => Found(n.Wire("id"))).FirstOrDefault(t => t != null) ?? Found(d?.Wire("value") ?? 0));
                         continue;
                     }
                     var owner = ById.TryGetValue(p.Node, out var o) ? o : null;
@@ -873,8 +871,18 @@ namespace Tide.Editor
             }
             if (n.Str("k") == "name" && Reads.TryGetValue(n.Str("name") ?? "", out var read)) return read.Type;
             if (n.Str("k") == "local" && ById.TryGetValue(n.Wire("ref"), out var d) && !string.IsNullOrEmpty(d.Str("type"))) return d.Str("type");
-            if (n.Str("k") == "int" || n.Str("k") == "float" || n.Str("k") == "bool" || n.Str("k") == "string" || n.Str("k") == "char") return n.Str("k");
+            if (n.Str("k") == "int" || n.Str("k") == "float" || n.Str("k") == "bool" || n.Str("k") == "string") return n.Str("k");
             return n.Str("k") == "eval" && types != null && types.TryGetValue(n.Wire("value"), out t) ? t : null;
+        }
+
+        // A data wire's colour: its value's type's, else its source's category's (past reroutes, which pass a value on)
+        internal Color WireColor(int from)
+        {
+            var type = GraphSchema.TypeColor(TypeAt(from));
+            if (type != null) return type.Value;
+            ById.TryGetValue(from, out var n);
+            for (var i = 0; i < 64 && n != null && n.Str("k") == "reroute" && n.Wire("value") != 0; i++) ById.TryGetValue(n.Wire("value"), out n);
+            return GraphSchema.ColorOf(GraphSchema.Spec(n?.Str("k"))?.Category);
         }
 
         // The pin a value comes out of: its node's own. What's shown in an input has none.
@@ -1922,7 +1930,7 @@ namespace Tide.Editor
 
         static Vector2[] Sample(Vector2 a, Vector2 b)
         {
-            var dx = Mathf.Max(30, Mathf.Abs(b.x - a.x) * 0.5f);
+            var dx = Mathf.Max(40, Mathf.Abs(b.x - a.x) * 0.5f);
             Vector2 c1 = a + new Vector2(dx, 0), c2 = b - new Vector2(dx, 0);
             var points = new Vector2[25];
             for (var i = 0; i < points.Length; i++)
@@ -1961,21 +1969,22 @@ namespace Tide.Editor
                     {
                         var from = frame.SourcePin(wired);
                         if (from == null || from.View == view && !from.Port.IsRead) continue;
-                        var c = TideGraphTypes.ColorOf(pin.Type ?? from.Type, board.Light);
-                        c.a = faint ? 0.35f : 0.92f;
+                        var c = frame.WireColor(wired);
                         var a = from.Anchor(this);
                         var b = pin.Anchor(this);
+                        // A long wire (a value worked out far from what reads it) is faint, as the page draws it
+                        if (faint || Mathf.Abs(b.x - a.x) + Mathf.Abs(b.y - a.y) > 900) c.a *= 0.4f;
                         var wire = new Wire { From = wired, Reader = port.Node, Path = port.Path, Points = Sample(a, b) };
                         drawn.Add(wire);
                         var lit = hot != null && hot.From == wire.From && hot.Reader == wire.Reader && hot.Path.Equals(wire.Path);
-                        Curve(p, a, b, c, lit ? 4 : 2);
+                        Curve(p, a, b, c, lit ? 3 : 2);
                     }
                     else if (!port.Input && port.Exec)
                     {
                         var to = frame.ViewOf(wired)?.ExecIn;
                         if (to == null) continue;
                         var c = palette.Exec;
-                        c.a = to.View.ClassListContains("tg-node--unreached") ? 0.35f : 0.95f;
+                        c.a *= to.View.ClassListContains("tg-node--unreached") ? 0.35f : 0.8f;
                         Curve(p, pin.Anchor(this), to.Anchor(this), c, 2.5f);
                     }
                 }
@@ -1985,14 +1994,15 @@ namespace Tide.Editor
             {
                 var end = board.ChangeCoordinatesTo(this, board.WireEnd);
                 var start = dragging.Anchor(this);
-                if (dragging.Port.Input) Curve(p, end, start, palette.Drag, 2);
-                else Curve(p, start, end, palette.Drag, 2);
+                var c = dragging.Port.Exec ? palette.Exec : palette.Muted;
+                if (dragging.Port.Input) Curve(p, end, start, c, 2);
+                else Curve(p, start, end, c, 2);
             }
         }
 
         static void Curve(Painter2D p, Vector2 a, Vector2 b, Color c, float width)
         {
-            var dx = Mathf.Max(30, Mathf.Abs(b.x - a.x) * 0.5f);
+            var dx = Mathf.Max(40, Mathf.Abs(b.x - a.x) * 0.5f);
             p.strokeColor = c;
             p.lineWidth = width;
             p.lineCap = LineCap.Round;
@@ -2020,12 +2030,15 @@ namespace Tide.Editor
         {
             var p = ctx.painter2D;
             var palette = GraphLook.Of(frame.Board.Light);
-            var entry = frame.IsValue ? Vector2.zero : new GraphEntryView(frame).Estimate();
-            var left = frame.IsValue ? GraphLook.FramePad : GraphLook.FramePad + entry.x + GraphLook.EntryGap;
-            var top = GraphLook.FrameHead + 6;
-            p.fillColor = palette.FarNode;
-            void Box(Rect r)
+            // As the page draws a frame far away: the entry in the look's behaviour colour, each node a block of its
+            // kind's colour where it's drawn up close, by tidec's sizes, fainter where it's never reached
+            var light = frame.Board.Light;
+            var pad = GraphLook.FramePad;
+            var left = frame.IsValue ? pad : pad + GraphLook.EntryWidth + GraphLook.EntryGap;
+            var top = GraphLook.FrameHead + pad;
+            void Box(Rect r, Color c)
             {
+                p.fillColor = c;
                 p.BeginPath();
                 p.MoveTo(new Vector2(r.xMin, r.yMin));
                 p.LineTo(new Vector2(r.xMax, r.yMin));
@@ -2034,9 +2047,9 @@ namespace Tide.Editor
                 p.ClosePath();
                 p.Fill();
             }
-            if (!frame.IsValue) Box(new Rect(GraphLook.FramePad, top, entry.x, entry.y));
-            float minX = 0, minY = 0;
+            if (!frame.IsValue) Box(new Rect(pad, top, GraphLook.EntryWidth, 34 + GraphLook.CardRow * (GraphEntryView.RowsOf(frame) + 1)), GraphLook.Fade(GraphSchema.Look("behaviour", light), 0.75f));
             var visible = frame.Visible().ToList();
+            float minX = frame.IsValue ? float.MaxValue : 0, minY = frame.IsValue ? float.MaxValue : 0;
             foreach (var id in visible)
             {
                 var at = GraphDocument.PlaceOf(frame.ById[id]);
@@ -2048,7 +2061,8 @@ namespace Tide.Editor
                 var n = frame.ById[id];
                 var at = GraphDocument.PlaceOf(n) - new Vector2(minX, minY);
                 var size = GraphNodeView.EstimateOf(n, null, frame);
-                Box(new Rect(left + at.x, top + at.y, size.x, size.y));
+                var c = GraphLook.Fade(GraphSchema.ColorOf(GraphSchema.Spec(n.Str("k"))?.Category), frame.Reached.Contains(id) ? 0.75f : 0.75f * 0.35f);
+                Box(new Rect(left + at.x, top + at.y, size.x, Mathf.Max(40, size.y - 24)), c);
             }
         }
     }

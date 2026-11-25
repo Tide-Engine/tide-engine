@@ -1,0 +1,6 @@
+Inter 4.1, by Rasmus Andersson.
+Unmodified static Regular and Bold TrueType fonts from the official release:
+https://github.com/rsms/inter/releases/download/v4.1/Inter-4.1.zip
+The SIL Open Font License is in LICENSE.txt beside these files.
+
+The graph editor draws with them in every host, as Unity's graph window does, so text measures the same.

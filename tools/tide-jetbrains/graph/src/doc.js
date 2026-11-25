@@ -292,19 +292,19 @@
             const s = this.schema;
             const n = Doc.nodeIn(g, node);
             const source = Doc.nodeIn(g, from);
-            if (!n || !source) return 'a wire joins two nodes of one graph';
+            if (!n || !source) return s.word('why.wire.graph');
             if (s.isExecPath(n, path)) {
-                if (!s.isExec(source.k)) return `${s.title(source.k)} is a value, not a statement`;
-                if (from === node) return "a statement can't follow itself";
-                if (g.entry === from) return "the body's first statement runs from its start";
-                if (this.goesTo(g, from, node)) return 'that would run in a loop: a loop is a While or a For';
+                if (!s.isExec(source.k)) return s.word('why.wire.value', { what: s.title(source.k) });
+                if (from === node) return s.word('why.wire.self');
+                if (g.entry === from) return s.word('why.wire.first');
+                if (this.goesTo(g, from, node)) return s.word('why.wire.loop');
                 const other = this.execSourceOf(g, from);
                 if (other && !(other.node === node && G.samePath(other.path, path))) {
                     s.setWire(Doc.nodeIn(g, other.node), other.path, 0);
                 }
             } else {
-                if (!s.hasValue(source.k)) return `${s.title(source.k)} is a statement, which has no value`;
-                if (from === node || this.reads(g, from, node)) return "a value can't be made of itself";
+                if (!s.hasValue(source.k)) return s.word('why.wire.statement', { what: s.title(source.k) });
+                if (from === node || this.reads(g, from, node)) return s.word('why.wire.itself');
             }
             s.setWire(n, path, from);
             return null;
@@ -319,7 +319,7 @@
         setEntry(g, id) {
             if (id) {
                 const n = Doc.nodeIn(g, id);
-                if (!n || !this.schema.isExec(n.k)) return `${this.schema.title(n?.k)} is a value, not a statement`;
+                if (!n || !this.schema.isExec(n.k)) return this.schema.word('why.wire.value', { what: this.schema.title(n?.k) });
                 const other = this.execSourceOf(g, id);
                 if (other) this.schema.setWire(Doc.nodeIn(g, other.node), other.path, 0);
             }
@@ -331,7 +331,7 @@
         setRoot(g, id) {
             if (id) {
                 const n = Doc.nodeIn(g, id);
-                if (!n || !this.schema.hasValue(n.k)) return `${this.schema.title(n?.k)} is a statement, which has no value`;
+                if (!n || !this.schema.hasValue(n.k)) return this.schema.word('why.wire.statement', { what: this.schema.title(n?.k) });
             }
             g.root = id || null;
             return null;
@@ -939,7 +939,7 @@
         keepAsLocal(g, id, name) {
             const s = this.schema;
             const n = Doc.nodeIn(g, id);
-            if (!n || s.isExec(n.k) || !s.hasValue(n.k)) return { why: 'only a value that is worked out can be kept' };
+            if (!n || s.isExec(n.k) || !s.hasValue(n.k)) return { why: s.word('why.keep.workedOut') };
             const tree = this.statementTree(g);
             const lineOf = st => {
                 const out = [];
@@ -947,9 +947,9 @@
                 return out;
             };
             const lines = this.statementsReading(g, id).filter(st => tree.has(st)).map(lineOf);
-            if (!lines.length) return { why: 'nothing that runs reads it yet: wire it into an input first' };
+            if (!lines.length) return { why: s.word('why.keep.unread') };
             for (const n2 of Doc.nodes(g)) {
-                if ((n2.k === 'eval' || n2.k === 'discard') && n2.value === id) return { why: 'a statement runs it for what it does' };
+                if ((n2.k === 'eval' || n2.k === 'discard') && n2.value === id) return { why: s.word('why.keep.statement') };
             }
             // The innermost run of statements every read is in
             let depth = 0;
@@ -980,7 +980,7 @@
                 if (!v) continue;
                 if (v.k === 'local') {
                     const d = Doc.nodeIn(g, v.ref);
-                    if (d && !visible(d)) return { why: `it reads ${s.declaredLocal(d) || 'a local'}, which is made after where it would be kept` };
+                    if (d && !visible(d)) return { why: s.word('why.keep.later', { name: s.declaredLocal(d) || s.word('why.keep.aLocal') }) };
                 }
                 stack.push(...s.dataWires(v));
             }
