@@ -21,6 +21,7 @@
             this.slot = null;      // The graph the selected nodes are in: { owner, key, index }
             this.selection = new Set(); // Nodes and notes selected in it
             this.picked = new Set();    // Cards and frames selected on the board
+            this.row = 0;          // A row of the one picked card or frame (a field, a parameter, a choice), or 0
         }
 
         on(listener) {
@@ -65,6 +66,7 @@
             if (this.slot && !this.doc.graph(this.slot)) this.slot = null;
             for (const id of [...this.selection]) if (!this.doc.find(id)) this.selection.delete(id);
             for (const id of [...this.picked]) if (!this.doc.find(id)) this.picked.delete(id);
+            if (this.row && !this.doc.find(this.row)) this.row = 0;
         }
 
         // The graph the selection is in, or undefined
@@ -137,6 +139,7 @@
             const same = G.slotKey(slot) === G.slotKey(this.slot);
             if (!add || !same) this.selection.clear();
             this.picked.clear();
+            this.row = 0;
             this.slot = slot;
             for (const id of ids) this.selection.add(id);
             this.emit('selection');
@@ -146,7 +149,17 @@
         pick(ids, { add = false } = {}) {
             if (!add) this.picked.clear();
             this.selection.clear();
+            this.row = 0;
             for (const id of ids) this.picked.add(id);
+            this.emit('selection');
+        }
+
+        // Selects a row of a card or of a frame's entry: its card or frame is picked with it
+        selectRow(item, row) {
+            this.selection.clear();
+            this.picked.clear();
+            this.picked.add(item);
+            this.row = row;
             this.emit('selection');
         }
 
@@ -154,6 +167,7 @@
             if (!this.selection.size && !this.picked.size) return;
             this.selection.clear();
             this.picked.clear();
+            this.row = 0;
             this.emit('selection');
         }
 

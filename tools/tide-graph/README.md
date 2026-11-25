@@ -20,7 +20,8 @@ inputs (`portInfo`), what Set's operators do (`assignInfo`), the rows that add (
 which type (`valueControls`), the type picker's groups and the types to offer first. What's valid at a place of the
 graph's Tide is asked of tidels there: the types of a field, what a system can take, what a value or a name has
 (`tide/graphMembers`, by a node, by a type, or by a name for an enum's choices and a namespace's functions), a
-call's parameters (`tide/graphCalls`), and which names are the game's own (`tide/graphNames`).
+call's parameters (`tide/graphCalls`), which names are the game's own (`tide/graphNames`), and which operators a type takes
+(`tide/graphOperators`; every one when it answers null).
 
 - `src/json.js`: reading, and writing as tidec does (`print_jv`), byte for byte.
 - `src/schema.js`: node ports, wires, key orders and the wording, from the schema.
@@ -34,11 +35,18 @@ call's parameters (`tide/graphCalls`), and which names are the game's own (`tide
 - `src/values.js`: a value by its type's control (a number, a tick box, a vector, a colour, an enum's choices).
 - `src/pickers.js`: the Add menu, the type picker, what a frame needs, the value picker of an input, the node
   search, jump-to.
-- `src/cards.js`: a card, and the "…" menu of a card or a frame (what its kind can have).
-- `src/frames.js`: a frame: its entry, nodes, inputs with their values, pins and wires; a value's small graph.
+- `src/cards.js`: a card: its name (renamed by a double click), its "+" on the title, its rows.
+- `src/frames.js`: a frame: its entry, nodes, inputs with their values, pins (always shown) and wires, the
+  operators a Set or an operator can have (`tide/graphOperators`), what a Set can change, a free place for a new
+  node; a value's small graph.
+- `src/menus.js`: the one menu of every card, frame, node, row and pin, in the same sections and order (notes/
+  visual-scripting.md, "Round three: like Blueprint").
+- `src/panels.js`: My game (the file by group; click, double-click to rename, drag out) and Details (what's
+  selected: its options as ticks with their help, Advanced, its note; the file's own with nothing selected).
 - `src/board.js`: the board: places, pan and zoom, what's drawn (frames off screen are empty, far ones are
-  blocks), the pointer, problems on their elements (an input with nothing in it in the page's own words, by the
-  diagnostic's `data.port`), and the reads of a name lit together.
+  blocks), the pointer (anything is dragged to move it, a box selects, a right or middle drag looks around, a pin
+  starts a wire and lights where it can go), problems on their elements (an input with nothing in it in the page's
+  own words, by the diagnostic's `data.port`), and the reads of a name lit together.
 - `src/app.js`: the page, its toolbar, its commands and its messages with the host.
 
 ## The host's side

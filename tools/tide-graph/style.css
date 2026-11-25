@@ -130,23 +130,71 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .tg-status-quiet .tg-status-mark { animation: tg-pulse 1.1s ease-in-out infinite; }
 @keyframes tg-pulse { 50% { opacity: 0.25; } }
 
-/* The board beside its contents list */
-.tg-main { display: grid; grid-template-columns: 0 minmax(0, 1fr); min-height: 0; }
-.tg-contents-open .tg-main { grid-template-columns: 240px minmax(0, 1fr); }
+/* The board between its two panels: My game on the left, Details on the right */
+.tg-main { display: grid; grid-template-columns: 0 minmax(0, 1fr) 0; min-height: 0; position: relative; }
+.tg-mygame-open .tg-main { grid-template-columns: 248px minmax(0, 1fr) 0; }
+.tg-details-open .tg-main { grid-template-columns: 0 minmax(0, 1fr) 300px; }
+.tg-mygame-open.tg-details-open .tg-main { grid-template-columns: 248px minmax(0, 1fr) 300px; }
 .tg-center { position: relative; min-width: 0; min-height: 0; grid-column: 2; grid-row: 1; }
-.tg-contents { grid-column: 1; grid-row: 1; background: var(--tg-panel); border-right: 1px solid var(--tg-border); overflow: hidden; display: none; flex-direction: column; min-height: 0; }
-.tg-contents-open .tg-contents { display: flex; }
-.tg-contents-head { display: flex; align-items: center; justify-content: space-between; padding: 8px 8px 4px 12px; font-weight: 600; }
-.tg-contents-filter { margin: 4px 10px 6px; }
-.tg-contents-list { overflow: auto; padding-bottom: 12px; }
-.tg-contents-group { padding: 10px 12px 3px; color: var(--tg-muted); font-size: 0.82em; text-transform: uppercase; letter-spacing: 0.06em; }
-.tg-contents-item { display: flex; align-items: baseline; gap: 8px; padding: 3px 12px; cursor: pointer; white-space: nowrap; }
-.tg-contents-item:hover { background: var(--tg-hover); }
-.tg-contents-name { overflow: hidden; text-overflow: ellipsis; }
-.tg-contents-kind { color: var(--tg-muted); font-size: 0.88em; margin-left: auto; }
-.tg-contents-none { color: var(--tg-muted); padding: 10px 12px; }
+.tg-panel { grid-row: 1; background: var(--tg-panel); overflow: hidden; display: none; flex-direction: column; min-height: 0; min-width: 0; }
+.tg-mygame { grid-column: 1; border-right: 1px solid var(--tg-border); }
+.tg-details { grid-column: 3; border-left: 1px solid var(--tg-border); }
+.tg-mygame-open .tg-mygame, .tg-details-open .tg-details { display: flex; }
+.tg-panel-head { display: flex; align-items: center; padding: 8px 8px 4px 12px; }
+.tg-panel-title { font-weight: 650; }
+.tg-input.tg-panel-filter { margin: 4px 10px 6px; background: var(--tg-input-bg); border-color: var(--tg-input-border); padding: 3px 7px; }
 
-.tg-board { position: absolute; inset: 0; overflow: hidden; outline: none; cursor: grab; touch-action: none;
+/* My game: the file by group, each a click to go to and a drag to use */
+.tg-mygame-list { overflow: auto; padding-bottom: 12px; flex: 1; min-height: 0; }
+.tg-mygame-group { display: flex; align-items: center; gap: 6px; padding: 10px 6px 3px 12px; color: var(--tg-muted); font-size: 0.82em; text-transform: uppercase; letter-spacing: 0.06em; }
+.tg-mygame-count { font-size: 0.95em; opacity: 0.8; }
+.tg-mygame-add { font-size: 1.35em; line-height: 18px; padding: 0 6px; text-transform: none; }
+.tg-mygame-item { display: flex; align-items: center; gap: 8px; padding: 4px 10px 4px 14px; cursor: pointer; white-space: nowrap; border-radius: 0; touch-action: none; user-select: none; }
+.tg-mygame-item:hover { background: var(--tg-hover); }
+.tg-mygame-item.tg-on { background: var(--tg-select); }
+.tg-mygame-name { overflow: hidden; text-overflow: ellipsis; font-weight: 600; min-width: 0; }
+.tg-mygame-item .tg-renaming { flex: 1; font-weight: 600; }
+.tg-mygame-kind { color: var(--tg-muted); font-size: 0.88em; margin-left: auto; }
+.tg-mygame-none { color: var(--tg-muted); padding: 2px 14px 4px; font-size: 0.92em; }
+.tg-drag-ghost { position: fixed; z-index: 60; pointer-events: none; background: var(--tg-panel); border: 1px dashed var(--tg-muted); border-radius: 8px; padding: 3px 10px; font-weight: 600; box-shadow: 0 6px 20px var(--tg-shadow); }
+.tg-drag-ghost-ok { border: 1px solid var(--tg-accent); color: var(--tg-accent); }
+.tg-drop-ok { outline: 2px dashed var(--tg-accent) !important; outline-offset: 2px; }
+
+/* Details: what's selected */
+.tg-details-body { overflow: auto; padding: 4px 12px 16px; flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
+.tg-details-hint { color: var(--tg-muted); padding: 4px 0; }
+.tg-details-title { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding-bottom: 2px; }
+.tg-details-name { font-weight: 650; font-size: 1.1em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
+.tg-details-title .tg-details-help { flex-basis: 100%; }
+.tg-details-section { display: flex; flex-direction: column; gap: 6px; }
+.tg-details-heading { color: var(--tg-muted); font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.06em; margin-top: 2px; }
+.tg-details-line { display: grid; grid-template-columns: 92px minmax(0, 1fr); align-items: center; gap: 2px 8px; }
+.tg-details-label { color: var(--tg-muted); }
+.tg-details-control { display: flex; align-items: center; gap: 6px; min-width: 0; flex-wrap: wrap; }
+.tg-details-line > .tg-details-help { grid-column: 2; }
+.tg-details-help { color: var(--tg-muted); font-size: 0.9em; line-height: 1.3; }
+.tg-input.tg-details-input, .tg-details .tg-value .tg-input { width: 100%; text-align: left; background: var(--tg-input-bg); border-color: var(--tg-input-border); padding: 2px 6px; }
+.tg-details-select { max-width: 100%; height: 24px; }
+.tg-details-note { min-height: 56px; }
+.tg-details .tg-value { flex: 1 1 auto; justify-content: flex-start; }
+.tg-details .tg-value .tg-input { max-width: 140px; }
+.tg-details-tick { display: flex; align-items: flex-start; gap: 8px; cursor: pointer; padding: 3px 4px; border-radius: 6px; }
+.tg-details-tick:hover { background: var(--tg-hover); }
+.tg-details-tick input { margin: 2px 0 0; flex: none; }
+.tg-details-tick-text { display: flex; flex-direction: column; min-width: 0; }
+.tg-details-tick-label { font-weight: 600; }
+.tg-details-advanced { border-top: 1px solid var(--tg-border); padding-top: 6px; }
+.tg-details-advanced > summary { cursor: pointer; color: var(--tg-muted); font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.06em; padding: 2px 0 6px; }
+.tg-details-advanced[open] > summary { color: var(--tg-fg); }
+.tg-details-advanced > :not(summary) + :not(summary) { margin-top: 6px; }
+.tg-details-attributes { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.tg-details-buttons { display: flex; flex-wrap: wrap; gap: 6px; }
+.tg-details-value { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.tg-details-value .tg-value { flex: 0 1 auto; justify-content: flex-start; }
+.tg-button.tg-small { padding: 1px 8px; line-height: 18px; font-size: 0.93em; }
+.tg-hidden { visibility: hidden; }
+
+.tg-board { position: absolute; inset: 0; overflow: hidden; outline: none; cursor: default; touch-action: none;
   background-color: var(--tg-bg);
   background-image: radial-gradient(circle, var(--tg-grid) 1.2px, transparent 1.4px);
   background-size: var(--tg-grid-size, 24px) var(--tg-grid-size, 24px); }
@@ -154,6 +202,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .tg-world { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
 .tg-regions, .tg-items, .tg-values { position: absolute; left: 0; top: 0; }
 .tg-band { position: absolute; display: none; border: 1px solid var(--tg-accent); background: color-mix(in srgb, var(--tg-accent) 15%, transparent); pointer-events: none; z-index: 5; }
+.tg-board-hint { position: absolute; left: 12px; bottom: 14px; color: var(--tg-muted); font-size: 0.86em; pointer-events: none; opacity: 0.85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: calc(100% - 260px); }
 .tg-zoom { position: absolute; right: 12px; bottom: 12px; display: flex; gap: 0; background: var(--tg-panel); border: 1px solid var(--tg-border); border-radius: 8px; box-shadow: 0 2px 10px var(--tg-shadow); overflow: hidden; z-index: 4; }
 .tg-zoom .tg-button { border: none; border-radius: 0; padding: 3px 9px; }
 .tg-zoom .tg-button + .tg-button { border-left: 1px solid var(--tg-border); }
@@ -200,6 +249,10 @@ button, input, select, textarea { font: inherit; color: inherit; }
 textarea.tg-input { resize: vertical; width: 100%; background: var(--tg-input-bg); border-color: var(--tg-input-border); display: block; }
 .tg-check { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
 .tg-name { font-weight: 650; font-size: 1.1em; flex: 1; min-width: 40px; text-overflow: ellipsis; }
+.tg-renamable { cursor: inherit; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 1px 5px; border: 1px solid transparent; border-radius: 4px; line-height: 18px; }
+.tg-renamable.tg-placeholder { color: var(--tg-muted); font-style: italic; font-weight: normal; }
+span.tg-name { flex: 0 1 auto; }
+.tg-renaming { flex: 1 1 auto; }
 .tg-name-fixed { color: var(--tg-muted); font-weight: normal; font-size: 0.95em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 5px; }
 
 /* A type: a chip that opens the type picker */
@@ -212,7 +265,7 @@ textarea.tg-input { resize: vertical; width: 100%; background: var(--tg-input-bg
 .tg-type-fixed:hover { border-color: transparent; background: color-mix(in srgb, var(--tg-fg) 7%, transparent); }
 
 /* A value, by its type's control */
-.tg-value { display: inline-flex; align-items: center; gap: 2px; min-width: 0; flex: 1; justify-content: flex-end; }
+.tg-value { display: inline-flex; align-items: center; gap: 2px; min-width: 0; flex: 0 1 auto; justify-content: flex-end; }
 .tg-value .tg-input { text-align: right; }
 .tg-value-number { width: 100%; min-width: 30px; max-width: 76px; font-family: var(--tg-mono); font-size: 0.95em; }
 .tg-value-number::placeholder { font-family: var(--tg-font); }
@@ -238,14 +291,22 @@ textarea.tg-input { resize: vertical; width: 100%; background: var(--tg-input-bg
 .tg-card.tg-picked, .tg-frame.tg-picked { outline: 2px solid var(--tg-accent); outline-offset: 0; }
 
 .tg-card.tg-card-wrong { border-color: var(--tg-error); }
+.tg-card { cursor: grab; }
 .tg-card-head { display: flex; align-items: center; gap: 6px; height: 46px; padding: 0 8px 0 12px; cursor: grab; }
-.tg-rows { display: flex; flex-direction: column; padding: 0 6px 8px; }
-.tg-row { display: flex; align-items: center; gap: 4px; min-height: 26px; padding: 0 2px 0 4px; border-radius: 6px; position: relative; }
+.tg-card-head .tg-name { flex: 1 1 auto; }
+.tg-card-add { font-size: 1.35em; line-height: 22px; padding: 0 7px; border-radius: 6px; color: var(--tg-muted); }
+.tg-card-add:hover { color: var(--tg-accent); background: var(--tg-hover); }
+.tg-rows { display: flex; flex-direction: column; gap: 2px; padding: 2px 8px 12px; }
+.tg-row { display: flex; align-items: center; gap: 6px; min-height: 30px; padding: 2px 6px 2px 4px; border-radius: 6px; position: relative; cursor: grab; }
+.tg-row.tg-row-selected, .tg-entry-row.tg-row-selected { background: color-mix(in srgb, var(--tg-accent) 18%, transparent); }
+.tg-rows-empty { color: var(--tg-muted); padding: 6px 6px 2px; font-style: italic; }
 .tg-row:hover { background: color-mix(in srgb, var(--tg-fg) 5%, transparent); }
 .tg-row.tg-has-error { background: color-mix(in srgb, var(--tg-error) 14%, transparent); box-shadow: inset 2px 0 0 var(--tg-error); }
 .tg-row.tg-has-warning { box-shadow: inset 2px 0 0 var(--tg-warning); }
-.tg-row-name { flex: 1 1 60px; min-width: 40px; }
+.tg-row-name { flex: 0 1 auto; min-width: 30px; margin-right: auto; }
+input.tg-row-name { flex: 1 1 60px; }
 .tg-row-tag { flex: none; font-size: 0.8em; color: var(--tg-muted); border: 1px solid var(--tg-border); border-radius: 4px; padding: 0 4px; line-height: 15px; }
+.tg-row-tag-button { background: none; cursor: pointer; }
 .tg-row-remove { visibility: hidden; flex: none; }
 .tg-row:hover .tg-row-remove, .tg-entry-row:hover .tg-row-remove, .tg-row:focus-within .tg-row-remove { visibility: visible; }
 .tg-row-single { gap: 6px; padding-left: 6px; }
@@ -270,12 +331,12 @@ textarea.tg-input { resize: vertical; width: 100%; background: var(--tg-input-bg
 .tg-frame { position: absolute; min-width: 300px; border: 1px solid var(--tg-node-border); border-radius: 14px; background: color-mix(in srgb, var(--tg-panel) 55%, transparent); cursor: default; user-select: none; }
 .tg-frame.tg-frame-wrong { border-color: var(--tg-error); }
 .tg-frame-head { display: flex; align-items: center; gap: 6px; height: 48px; padding: 0 10px 0 14px; cursor: grab; border-bottom: 1px solid color-mix(in srgb, var(--tg-node-border) 55%, transparent); min-width: 0; }
-.tg-frame-head .tg-name { flex: 0 1 auto; width: 15ch; }
+.tg-frame-head .tg-name { flex: 0 1 auto; }
 .tg-frame-title { font-weight: 650; font-size: 1.1em; white-space: nowrap; }
 .tg-frame-owner { font-weight: 650; font-size: 1.1em; color: var(--tg-fg); }
 .tg-frame-dot { color: var(--tg-muted); margin: 0 -5px 0 -7px; }
-.tg-frame-body { position: relative; cursor: grab; }
-.tg-panning .tg-frame-body { cursor: grabbing; }
+.tg-frame-body { position: relative; cursor: default; }
+.tg-panning, .tg-panning .tg-frame-body { cursor: grabbing; }
 .tg-frame-notes, .tg-frame-nodes { position: absolute; left: 0; top: 0; }
 .tg-wires { position: absolute; left: 0; top: 0; width: 1px; height: 1px; overflow: visible; pointer-events: none; }
 .tg-wires path { fill: none; stroke-width: 2; stroke-linecap: round; }
@@ -298,7 +359,7 @@ textarea.tg-input { resize: vertical; width: 100%; background: var(--tg-input-bg
 /* A namespace block */
 .tg-region { position: absolute; border-radius: 18px; border: 1px dashed color-mix(in srgb, var(--tg-more) 60%, transparent); background: color-mix(in srgb, var(--tg-more) 8%, transparent); pointer-events: none; }
 .tg-region-head { display: flex; align-items: center; gap: 6px; padding: 8px 10px; pointer-events: auto; width: fit-content; max-width: 100%; }
-.tg-region-head .tg-name { width: 16ch; flex: none; }
+.tg-region-head .tg-name { flex: none; }
 
 /* Nodes */
 .tg-node { position: absolute; min-width: 110px; background: var(--tg-node-bg); border: 1px solid var(--tg-node-border); border-radius: 8px; box-shadow: 0 1px 5px var(--tg-shadow); user-select: none; cursor: grab; }
@@ -314,6 +375,7 @@ textarea.tg-input { resize: vertical; width: 100%; background: var(--tg-input-bg
 .tg-node-dot { color: var(--tg-muted); font-weight: 650; margin: 0 -8px 0 -5px; }
 .tg-node-name { font-weight: 650; }
 .tg-node-input { padding: 0 4px; line-height: 18px; min-width: 3ch; max-width: 240px; }
+span.tg-node-input { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tg-node-code { width: 240px; max-width: none; font-size: 0.92em; }
 .tg-node-template { min-width: 12ch; }
 .tg-node-tag { font-size: 0.8em; color: var(--tg-muted); border: 1px solid var(--tg-border); border-radius: 4px; padding: 0 4px; line-height: 15px; display: inline-flex; align-items: center; }
@@ -336,12 +398,12 @@ textarea.tg-input { resize: vertical; width: 100%; background: var(--tg-input-bg
    a wire starts from. Its pin is a small ring a wire can still be dropped on. */
 .tg-port.tg-inline { cursor: inherit; color: var(--tg-fg); min-height: 22px; }
 .tg-port.tg-inline .tg-port-label { color: var(--tg-muted); }
-.tg-dot.tg-dot-off { width: 7px; height: 7px; margin: 0 2px; border: none; background: transparent; box-shadow: 0 0 0 1px color-mix(in srgb, var(--tg-muted) 70%, transparent); opacity: 0.6; visibility: hidden; }
-/* (Its pin shows while a wire is being dragged: somewhere to drop it) */
-.tg-wiring .tg-dot.tg-dot-off { visibility: visible; background: var(--tg-node-bg) !important; }
-.tg-title-port { padding: 0; margin: 0 !important; min-height: 0; font-size: 1em; gap: 3px; }
-.tg-title-port .tg-dot-off { display: none; }
-.tg-port.tg-target.tg-inline .tg-dot-off { display: block; }
+.tg-dot.tg-dot-empty { background: var(--tg-node-bg) !important; box-shadow: 0 0 0 1.5px var(--tg-muted) !important; opacity: 0.9; }
+.tg-port .tg-dot:not(.tg-dot-exec) { cursor: crosshair; }
+.tg-title-port { padding: 0; margin: 0 0 0 -14px !important; min-height: 0; font-size: 1em; gap: 5px; }
+.tg-wiring .tg-port.tg-cannot { opacity: 0.32; }
+.tg-wiring .tg-port.tg-can .tg-dot { box-shadow: 0 0 0 3px color-mix(in srgb, var(--tg-accent) 70%, transparent) !important; opacity: 1; }
+.tg-wiring .tg-port.tg-can .tg-dot-exec { box-shadow: none !important; border-left-color: var(--tg-accent); }
 .tg-pick { background: none; border: 1px dashed color-mix(in srgb, var(--tg-muted) 70%, transparent); color: var(--tg-muted); border-radius: 999px; padding: 0 8px; line-height: 17px; cursor: pointer; font: inherit; font-style: italic; }
 .tg-pick:hover, .tg-pick:focus-visible { color: var(--tg-accent); border-color: var(--tg-accent); outline: none; }
 .tg-port.tg-has-error .tg-pick { color: var(--tg-error); border-color: var(--tg-error); }
@@ -390,8 +452,9 @@ textarea.tg-input { resize: vertical; width: 100%; background: var(--tg-input-bg
 .tg-op { font-family: var(--tg-mono); height: 20px; }
 .tg-op-button { background: var(--tg-input-bg); color: var(--tg-fg); border: 1px solid var(--tg-input-border); border-radius: 5px; padding: 0 6px; min-width: 26px; line-height: 17px; cursor: pointer; font-size: 0.95em; font-weight: 600; }
 .tg-op-button:hover, .tg-op-button:focus-visible { border-color: var(--tg-accent); color: var(--tg-accent); outline: none; }
-.tg-op-title { font: inherit; font-weight: 650; height: 22px; padding: 0 2px; margin-left: -3px; background: transparent; border-color: transparent; color: var(--tg-fg); cursor: pointer; }
-.tg-op-title:hover, .tg-op-title:focus-visible { border-color: var(--tg-input-border); background: var(--tg-input-bg); }
+.tg-op-title { font: inherit; font-weight: 650; height: 22px; padding: 0 5px; margin-left: -3px; background: transparent; border: 1px solid transparent; border-radius: 5px; color: var(--tg-fg); cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+.tg-op-title:hover, .tg-op-title:focus-visible { border-color: var(--tg-input-border); background: var(--tg-input-bg); outline: none; }
+.tg-op-sign { font-family: var(--tg-mono); color: var(--tg-muted); font-weight: 600; }
 .tg-lambda-params { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 2px; }
 .tg-lambda-param { display: inline-flex; align-items: center; }
 
@@ -406,11 +469,11 @@ textarea.tg-input { resize: vertical; width: 100%; background: var(--tg-input-bg
 .tg-entry-sentence { font-weight: 650; }
 .tg-entry-start { min-height: 32px; margin-right: -8px !important; }
 .tg-entry-rows { display: flex; flex-direction: column; padding: 4px 0 6px 6px; }
-.tg-entry-row { display: flex; align-items: center; gap: 5px; min-height: 26px; padding: 0 0 0 4px; border-radius: 6px 0 0 6px; }
+.tg-entry-row { display: flex; align-items: center; gap: 6px; min-height: 30px; padding: 0 0 0 4px; border-radius: 6px 0 0 6px; }
 .tg-entry-row:hover { background: color-mix(in srgb, var(--tg-fg) 5%, transparent); }
 .tg-entry-row.tg-has-error { background: color-mix(in srgb, var(--tg-error) 14%, transparent); box-shadow: inset 2px 0 0 var(--tg-error); }
 .tg-entry-sub { margin-left: 18px; }
-.tg-entry-name { flex: 1 1 40px; min-width: 30px; }
+.tg-entry-name { flex: 1 1 auto; min-width: 30px; }
 .tg-entry-row .tg-row-remove { margin-right: 0; }
 .tg-entry-filter { padding-right: 8px; }
 .tg-entry-result { border-top: 1px dashed var(--tg-border); margin-top: 4px; padding-top: 2px; border-radius: 0; }
@@ -420,7 +483,7 @@ textarea.tg-input { resize: vertical; width: 100%; background: var(--tg-input-bg
 .tg-mode:hover { border-color: var(--tg-behaviour); }
 .tg-mode-fixed { background: transparent; color: var(--tg-muted); cursor: default; padding: 0 2px; }
 .tg-mode-fixed:hover { border-color: transparent; }
-.tg-pin { padding: 0 0 0 4px; margin-right: -7px !important; min-height: 26px; flex: none; }
+.tg-pin { padding: 0 0 0 4px; margin-right: -7px !important; min-height: 30px; flex: none; }
 .tg-col-out .tg-pin { padding: 0 8px; margin-right: -6px !important; min-height: 20px; color: var(--tg-fg); font-weight: 600; }
 .tg-node.tg-result { border-radius: 10px; min-width: 120px; padding-bottom: 5px; cursor: default; border-color: var(--tg-accent); }
 .tg-node.tg-result .tg-node-header { margin-bottom: 4px; }
@@ -508,12 +571,20 @@ textarea.tg-input { resize: vertical; width: 100%; background: var(--tg-input-bg
 }
 
 /* A narrow page (a phone, a slim split): the board is the page, lists open over it */
+@media (max-width: 899px) and (min-width: 640px) {
+  .tg-mygame-open.tg-details-open .tg-main { grid-template-columns: 220px minmax(0, 1fr) 260px; }
+}
 @media (max-width: 639px) {
-  .tg-toolbar { gap: 4px; padding: 5px 6px; }
-  .tg-find, .tg-toolbar .tg-sep { display: none; }
-  .tg-contents-open .tg-main { grid-template-columns: 0 minmax(0, 1fr); }
-  .tg-contents-open .tg-contents { position: absolute; z-index: 20; left: 0; top: 0; bottom: 0; width: min(280px, 82vw); box-shadow: 8px 0 30px var(--tg-shadow); }
-  .tg-main { position: relative; }
+  .tg-toolbar { gap: 3px; padding: 5px 6px; overflow-x: auto; }
+  .tg-toolbar .tg-button { padding: 3px 7px; }
+  .tg-find, .tg-toolbar .tg-sep, .tg-toolbar .tg-tool:not(.tg-board-more) { display: none; }
+  .tg-status { padding: 2px 6px; }
+  .tg-main, .tg-mygame-open .tg-main, .tg-details-open .tg-main, .tg-mygame-open.tg-details-open .tg-main { grid-template-columns: 0 minmax(0, 1fr) 0; }
+  /* (Out of the grid's areas, so that the page is what they're placed in) */
+  .tg-panel { grid-area: auto; }
+  .tg-mygame-open .tg-mygame { position: absolute; z-index: 20; left: 0; top: 0; bottom: 0; width: min(300px, 86vw); box-shadow: 8px 0 30px var(--tg-shadow); }
+  .tg-details-open .tg-details { position: absolute; z-index: 20; left: 0; right: 0; bottom: 0; max-height: 62%; border-left: none; border-top: 1px solid var(--tg-border); border-radius: 14px 14px 0 0; box-shadow: 0 -8px 30px var(--tg-shadow); }
+  .tg-board-hint { display: none; }
   .tg-picker, .tg-add-menu, .tg-form { width: calc(100vw - 16px); }
   .tg-start-title { font-size: 1.5em; }
   .tg-start-choices { grid-template-columns: 1fr 1fr; gap: 8px; }

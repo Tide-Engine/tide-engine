@@ -836,6 +836,27 @@
             }
         }
 
+        // A declaration renamed: what this file says of it by its name follows (a type of a field or a parameter, a
+        // call of a function, a read of a constant, a literal of a struct). Other files are the check's to say.
+        renameUses(old, name) {
+            if (!old || !name || old === name) return;
+            if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(old)) return;
+            // The name as a word of a type's text: Wobble, List<Wobble>, Game.Wobble
+            const word = new RegExp('(^|[^A-Za-z0-9_])' + old + '(?![A-Za-z0-9_])', 'g');
+            const swap = text => text.replace(word, (_, before) => before + name);
+            const TYPES = ['type', 'returnType', 'fails', 'backing'];
+            const visit = v => {
+                if (Array.isArray(v)) { v.forEach(visit); return; }
+                if (!isObject(v)) return;
+                for (const key of TYPES) if (typeof v[key] === 'string') v[key] = swap(v[key]);
+                if (Array.isArray(v.typeArgs)) v.typeArgs = v.typeArgs.map(t => (typeof t === 'string' ? swap(t) : t));
+                if (v.k === 'call' && v.name === old) v.name = name;
+                if (v.k === 'name' && !v.local && v.name === old) v.name = name;
+                for (const child of Object.values(v)) if (child && typeof child === 'object') visit(child);
+            };
+            visit(this.root.decls);
+        }
+
         // Removes a simple value nothing reads any more (after its input took another), with what it was made of:
         // a path's members down to its name, a minus's number. A value that was worked out stays, to be wired again.
         dropValue(g, id) {

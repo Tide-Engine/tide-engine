@@ -172,6 +172,16 @@ test('a value\'s members and a hover come from tidels', async () => {
     assert.ok(offered.includes('Math') && offered.includes('star'), JSON.stringify(offered.slice(0, 40)));
 });
 
+test("a Set's operators are those Tide takes for its value, as the editor asks them (tide/graphOperators)", async () => {
+    const p = page();
+    p.host.receive({ type: 'ready' });
+    const scaled = await p.ask('tide/graphOperators', { textDocument: { uri: GRAPH_URI }, type: 'float3', other: 'float' });
+    assert.deepEqual(scaled.assign, ['+=', '-=', '*=', '/='], JSON.stringify(scaled));
+    const whole = await p.ask('tide/graphOperators', { textDocument: { uri: GRAPH_URI }, type: 'Star' });
+    assert.deepEqual(whole.assign, ['='], 'a component is only set whole');
+    assert.equal(await p.ask('tide/graphOperators', { textDocument: { uri: GRAPH_URI }, type: 'Nothing' }), null, 'a type not known there: every operator is offered');
+});
+
 test('auto layout places every node of a body, and every card and frame of the board', async () => {
     const p = page();
     p.host.receive({ type: 'ready' });

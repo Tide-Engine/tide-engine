@@ -281,6 +281,42 @@ test('undo and redo, and changes made by the host', () => {
     assert.equal(editor.error, null);
 });
 
+test('a declaration renamed: what the file says of it by that name follows, and nothing else', () => {
+    const editor = new Editor(schema);
+    editor.load('{"tidegraph": 1, "nextId": 1, "decls": []}\n', true);
+    let wobble, wobbles, spin, call, other;
+    editor.edit(d => {
+        wobble = d.newElement('component', false, 'Wobble');
+        wobbles = d.newElement('component', false, 'Wobbles');
+        const f = d.newElement('field', true, 'list');
+        f.type = 'List<Wobble>';
+        wobbles.members.push(f);
+        spin = d.newElement('system', false, 'Spin');
+        spin.params.push(d.newParam('Wobble', 'wobble'), d.newParam('Wobbles', 'many'));
+        call = d.newNode('call', 0, 0, { name: 'Wobble', args: [] });
+        other = d.newNode('name', 0, 0, { name: 'wobble' });
+        spin.body.nodes.push(call, other);
+        d.decls.push(wobble, wobbles, spin);
+    });
+    const before = editor.text;
+    editor.edit(d => { d.get(wobble.id).name = 'Spring'; d.renameUses('Wobble', 'Spring'); });
+    const d = editor.doc;
+    assert.deepEqual(d.decls[2].params.map(p => p.type), ['Spring', 'Wobbles'], 'a word of a type, not a longer name');
+    assert.equal(d.decls[1].members[0].type, 'List<Spring>');
+    assert.equal(d.get(call.id).name, 'Spring');
+    assert.equal(d.get(other.id).name, 'wobble', 'a parameter by another name is not it');
+    editor.undo();
+    assert.equal(editor.text, before);
+    // A row selected picks its card, and goes with what selects anything else
+    editor.selectRow(wobbles.id, wobbles.members[0].id);
+    assert.deepEqual([[...editor.picked], editor.row], [[wobbles.id], wobbles.members[0].id]);
+    editor.pick([spin.id]);
+    assert.equal(editor.row, 0);
+    editor.selectRow(wobbles.id, wobbles.members[0].id);
+    editor.clearSelection();
+    assert.deepEqual([editor.picked.size, editor.row], [0, 0]);
+});
+
 // Runs a program; its errors are the test's
 function run(file, args) {
     try {

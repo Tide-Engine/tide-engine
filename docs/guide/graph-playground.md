@@ -13,7 +13,7 @@ browser, as in the [text playground](./playground.md): nothing is installed and 
 ## Try a change
 
 The board opens on `Fall`, the system that moves every star down and checks whether the basket caught it. Its
-data is in the cards on the left: drag the board, or press **Contents**, to see them.
+data is in the cards on the left: drag with the right button, or click one in **My game**, to see them.
 
 - On the card `FALL`, change `90` to `200`: the stars fall faster.
 - On `WIDTH`, change `40` to `80`: the basket is twice as wide.
@@ -38,11 +38,14 @@ This is the graph editor of the [editor extensions](../tools/editors.md), checke
 - A node's simple values are in its inputs: a number is typed there, and a name such as `star.position` is
   picked. Click an input to choose what goes in it from a list of what fits. Only what's worked out (a
   **Multiply**, a call) is a node of its own, wired in.
-- **+ Add**, or a right click on the board, adds a card or a frame. A right click inside a frame adds a node, and
-  a wire dragged from an arrow and dropped in the frame offers what can happen next.
+- **+ Add**, or a right click on an empty part of the board, adds a card or a frame. A right click inside a frame
+  adds a node, and a wire dragged from a pin and dropped in the frame offers what can go there.
+- Anything moves by dragging it, a name is renamed by a double click, and a right click on anything opens the same
+  menu: what it can have added, **Rename**, the clipboard and **Delete**, and a note. **Details**, on the right,
+  has what's selected and its options.
 - A type is picked from a list, never typed. A problem is on the row, input or node it's about, with what to do
   about it, and goes when it's fixed.
-- **Contents** and **Find…** go to a declaration. The board's "…" menu has **View as Tide**, which shows the
+- **My game** and **Find…** go to a declaration. The board's "…" menu has **View as Tide**, which shows the
   whole file as text and opens it in the text playground.
 
 [Visual scripting](../tools/visual-scripting.md) describes the board in full. Drag the divider between

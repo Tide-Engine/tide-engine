@@ -118,6 +118,39 @@
         return input;
     }
 
+    // A name that reads as text and is part of what it's on (a press on it selects and drags its card, frame or
+    // node), renamed by a double click, F2 or Rename in its menu: it then becomes a field() until Enter, Tab, Escape
+    // or a click elsewhere. `rename(select)` starts it (the board's focusSoon does, for a new thing's name).
+    function nameText(value, commit, { className = 'tg-name', placeholder = 'Name', check, fk, onEnter, title, grow = 4 } = {}) {
+        const span = el('span.' + className + '.tg-renamable', { title: title ?? 'Double-click to rename (F2)' });
+        span.dataset.rename = '1';
+        if (fk) span.dataset.fk = fk;
+        const show = v => {
+            span.textContent = v || placeholder;
+            span.classList.toggle('tg-placeholder', !v);
+        };
+        show(value);
+        span.rename = (select = true) => {
+            if (!span.isConnected) return null;
+            const input = field(value ?? '', v => { value = v; show(v); commit(v); }, {
+                className: className.split('.')[0] === 'tg-name' ? 'tg-input.tg-name.tg-renaming' : `tg-input.${className}.tg-renaming`,
+                placeholder, check, fk, grow,
+                onEnter: i => {
+                    if (i.isConnected) i.replaceWith(span);
+                    if (onEnter) onEnter(i); else G.app?.board?.el.focus({ preventScroll: true });
+                },
+            });
+            // Back to text once it's left (what was typed is committed first, by field())
+            input.addEventListener('blur', () => { if (input.isConnected) input.replaceWith(span); });
+            span.replaceWith(input);
+            input.focus({ preventScroll: true });
+            if (select) input.select(); else input.setSelectionRange(input.value.length, input.value.length);
+            return input;
+        };
+        span.addEventListener('keydown', e => { if (e.key === 'F2' || e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); span.rename(); } });
+        return span;
+    }
+
     function checkbox(checked, commit, label, title) {
         const box = el('input', { type: 'checkbox', checked: !!checked, onchange: e => commit(e.target.checked), onpointerdown: e => e.stopPropagation() });
         return el('label.tg-check', { title, onpointerdown: e => e.stopPropagation() }, box, label ? el('span', { text: label }) : null);
@@ -215,14 +248,18 @@
     addEventListener('blur', () => tooltip(0, 0, null));
 
     // A menu of items at a screen point: { label, summary, run, checked, disabled, why, group, separator, danger,
-    // stay (the menu stays open: a tick box) }
-    function menu(x, y, items, { anchor = null, keep = false, title = null } = {}) {
+    // stay (the menu stays open: a tick box), section (a line between one section and the next) }
+    function menu(x, y, items, { anchor = null, keep = false, title = null, className = '' } = {}) {
         const list = el('div.tg-menu-list', { role: 'menu' });
-        let group;
+        let group, section;
         if (title) list.append(el('div.tg-menu-title', { text: title }));
         const shown = items.filter(Boolean);
         let p = null;
         for (const item of shown) {
+            if (item.section !== undefined && item.section !== section) {
+                if (section !== undefined) list.append(el('div.tg-menu-separator'));
+                section = item.section;
+            }
             if (item.group !== undefined && item.group !== group) {
                 group = item.group;
                 if (group) list.append(el('div.tg-menu-group', { text: group }));
@@ -234,7 +271,7 @@
             const row = el('div.tg-menu-item' + (item.disabled ? '.tg-disabled' : '') + (item.danger ? '.tg-danger' : ''), {
                 role: item.checked !== undefined ? 'menuitemcheckbox' : 'menuitem',
                 title: item.disabled ? item.why : item.title,
-                dataset: item.name ? { name: item.name } : undefined,
+                dataset: { ...(item.name ? { name: item.name } : {}), ...(item.section !== undefined ? { section: item.section } : {}) },
                 onclick: e => {
                     e.stopPropagation();
                     if (item.disabled) return;
@@ -253,7 +290,7 @@
             item.hint ? el('span.tg-menu-hint', { text: item.hint }) : null);
             list.append(row);
         }
-        p = popup({ x, y, anchor, className: 'tg-popup tg-menu', content: list, keep });
+        p = popup({ x, y, anchor, className: 'tg-popup tg-menu' + (className ? ' ' + className : ''), content: list, keep });
         return p;
     }
 
@@ -458,5 +495,18 @@
         return `hsl(${h % 360}, 55%, 58%)`;
     }
 
-    G.ui = { el, put, svg, field, checkbox, select, button, popup, closePopups, popupOpen, menu, picker, rank, tooltip, toast, typeColor };
+    // What a page remembers of how it was left (the panels open or closed): nothing, where storage isn't there
+    function remembered(key, fallback) {
+        try {
+            const v = localStorage.getItem('tide-graph:' + key);
+            return v === null ? fallback : JSON.parse(v);
+        } catch {
+            return fallback;
+        }
+    }
+    function remember(key, value) {
+        try { localStorage.setItem('tide-graph:' + key, JSON.stringify(value)); } catch {}
+    }
+
+    G.ui = { el, put, svg, field, nameText, checkbox, select, button, popup, closePopups, popupOpen, menu, picker, rank, tooltip, toast, typeColor, remembered, remember };
 })(globalThis.TideGraph = globalThis.TideGraph || {});

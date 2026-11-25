@@ -41,7 +41,7 @@ const picked = (p, label) => p.until(`!document.querySelector('.tg-value-picker'
 // From the frame's arrow, a Set node
 async function addSet(p) {
     const arrow = await p.center('.tg-entry-start .tg-dot');
-    await p.drag(arrow, { x: arrow.x + 300, y: arrow.y + 6 });
+    await p.drag(arrow, { x: arrow.x + 160, y: arrow.y + 6 });
     await p.until(`!!document.querySelector('.tg-node-search')`, 'the node search for the arrow');
     await p.type('Set');
     await p.until(`document.querySelector('.tg-node-search .tg-chosen .tg-picker-name')?.textContent === 'Set'`, 'Set offered');
@@ -267,9 +267,11 @@ describe('the graph editor in a browser', { skip }, () => {
         nodes = d.decls[1].body.nodes;
         const times = nodes.find(n => n.k === 'binary');
         assert.deepEqual([times.op, nodes.find(n => n.id === times.lhs).k, times.rhs ?? null, nodes.find(n => n.k === 'assign').value], ['*', 'unary', null, times.id]);
-        // An input's pin shows only while a wire is dragged, as somewhere to drop it
-        assert.equal(await p.evaluate(`getComputedStyle(${row('what')}.querySelector('.tg-dot')).visibility`), 'hidden');
-        assert.equal(await p.evaluate(`document.querySelector('.tg-frame .tg-node.tg-data .tg-op-title').selectedOptions[0].textContent`), 'Multiply  *', 'an operator is titled by what it is called');
+        // Every input has its pin, filled when something is in it and hollow when nothing is
+        assert.equal(await p.evaluate(`getComputedStyle(${row('what')}.querySelector('.tg-dot')).visibility`), 'visible');
+        assert.equal(await p.evaluate(`${row('what')}.querySelector('.tg-dot').classList.contains('tg-dot-empty')`), false);
+        assert.equal(await p.evaluate(`${row('b')}.querySelector('.tg-dot').classList.contains('tg-dot-empty')`), true);
+        assert.equal(await p.evaluate(`document.querySelector('.tg-frame .tg-node.tg-data .tg-op-title').textContent`), 'Multiply*', 'an operator is titled by what it is called');
         assert.deepEqual(await p.evaluate(`[...document.querySelectorAll('.tg-frame .tg-node.tg-data .tg-port-label')].map(l => l.textContent)`), [schema.portInfo.lhs.label, schema.portInfo.rhs.label]);
 
         // An input with nothing in it: the compiler says which by its key, the page says it on that row in its words
@@ -294,8 +296,10 @@ describe('the graph editor in a browser', { skip }, () => {
         assert.equal(p.text, before, 'nothing changed');
         assert.equal(await p.evaluate(`document.querySelectorAll('.tg-popup').length`), 0);
 
-        // Renaming the parameter renames its reads
-        await p.clickOn('.tg-entry-row .tg-entry-name', { count: 2 });
+        // Renaming the parameter (a double click on its name) renames its reads
+        await p.clickOn('.tg-entry-row .tg-entry-name');
+        await p.clickOn('.tg-entry-row .tg-entry-name');
+        await p.until(`document.activeElement?.classList.contains('tg-renaming')`, 'its name being typed');
         await p.type('w');
         await p.key('Enter');
         await p.until(`app.editor.doc.root.decls[1].params[0].name === 'w'`, 'the parameter renamed');
@@ -359,8 +363,11 @@ describe('the graph editor in a browser', { skip }, () => {
         await p.until(`app.editor.doc.root.decls.length === 2`, 'a component');
         const made = (await doc(p)).decls[1];
         const at = await p.evaluate(`app.board.toWorld(900, 600)`);
-        assert.deepEqual([made.x, made.y], [Math.round(at.x), Math.round(at.y)], 'where the pointer asked');
+        // Where the pointer asked, or as near it as nothing is under it
+        assert.ok(Math.hypot(made.x - at.x, made.y - at.y) < 400, `near where the pointer asked: ${JSON.stringify([made.x, made.y, at])}`);
         await p.key('Escape');
+        const boxes = await p.evaluate(`[...document.querySelectorAll('.tg-card')].map(c => { const r = c.getBoundingClientRect(); return [r.left, r.top, r.right, r.bottom]; })`);
+        assert.ok(!boxes.some((a, i) => boxes.some((b, j) => i < j && a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3])), `no card on another: ${JSON.stringify(boxes)}`);
 
         // What each card's menu adds is its kind's memberKinds, and nothing else
         const menuOf = async id => {
@@ -374,10 +381,12 @@ describe('the graph editor in a browser', { skip }, () => {
         let items = await menuOf(d.decls[1].id);
         assert.deepEqual(adds(items), schema.declarations.find(x => x.kind === 'component').memberKinds);
         assert.ok(!adds(items).includes('sample'), 'no Sample on a component');
-        assert.ok(!items.some(i => i.name === 'typeParams'), 'a component is not generic');
-        assert.deepEqual(items.filter(i => i.name.startsWith('mod-')).map(i => i.label), ['Dev builds only']);
-        assert.ok(items.some(i => i.label === 'Note…') && items.some(i => i.label === 'Attributes…'));
+        assert.deepEqual(items.filter(i => !i.name.startsWith('add-')).map(i => i.label), ['Rename', 'Cut', 'Copy', 'Paste', 'Duplicate', 'Delete', 'Note…'], 'its options are in Details, not the menu');
         await p.key('Escape');
+        // Details: the component's options alone, with their help
+        const options = () => p.evaluate(`[...document.querySelectorAll('.tg-details [data-option]')].map(o => [o.dataset.option, !!o.closest('.tg-details-advanced')])`);
+        assert.deepEqual(await options(), [['mod-dev', false]]);
+        assert.equal(await text(p, '.tg-details [data-option="mod-dev"] .tg-details-help'), schema.modifierInfo.dev.help);
         items = await menuOf(d.decls[0].id);
         assert.deepEqual(adds(items), schema.declarations.find(x => x.kind === 'input').memberKinds);
         // Sample goes once: added, it's offered no more
@@ -387,17 +396,171 @@ describe('the graph editor in a browser', { skip }, () => {
         items = await menuOf(d.decls[0].id);
         assert.deepEqual(items.filter(i => i.disabled).map(i => i.name), ['add-sample']);
         await p.key('Escape');
-        // A struct can be generic; its menu says so in words
+        // A struct can be generic: Details says so in words, under Advanced
         await p.evaluate(`app.addDecl('struct')`);
         const struct = (await doc(p)).decls[2];
         items = await menuOf(struct.id);
-        assert.ok(items.some(i => i.label === 'Generic over…'), JSON.stringify(items.map(i => i.label)));
         assert.ok(adds(items).includes('operator'));
-        // Where a card is on the board isn't the file's order (the order code runs in): its menu changes that
-        assert.deepEqual(items.filter(i => ['earlier', 'later'].includes(i.name)).map(i => i.name), ['earlier'], 'the last of the file can only go earlier');
-        await p.evaluate(`document.querySelector('.tg-menu .tg-menu-item[data-name="earlier"]').click()`);
+        await p.key('Escape');
+        assert.ok(await p.evaluate(`[...document.querySelectorAll('.tg-details-advanced .tg-details-label')].some(l => l.textContent === ${JSON.stringify(schema.keyInfo.typeParams.label)})`));
+        // Where a card is on the board isn't the file's order (the order code runs in): Details changes that
+        assert.deepEqual(await p.evaluate(`[...document.querySelectorAll('.tg-details-advanced button')].filter(b => /Earlier|Later/.test(b.textContent) && !b.classList.contains('tg-hidden')).map(b => b.textContent)`), ['↑ Earlier'], 'the last of the file can only go earlier');
+        await p.evaluate(`[...document.querySelectorAll('.tg-details-advanced button')].find(b => b.textContent === '↑ Earlier').click()`);
         assert.deepEqual((await doc(p)).decls.map(d => d.kind), ['input', 'struct', 'component']);
         await p.evaluate(`app.command('undo')`);
+        assert.deepEqual(b.errors, []);
+    });
+
+    // Round three (notes/visual-scripting.md, "like Blueprint"): everything moves by dragging it, names are renamed by
+    // a double click, nothing is placed on another, one menu everywhere, Details and My game
+    test('like Blueprint: things move by dragging any part, rename by a double click, never overlap, and every menu is the same', async () => {
+        const p = await openEditor(b, { text: EMPTY, schema, scratch });
+        await makeWobble(p);
+        await p.key('Escape');
+        await makeSpin(p);
+        await p.key('Escape');
+        let d = await doc(p);
+        const wobble = d.decls[0], spin = d.decls[1];
+
+        // A card moves by its name as well as its chip, and the move is an edit that's undone (at full size: a
+        // move on screen is the same on the board)
+        await p.evaluate(`app.board.zoomAt(1 / app.board.zoom)`);
+        await p.evaluate(`app.reveal(${wobble.id})`);
+        const before = p.text;
+        const name = await p.center(`.tg-card[data-id="${wobble.id}"] .tg-card-head .tg-name`);
+        await p.drag(name, { x: name.x + 30, y: name.y + 50 });
+        await p.until(`app.editor.doc.root.decls[0].x === ${wobble.x + 30} && app.editor.doc.root.decls[0].y === ${wobble.y + 50}`, 'the card moved by its name');
+        // ...and by the room between its rows
+        const gap = await p.evaluate(`(() => { const r = document.querySelector('.tg-card[data-id="${wobble.id}"] .tg-row').getBoundingClientRect(); return { x: r.left + r.width * 0.42, y: r.top + 3 }; })()`);
+        assert.ok(await p.evaluate(`!document.elementFromPoint(${gap.x}, ${gap.y}).closest('input, button, select')`), 'room in a row that is no control');
+        await p.drag(gap, { x: gap.x - 30, y: gap.y - 50 });
+        await p.until(`app.editor.doc.root.decls[0].x === ${wobble.x} && app.editor.doc.root.decls[0].y === ${wobble.y}`, 'the card moved by a row');
+        await p.evaluate(`app.command('undo')`);
+        await p.evaluate(`app.command('undo')`);
+        assert.equal(p.text, before, 'two moves, two undos');
+
+        // A double click on a name renames it, and what the file says of it by that name follows
+        const named = `.tg-card[data-id="${wobble.id}"] .tg-card-head .tg-name`;
+        await p.clickOn(named);
+        await p.clickOn(named);
+        await p.until(`document.activeElement?.classList.contains('tg-renaming')`, 'the name to type');
+        await p.type('Spring');
+        await p.key('Enter');
+        await p.until(`app.editor.doc.root.decls[0].name === 'Spring'`, 'renamed');
+        assert.equal((await doc(p)).decls[1].params[0].type, 'Spring', "the system's need follows its type's new name");
+        assert.equal(await p.evaluate(`document.querySelectorAll('.tg-renaming').length`), 0, 'back to text');
+        // F2 renames what's selected: the frame
+        const frameName = await p.center(`.tg-frame[data-id="${spin.id}"] .tg-frame-head .tg-name`);
+        await p.click(frameName.x, frameName.y);
+        await p.key('F2');
+        await p.until(`document.activeElement?.classList.contains('tg-renaming')`, 'F2');
+        await p.type('Turn');
+        await p.key('Enter');
+        await p.until(`app.editor.doc.root.decls[1].name === 'Turn'`, 'renamed by F2');
+
+        // Nodes made at the same place never cover each other, and a node moves by its title and undoes
+        await p.evaluate(`app.reveal(${spin.id})`);
+        const arrow = await p.center('.tg-entry-start .tg-dot');
+        for (const what of ['Set', 'If', 'Return']) {
+            await p.evaluate(`app.board.lastPointer = { x: ${arrow.x + 160}, y: ${arrow.y + 30} }`);
+            await p.evaluate(`app.board.openAdd(${arrow.x + 160}, ${arrow.y + 30}, document.elementFromPoint(${arrow.x + 160}, ${arrow.y + 30}))`);
+            await p.until(`!!document.querySelector('.tg-node-search')`, 'the node search');
+            await p.type(what);
+            await p.until(`document.querySelector('.tg-node-search .tg-chosen .tg-picker-name')?.textContent === ${JSON.stringify(what)}`, what);
+            await p.key('Enter');
+            await p.until(`!document.querySelector('.tg-node-search')`, 'added');
+        }
+        await p.sleep(100);
+        const boxes = await p.evaluate(`[...document.querySelectorAll('.tg-frame .tg-node')].map(n => { const r = n.getBoundingClientRect(); return [r.left, r.top, r.right, r.bottom]; })`);
+        assert.equal(boxes.length, 4, 'the entry and three nodes');
+        assert.ok(!boxes.some((a, i) => boxes.some((c, j) => i < j && a[0] < c[2] && c[0] < a[2] && a[1] < c[3] && c[1] < a[3])), `nothing on top of anything: ${JSON.stringify(boxes)}`);
+        d = await doc(p);
+        const set = d.decls[1].body.nodes.find(n => n.k === 'assign');
+        const was = p.text;
+        const title = await p.center(`.tg-frame .tg-node[data-id="${set.id}"] .tg-node-title`);
+        await p.drag(title, { x: title.x + 40, y: title.y + 120 });
+        await p.until(`app.editor.doc.root.decls[1].body.nodes.find(n => n.k === 'assign').y === ${set.y + 120}`, 'the node moved');
+        assert.equal((await doc(p)).decls[1].body.nodes.find(n => n.k === 'assign').x, set.x + 40);
+        await p.evaluate(`app.command('undo')`);
+        assert.equal(p.text, was);
+
+        // A box drawn on the empty board selects what it touches
+        const r = await p.evaluate(`(() => { const r = document.querySelector('.tg-board').getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height }; })()`);
+        await p.evaluate('app.board.fit(false)');
+        await p.sleep(100);
+        await p.drag({ x: r.x + 4, y: r.y + 4 }, { x: r.x + r.w - 4, y: r.y + r.h - 60 });
+        assert.deepEqual(await p.evaluate('[...app.editor.picked].sort((a, b) => a - b)'), [wobble.id, spin.id], 'both selected by the box');
+        await p.evaluate(`app.board.zoomAt(1 / app.board.zoom)`);
+        await p.evaluate(`app.reveal(${spin.id})`);
+
+        // One menu everywhere: what it adds, Rename, the clipboard, Note, in that order; no options in any
+        const menus = {};
+        const menuAt = async (label, selector) => {
+            const at = await p.center(selector);
+            await p.click(at.x, at.y, { button: 'right' });
+            await p.until(`!!document.querySelector('.tg-context')`, `the menu of ${label}`);
+            menus[label] = await p.evaluate(`[...document.querySelectorAll('.tg-context .tg-menu-item')].map(i => ({ section: Number(i.dataset.section), label: i.querySelector('.tg-menu-label').textContent, hint: i.querySelector('.tg-menu-hint')?.textContent || '', option: !!i.querySelector('.tg-menu-check') }))`);
+            await p.key('Escape');
+        };
+        await p.evaluate(`app.reveal(${wobble.id})`);
+        await menuAt('card', `.tg-card[data-id="${wobble.id}"] .tg-card-head .tg-chip`);
+        await menuAt('row', `.tg-card[data-id="${wobble.id}"] .tg-row .tg-row-name`);
+        await p.evaluate(`app.reveal(${spin.id})`);
+        await menuAt('frame', `.tg-frame[data-id="${spin.id}"] .tg-frame-head .tg-name`);
+        await menuAt('parameter', `.tg-frame .tg-entry-row[data-id] .tg-entry-name`);
+        await menuAt('node', `.tg-frame .tg-node[data-id="${set.id}"] .tg-node-title`);
+        await menuAt('pin', `.tg-frame .tg-entry-row[data-id] .tg-pin .tg-dot`);
+        const clipboard = [['Cut', 'Ctrl+X'], ['Copy', 'Ctrl+C'], ['Paste', 'Ctrl+V'], ['Duplicate', 'Ctrl+D'], ['Delete', 'Del']];
+        for (const [what, items] of Object.entries(menus)) {
+            const sections = items.map(i => i.section);
+            assert.deepEqual(sections, [...sections].sort((a, c) => a - c), `${what}: its sections in order: ${JSON.stringify(items)}`);
+            assert.ok(items.every(i => !i.option), `${what}: no options in its menu`);
+            if (what === 'pin') {
+                assert.deepEqual(items.filter(i => i.section === 3).map(i => [i.label, i.hint]), [['Break links', 'Alt+click']]);
+                continue;
+            }
+            assert.deepEqual(items.filter(i => i.section === 3).map(i => [i.label, i.hint]), clipboard, `${what}: the same clipboard words and keys`);
+            if (what !== 'node') assert.deepEqual(items.filter(i => i.section === 2).map(i => [i.label, i.hint]), [['Rename', 'F2']], `${what}: Rename`);
+            assert.deepEqual(items.filter(i => i.section === 4).map(i => i.label), ['Note…'], `${what}: its note last`);
+        }
+        assert.deepEqual(menus.card.filter(i => i.section === 1).map(i => i.label), schema.declarations.find(x => x.kind === 'component').memberKinds.map(k => {
+            const m = schema.members.find(x => x.kind === k);
+            return m.once || k === 'text' ? `Add ${m.title}` : `Add ${/^[aeiou]/i.test(m.title) ? 'an' : 'a'} ${m.title.toLowerCase()}`;
+        }));
+        assert.deepEqual(menus.frame.filter(i => i.section === 1).map(i => [i.label, i.hint]), [['Add a node…', 'Space'], ['Add a note box', ''], ['Add what it needs…', '']]);
+        assert.ok(!JSON.stringify(menus).includes('Remove'), 'Delete, never Remove');
+        // Delete from the menu of a row, and its way back
+        const fields = (await doc(p)).decls[0].members.length;
+        await p.evaluate(`app.reveal(${wobble.id})`);
+        const rowName = await p.center(`.tg-card[data-id="${wobble.id}"] .tg-row .tg-row-name`);
+        await p.click(rowName.x, rowName.y, { button: 'right' });
+        await p.until(`!!document.querySelector('.tg-context [data-name="delete"]')`, "the row's menu");
+        await p.evaluate(`document.querySelector('.tg-context [data-name="delete"]').click()`);
+        await p.until(`app.editor.doc.root.decls[0].members.length === ${fields - 1}`, 'the row deleted');
+        await p.evaluate(`app.command('undo')`);
+
+        // Details: what's selected, its kind's options alone; the system's packages' options under Advanced
+        await p.evaluate(`app.editor.pick([${spin.id}])`);
+        const options = await p.evaluate(`[...document.querySelectorAll('.tg-details [data-option]')].map(o => [o.dataset.option, !!o.closest('.tg-details-advanced')])`);
+        assert.deepEqual(options, [['mod-dev', false], ['mod-virtual', true], ['mod-override', true]]);
+        assert.equal(await p.evaluate(`document.querySelector('.tg-details-advanced').open`), false, 'Advanced starts closed');
+        await p.evaluate(`app.editor.clearSelection()`);
+        assert.equal(await p.evaluate(`document.querySelector('.tg-details').dataset.what`), 'file', "nothing selected: the file's own");
+        // Closed, it stays closed
+        await p.clickOn('.tg-details .tg-panel-head .tg-icon');
+        assert.equal(await p.evaluate(`getComputedStyle(document.querySelector('.tg-details')).display`), 'none');
+        assert.equal(await p.evaluate(`localStorage.getItem('tide-graph:details')`), 'false');
+        await p.clickOn('.tg-details-button');
+        assert.equal(await p.evaluate(`localStorage.getItem('tide-graph:details')`), 'true');
+
+        // My game: the file by the schema's groups; a component dragged onto a frame is what it needs
+        assert.deepEqual(await p.evaluate(`(() => { const out = []; let g = null; for (const e of document.querySelector('.tg-mygame-list').children) { if (e.classList.contains('tg-mygame-group')) { g = [e.querySelector('.tg-mygame-group-title').textContent, []]; out.push(g); } else if (e.classList.contains('tg-mygame-item')) g[1].push(e.querySelector('.tg-mygame-name').textContent); } return out; })()`),
+            [[schema.groups[0].title, ['Spring']], [schema.groups[1].title, ['Turn']], [schema.groups[2].title, []]]);
+        const from = await p.center(`.tg-mygame-item[data-id="${wobble.id}"] .tg-mygame-kind`);
+        const onto = await p.center(`.tg-frame[data-id="${spin.id}"] .tg-entry`);
+        await p.drag(from, onto, { steps: 10 });
+        await p.until(`app.editor.doc.root.decls[1].params.length === 2`, 'the component dragged onto the frame');
+        assert.deepEqual((await doc(p)).decls[1].params.map(x => x.type), ['Spring', 'Spring']);
         assert.deepEqual(b.errors, []);
     });
 
@@ -450,11 +613,11 @@ describe('the graph editor in a browser', { skip }, () => {
         c = await count();
         assert.ok(c.far >= 1 && c.drawn === 0, JSON.stringify(c));
         assert.ok(await p.evaluate(`document.querySelectorAll('.tg-far-nodes rect').length`) > 200);
-        // Contents lists what the file has by group, and a jump goes there
-        await p.clickOn('.tg-toolbar .tg-button:nth-child(2)');
-        await p.until(`document.querySelectorAll('.tg-contents-item').length > 10`, 'the contents');
-        assert.deepEqual(await p.evaluate(`[...document.querySelectorAll('.tg-contents-group')].map(g => g.textContent)`), schema.groups.map(g => g.title));
-        await p.evaluate(`[...document.querySelectorAll('.tg-contents-item')].find(i => i.textContent.includes('Settle')).click()`);
+        // My game lists what the file has by group, and a click goes there
+        await p.until(`document.querySelectorAll('.tg-mygame-item').length > 10`, 'My game');
+        assert.deepEqual(await p.evaluate(`[...document.querySelectorAll('.tg-mygame-group-title')].map(g => g.textContent)`), schema.groups.map(g => g.title));
+        const settleRow = await p.evaluate(`(() => { const i = [...document.querySelectorAll('.tg-mygame-item')].find(i => i.textContent.includes('Settle')); i.scrollIntoView(); return i.dataset.id; })()`);
+        await p.clickOn(`.tg-mygame-item[data-id="${settleRow}"] .tg-mygame-kind`);
         await p.until(`[...app.board.frames.values()].some(f => f.mode === 'near' && f.item.value.name === 'Settle')`, 'Settle drawn after the jump');
         assert.equal(await p.evaluate('app.board.zoom'), 1);
         // The jump-to search finds by name
@@ -620,6 +783,112 @@ describe('the graph editor in a browser', { skip }, () => {
             await p.evaluate(`document.querySelector('.tg-menu-item[data-name="view-tide"]').click()`);
             const shown = p.posted.filter(m => m.type === 'showTide').at(-1);
             assert.match(shown.text, /component Wobble \{/);
+            assert.deepEqual(b.errors, []);
+        } finally {
+            stop();
+            await server.stop();
+        }
+    });
+    test("checked by tidels: Set changes only what can be changed, by the operators Tide takes for it (tide/graphOperators)", { skip: !tidels && 'no tidels built' }, async () => {
+        const game = path.join(scratch, 'ops');
+        fs.mkdirSync(game, { recursive: true });
+        fs.writeFileSync(path.join(game, 'main.tide'), 'scene Main { }\n');
+        const file = path.join(game, 'scale.tidegraph');
+        fs.writeFileSync(file, EMPTY);
+        const server = startServer(tidels, game);
+        const uri = fileUri(file);
+        const stop = watchDiagnostics(server, uri);
+        try {
+            await server.ready;
+            const p = await openEditor(b, { text: EMPTY, schema, server, uri, scratch });
+            const checked = label => p.until(`/Checked|problem|warning/.test(document.querySelector('.tg-status').textContent)`, label, 30000);
+            await checked('the empty file checked');
+            // A component with a float, and a system that reads it and changes Transform
+            await p.clickOn('.tg-start-choice[data-kind="component"]');
+            await focused(p, ':name');
+            await p.type('TestFromGraph');
+            await p.key('Enter');
+            await p.until(`document.activeElement?.classList.contains('tg-row-name')`, 'its first field');
+            await p.type('frequency');
+            await p.key('Tab');
+            await p.key('Escape');
+            await p.clickOn('.tg-add');
+            await p.until(`!!document.querySelector('.tg-add-menu')`, 'the Add menu');
+            await p.type('system');
+            await p.key('Enter');
+            await focused(p, ':name');
+            await p.type('ScaleTest');
+            await p.key('Enter');
+            await p.until(`!!document.querySelector('.tg-needs-picker')`, 'what it needs');
+            await p.type('TestFromGraph');
+            await p.until(`document.querySelector('.tg-needs-picker .tg-chosen .tg-picker-name')?.textContent === 'TestFromGraph'`, 'the component offered');
+            await p.key('Enter');
+            await checked('the need checked');
+            await p.clickOn('.tg-entry .tg-add-row');
+            await p.until(`[...document.querySelectorAll('.tg-needs-picker .tg-picker-name')].some(n => n.textContent === 'Transform')`, 'Transform offered', 30000);
+            await p.type('Transform');
+            await p.key('Enter');
+            await p.until(`document.querySelectorAll('.tg-entry-row[data-id]').length === 2`, 'two needs');
+            await p.evaluate(`document.querySelectorAll('.tg-entry-row[data-id] .tg-mode')[1].click()`);
+            await p.until(`!!document.querySelector('.tg-menu')`, 'the ways to take it');
+            await p.evaluate(`[...document.querySelectorAll('.tg-menu-item')].find(i => i.textContent.startsWith('changes')).click()`);
+            await checked('changes Transform');
+            await addSet(p);
+            await checked('the Set checked');
+            // What it changes: only what this code can change; what it only reads is said, and why
+            await p.evaluate(`${row('what')}.querySelector('.tg-pick').click()`);
+            await picker(p);
+            const under = await grouped(p);
+            assert.equal(under.transform, 'What this code has');
+            assert.equal(under.testFromGraph, 'Only read here');
+            assert.ok(await p.evaluate(`[...document.querySelectorAll('.tg-value-picker .tg-picker-item')].find(i => i.textContent.includes('testFromGraph')).classList.contains('tg-disabled')`));
+            // The parameter only read can't be wired there either
+            await p.key('Escape');
+            const pin = await p.center('.tg-entry-row[data-id] .tg-pin .tg-dot');
+            await p.drag(pin, await p.center(`.tg-frame .tg-node.tg-exec .tg-pick`));
+            await p.until(`document.querySelector('.tg-toast.tg-toast-shown')?.textContent.includes('only read here')`, 'why it cannot');
+            // transform itself: Tide takes only = for a Transform (no *= ever offered)
+            await p.evaluate(`${row('what')}.querySelector('.tg-pick').click()`);
+            await picker(p);
+            await p.type('transform');
+            await p.until(`document.querySelector('.tg-value-picker .tg-chosen .tg-picker-name')?.textContent === 'transform'`, 'transform');
+            await p.key('ArrowRight');
+            await p.until(`[...document.querySelectorAll('.tg-value-picker .tg-picker-name')].some(n => n.textContent === 'localScale')`, "Transform's fields", 30000);
+            await p.evaluate(`[...document.querySelectorAll('.tg-value-picker .tg-picker-item')].find(i => i.querySelector('.tg-picker-name').textContent === 'transform').click()`);
+            await picked(p);
+            await checked('transform in what');
+            await p.until(`app.lang.typeOf(app.editor.doc.root.decls[1].body.nodes.find(n => n.k === 'assign').target) === 'Transform'`, 'its type known');
+            const offered = async () => {
+                await p.clickOn('.tg-frame .tg-node.tg-exec .tg-op');
+                await p.until(`!!document.querySelector('.tg-op-menu')`, 'the operators', 30000);
+                const ops = await p.evaluate(`[...document.querySelectorAll('.tg-op-menu .tg-menu-item:not(.tg-disabled)')].map(i => i.dataset.name.slice(3))`);
+                await p.key('Escape');
+                return ops;
+            };
+            assert.deepEqual(await offered(), ['='], 'a Transform is only set whole');
+            // transform.localScale by testFromGraph.frequency: a float3 changed by a float, by all but =
+            await p.evaluate(`[...${row('what')}.querySelectorAll('.tg-path-part')].find(x => x.textContent === 'transform').click()`);
+            await picker(p);
+            await p.type('transform.');
+            await p.until(`[...document.querySelectorAll('.tg-value-picker .tg-picker-name')].some(n => n.textContent === 'localScale')`, "Transform's fields again", 30000);
+            await p.type('localSc');
+            await p.key('Enter');
+            await picked(p);
+            await p.evaluate(`document.querySelector('.tg-frame .tg-node.tg-exec .tg-pick').click()`);
+            await picker(p);
+            await p.type('testFromGraph.');
+            await p.until(`[...document.querySelectorAll('.tg-value-picker .tg-picker-name')].some(n => n.textContent === 'frequency')`, 'its fields', 30000);
+            await p.type('freq');
+            await p.key('Enter');
+            await picked(p);
+            // A float can't become a float3: how it changes it is asked next, by itself, with the ways it can
+            await p.until(`!!document.querySelector('.tg-op-menu [data-name="op:*="]')`, 'how it changes it, asked', 30000);
+            assert.deepEqual(await p.evaluate(`[...document.querySelectorAll('.tg-op-menu .tg-menu-item:not(.tg-disabled)')].map(i => i.dataset.name.slice(3))`),
+                ['+=', '-=', '*=', '/='], 'a float3 changed by a float');
+            assert.ok(await p.evaluate(`app.lang.text?.includes('transform.localScale = testFromGraph.frequency;')`), 'checked with its value');
+            await p.evaluate(`document.querySelector('.tg-op-menu [data-name="op:*="]').click()`);
+            await p.until(`app.lang.text?.includes('transform.localScale *= testFromGraph.frequency;')`, 'multiplied');
+            await p.until(`!/problem/.test(document.querySelector('.tg-status').textContent)`, 'no problem');
             assert.deepEqual(b.errors, []);
         } finally {
             stop();

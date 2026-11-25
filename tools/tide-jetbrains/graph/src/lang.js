@@ -182,6 +182,23 @@
             }
         }
 
+        // Which of the schema's operators the checker takes for a value of `type`, with a value of `other` on the
+        // right (of `type` when it's left out): { assign, step, binary, unary } (tide/graphOperators), or null when
+        // tidels doesn't know the type there or doesn't answer, and then every operator is offered. Asked once a check.
+        async operators(type, other) {
+            if (!type || this.status === 'unavailable') return null;
+            const key = `${this.generation}
+${type}
+${other || ''}`;
+            if (!this.operatorsAsked || this.operatorsAsked.generation !== this.generation) this.operatorsAsked = { generation: this.generation, map: new Map() };
+            const asked = this.operatorsAsked.map;
+            if (!asked.has(key)) {
+                asked.set(key, this.request('tide/graphOperators', this.params(other ? { type, other } : { type })).then(
+                    r => (r && typeof r === 'object' && (Array.isArray(r.assign) || Array.isArray(r.binary)) ? r : null), () => null));
+            }
+            return asked.get(key);
+        }
+
         // What a name itself has after a dot: an enum's choices, a namespace's functions (Math), as completion items
         async membersOfName(name) {
             if (!name) return [];

@@ -27,9 +27,10 @@
     // -----------------------------------------------------------------------------------------------------------
     // The Add menu: every kind of declaration by the schema's groups, with what each is for
 
-    function addEntries(schema) {
+    function addEntries(schema, only = null) {
         const out = [];
         for (const group of schema.groups) {
+            if (only && group.name !== only) continue;
             for (const d of schema.declsOf(group.name)) {
                 out.push({ title: d.title, summary: d.summary, group: group.title, groupSummary: group.summary, kind: d.kind, name: d.kind, keywords: d.kind });
             }
@@ -37,13 +38,14 @@
         return out;
     }
 
-    function addMenu(app, x, y, { namespace = null, at = null, anchor = null } = {}) {
+    function addMenu(app, x, y, { namespace = null, at = null, anchor = null, group = null } = {}) {
         const schema = app.editor?.schema;
         if (!schema || app.editor.error) return null;
+        const g = group ? schema.groups.find(x2 => x2.name === group) : null;
         return picker({
             x, y, anchor, className: 'tg-add-menu', placeholder: 'What do you want to make?',
-            title: namespace ? `Add to ${namespace.name}` : null,
-            entries: addEntries(schema),
+            title: namespace ? `Add to ${namespace.name}` : g ? `Add to ${g.title}: ${g.summary}` : null,
+            entries: addEntries(schema, group),
             onPick: entry => app.addDecl(entry.kind, { namespace, at }),
         });
     }
@@ -330,16 +332,28 @@
             }
         }
         const title = context?.member || (valueOut && memberType) ? `Of ${memberType || 'its value'}` : null;
-        return picker({
+        // What fits where a wire was dropped comes first; everything else when asked (as Blueprint's "Context
+        // Sensitive" off)
+        const EVERYTHING = { title: 'Show everything', summary: 'What goes anywhere in this code, not only what fits here', key: '\0all', group: 'Or', all: true, stay: true, untyped: true };
+        const p = picker({
             x: clientX, y: clientY, className: 'tg-node-search', placeholder: placeholderOf(context), title,
-            entries, more: asked,
+            entries: from && !context?.member ? [...entries, EVERYTHING] : entries, more: asked,
             empty: text => `Nothing called "${text}" here.`,
             onPick: entry => {
+                if (entry.all) {
+                    const place = () => lang.placeFor(null, frame.slot.owner);
+                    p.reset({
+                        entries: catalog(app, frame, null), title: 'Everything', placeholder: 'What should happen here?',
+                        more: lang.status === 'unavailable' ? null : app.checked().then(() => lang.completion(place())).then(items => items.map(i => G.lang.entryOf(i, {})).filter(Boolean).map(e => ({ ...e, key: 'c:' + e.title, summary: undefined }))),
+                    });
+                    return;
+                }
                 if (context?.member) app.retarget(frame, context.member, entry);
                 else app.addFromSearch(frame, entry, at, context);
             },
             onClose: () => app.board.el.focus({ preventScroll: true }),
         });
+        return p;
     }
 
     // -----------------------------------------------------------------------------------------------------------
@@ -390,7 +404,7 @@
         return /^[A-Za-z_][\w.<>?,\[\] ]*$/.test(last) && !['enum', 'struct', 'component', 'singleton', 'event', 'scene', 'input', 'function', 'const'].includes(last) ? last : null;
     }
 
-    function valuePicker(app, frame, port, { anchor = null, from = 0 } = {}) {
+    function valuePicker(app, frame, port, { anchor = null, from = 0, work = false, x = 0, y = 0 } = {}) {
         const ed = app.editor;
         const s = ed.schema;
         const doc = ed.doc;
@@ -414,7 +428,7 @@
         const key = G.frames.portKey(port);
         const label = frame.ports.get(key)?.label || 'value';
         const reader = port.node > 0 ? port.node : 0;
-        const HAS = 'What this code has', GAME = s.typeGroup('game'), REST = s.typeGroup('rest'), WORK = 'Work it out';
+        const HAS = 'What this code has', GAME = s.typeGroup('game'), REST = s.typeGroup('rest'), WORK = 'Work it out', READ = 'Only read here';
         const ALL = { title: "Show what doesn't fit too", key: '\0all', group: 'Or', all: true, stay: true, untyped: true };
         const BACK = { title: '‹ Back', key: '\0back', group: 'Something else', back: true, stay: true, untyped: true };
         const startOf = n => (n.k === 'local' ? { local: n.ref } : n.k === 'member' ? { shorthand: n.member } : n.k === 'name' ? { name: n.name } : { word: n.k });
@@ -426,10 +440,10 @@
         // What a pick puts in the input
         const put = make => frame.setInput(port, make);
         const pathOf = (b, more) => (d, graph, at) => d.makePath(graph, b.start, [...b.members, ...(more ? [more] : [])], at);
-        // A node wired in goes under its reader, to the left: clear of what's already wired there
+        // A node wired in goes under its reader, to the left, where nothing else is
         const under = at => {
             const wired = reader ? s.dataWires(Doc.nodeIn(g, reader) || {}).filter(w => !frame.analysis.folded.has(w)).length : 0;
-            return { x: at.x - 240, y: at.y + (frame.sizes.get(frame.statementOf(reader))?.h || 96) + 16 + 96 * wired };
+            return frame.freeSpot({ x: at.x - 240, y: at.y + (frame.sizes.get(frame.statementOf(reader))?.h || 96) + 16 + 96 * wired });
         };
         const nodeOf = (k, fields, wrap) => (d, graph, at) => {
             const where = under(at);
@@ -447,11 +461,14 @@
             return n.id;
         };
 
-        // "Work it out…": the operators by what they're called, then the other nodes that give a value
+        // "Work it out…": the operators by what they're called (only those Tide takes for what's in the input, or
+        // for what it takes, once tidels has said), then the other nodes that give a value
+        let validOps = null;
+        const opType = (current ? frame.typeOfValue(current) : null) || want;
         const workEntries = () => {
             const out = [];
-            for (const o of s.operators.binary) out.push({ title: o.title, detail: o.op, key: 'op:' + o.op, group: WORK, color: s.color('binary'), make: nodeOf('binary', { op: o.op }, 'lhs') });
-            for (const o of s.operators.unary) out.push({ title: o.title, detail: o.op, key: 'un:' + o.op, group: WORK, color: s.color('unary'), make: nodeOf('unary', { op: o.op }, 'value') });
+            for (const o of s.operators.binary) if (!validOps || validOps.binary.has(o.op)) out.push({ title: o.title, detail: o.op, key: 'op:' + o.op, group: WORK, color: s.color('binary'), make: nodeOf('binary', { op: o.op }, 'lhs') });
+            for (const o of s.operators.unary) if (!validOps || validOps.unary.has(o.op)) out.push({ title: o.title, detail: o.op, key: 'un:' + o.op, group: WORK, color: s.color('unary'), make: nodeOf('unary', { op: o.op }, 'value') });
             for (const spec of s.nodes) {
                 if (spec.exec || !spec.value || s.inlineKind(spec.k) || ['binary', 'unary', 'method'].includes(spec.k)) continue;
                 const wrap = spec.category !== 'math' ? null : spec.k === 'conditional' ? 'then' : spec.inputs?.[0];
@@ -482,7 +499,7 @@
                     } });
             }
             const has = (title, type, start) => {
-                if (!fit(type) && !open(type)) { left++; return; }
+                if (!place && !fit(type) && !open(type)) { left++; return; }
                 // Something with fields, where its whole isn't what's wanted, opens to them when it's picked
                 const into = open(type) && !!type && type !== want;
                 out.push({ title, key: 'h:' + title, detail: type || undefined, group: HAS, color: colour(type), start, type, drill: open(type), stay: into, into });
@@ -491,9 +508,16 @@
             for (const d of frame.localsBefore(reader)) has(s.declaredLocal(d), frame.typeOfPort({ local: d.id }), { local: d.id });
             if (place) {
                 out.length = 0;
-                for (const pin of frame.pins) has(pin.name, pin.type, { name: pin.name });
-                for (const d of frame.localsBefore(reader)) has(s.declaredLocal(d), frame.typeOfPort({ local: d.id }), { local: d.id });
-                out.push(...(game || []).filter(e => e.group === HAS));
+                const readOnly = [];
+                const offer = (title, type, start) => {
+                    const can = frame.changeable(start);
+                    if (can.ok) has(title, type, start);
+                    else readOnly.push({ title, key: 'r:' + title, detail: type || undefined, summary: can.why, group: READ, color: colour(type), disabled: true, why: can.why });
+                };
+                for (const pin of frame.pins) offer(pin.name, pin.type, { name: pin.name });
+                for (const d of frame.localsBefore(reader)) offer(s.declaredLocal(d), frame.typeOfPort({ local: d.id }), { local: d.id });
+                if (!out.length) out.push({ title: 'Nothing here can be changed yet', summary: readOnly.length ? 'What this code only reads is below: make one of them "' + s.modeLabel('mut') + '" on the entry' : 'Add what it changes on the entry: + needs…', key: '\0none', group: HAS, disabled: true, why: 'Nothing to change' });
+                out.push(...readOnly);
                 if (current) out.push({ title: 'Nothing', summary: 'Empty it', key: '\0clear', group: 'Or', clear: true, untyped: true });
                 return out;
             }
@@ -580,14 +604,15 @@
             ? { title: `${m.name}(${m.method.join(', ')})`, key: 'm:' + m.name, detail: 'a call', color: s.color('method'), keywords: m.name, make: methodOf(b, m.name, m.method.length) }
             : { title: m.name, key: 'm:' + m.name, detail: m.type, color: colour(m.type), field: m.name, type: m.type, drill: open(m.type), into: !fit(m.type), stay: !fit(m.type) }));
 
+        let lastGame = null;
         const show = () => {
             left = 0;
             if (!base) {
                 const game = gameEntries();
                 p.reset({
-                    entries: top(null), title: `What goes in '${label}'?${want ? ` A ${want}.`.replace(/^ A ([aeiou])/i, ' An $1') : ''}`,
+                    entries: top(lastGame), title: place ? `What does it change? Something this code can change.` : `What goes in '${label}'?${want ? ` A ${want}.`.replace(/^ A ([aeiou])/i, ' An $1') : ''}`,
                     placeholder: place ? 'Search…' : s.control(want) === 'whole' || s.control(want) === 'decimal' ? 'Type a number, or search…' : s.control(want) === 'text' ? 'Type the text, or search…' : want ? 'Search…' : 'Search, or type a number…',
-                    more: game.then(entries => { if (!base) p.refill(top(entries)); return []; }),
+                    more: game.then(entries => { lastGame = entries; if (!base) p.refill(top(entries)); return []; }),
                 });
             } else if (base.work) {
                 p.reset({ entries: [...workEntries().map(e => ({ ...e, group: undefined })), BACK], title: `'${label}': work it out`, placeholder: 'An operator or a call…' });
@@ -624,7 +649,7 @@
         };
 
         p = picker({
-            anchor, className: 'tg-value-picker', entries: [],
+            anchor, x, y, className: 'tg-value-picker', entries: [],
             empty: text => (base ? `It has nothing called "${text}".` : `Nothing called "${text}" that goes here.`),
             status: 'Asking what the game has…',
             onDrill: drill,
@@ -653,6 +678,25 @@
                 else if (entry.field) put(pathOf(base, entry.field));
                 else if (entry.start) put(pathOf({ start: entry.start, members: [] }));
                 else if (entry.make) put(entry.make);
+                else return;
+                // A value Set can't take the way it changes now, but can another way (a float into a float3 with
+                // "becomes"): how it changes it is asked next, with only the ways it can (Blueprint offers no wrong pin)
+                if (readerNode?.k !== 'assign' || port.key !== 'value' || !entry.type) return;
+                // (once a check has the value, not one of the file before it: the menu then offers the ways for it)
+                let checks = 0;
+                const off = lang.on(async what => {
+                    if (what !== 'check') return;
+                    const n = app.editor.doc.find(reader)?.value;
+                    if (lang.status === 'checked' && n?.value && !lang.typeOf(n.value) && ++checks < 3) return;
+                    off();
+                    const target = n?.target ? lang.typeOf(n.target) : null;
+                    if (lang.status !== 'checked' || !n?.value || !target) return;
+                    const value = lang.typeOf(n.value);
+                    if (value === target) return;
+                    const ways = (await lang.operators(target, value))?.assign || [];
+                    if (!ways.length || ways.includes(n.op ?? '=') || G.ui.popupOpen()) return;
+                    app.board.elementOf(reader)?.querySelector('[data-op]')?.click();
+                });
             },
             onClose: () => app.board.el.focus({ preventScroll: true }),
         });
@@ -661,7 +705,17 @@
             base = { start: startOf(path[0]), members: path.slice(1, from).map(n => n.member), node: path[from - 1].id, type: frame.typeOfValue(path[from - 1].id), named: false };
             if (path[0].k === 'name' && !base.type && from === 1) base.named = !!doc.enumMembers(path[0].name) || !frame.pins.some(pin => pin.name === path[0].name);
         }
+        if (work && !place) base = { work: true };
         show();
+        // The operators that fit, once tidels says: the lists showing them are made again
+        if (opType && !place) {
+            lang.operators(opType).then(r => {
+                if (!r || !G.ui.popupOpen()) return;
+                validOps = { binary: new Set(r.binary || []), unary: new Set(r.unary || []) };
+                if (base?.work) p.refill([...workEntries().map(e => ({ ...e, group: undefined })), BACK]);
+                else if (!base) p.refill(top(lastGame));
+            });
+        }
         return p;
     }
 
@@ -700,5 +754,5 @@
         });
     }
 
-    G.pickers = { addMenu, addEntries, typePicker, needsPicker, valuePicker, nodeSearch, jumpTo, contents, nameFor, lowerFirst };
+    G.pickers = { addMenu, addEntries, typePicker, needsPicker, valuePicker, nodeSearch, jumpTo, contents, nameFor, lowerFirst, fits };
 })(globalThis.TideGraph = globalThis.TideGraph || {});

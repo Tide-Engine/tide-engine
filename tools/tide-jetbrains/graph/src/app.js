@@ -31,7 +31,9 @@
             this.nextRequest = 1;
             this.clip = null;
             this.spaceDown = false;
-            this.contentsOpen = false;
+            // The panels, as they were left (a phone's are closed until asked for)
+            const narrow = typeof innerWidth === 'number' && innerWidth < 900;
+            this.open = { mygame: G.ui.remembered('mygame', !narrow) && !narrow, details: G.ui.remembered('details', !narrow) && !narrow };
             this.lang = new Lang((method, params) => this.request(method, params));
             this.editor = null;
             this.build();
@@ -127,27 +129,65 @@
             this.undoButton = button('↶', () => this.command('undo'), 'Undo (Ctrl+Z)', 'tg-button.tg-tool');
             this.redoButton = button('↷', () => this.command('redo'), 'Redo (Ctrl+Y)', 'tg-button.tg-tool');
             this.addButton = button('+ Add', e => G.pickers.addMenu(this, 0, 0, { anchor: e.currentTarget }), 'Add something to the file (or right-click the board)', 'tg-button.tg-primary.tg-add');
-            this.contentsButton = button('Contents', () => this.toggleContents(), 'What this file has, to jump to', 'tg-button');
+            this.gameButton = button('My game', () => this.togglePanel('mygame'), 'What this file has, by group: click one to go to it, drag one out to use it', 'tg-button.tg-mygame-button');
             this.findButton = button('Find…', e => G.pickers.jumpTo(this, { anchor: e.currentTarget }), 'Jump to a declaration by its name (Ctrl+F)', 'tg-button.tg-find');
+            this.detailsButton = button('Details', () => this.togglePanel('details'), "What's selected: its options, its note", 'tg-button.tg-details-button');
             const bar = el('div.tg-toolbar', null,
-                this.addButton, this.contentsButton, this.findButton,
-                el('span.tg-grow'), this.statusChip, el('span.tg-sep'), this.undoButton, this.redoButton,
+                this.addButton, this.gameButton, this.findButton,
+                el('span.tg-grow'), this.statusChip, el('span.tg-sep'), this.undoButton, this.redoButton, el('span.tg-sep'), this.detailsButton,
                 button('⋯', e => this.boardMenu(e.currentTarget), 'More: view as Tide, tidy up, this file\'s namespace', 'tg-button.tg-tool.tg-board-more'));
             this.bannerEl = el('div.tg-banner');
             this.board = new Board(this);
-            this.contents = el('div.tg-contents');
+            this.myGame = new G.panels.MyGame(this);
+            this.details = new G.panels.Details(this);
             this.zoomLabel = button('100%', () => { this.board.zoomAt(1 / this.board.zoom); }, 'Back to full size', 'tg-button.tg-zoom-label');
             const zoom = el('div.tg-zoom', { onpointerdown: e => e.stopPropagation() },
                 button('−', () => this.board.zoomAt(1 / 1.25), 'Zoom out (Ctrl and the wheel)', 'tg-button'),
                 this.zoomLabel,
                 button('+', () => this.board.zoomAt(1.25), 'Zoom in', 'tg-button'),
                 button('Fit', () => this.board.fit(false), 'See the whole file (F)', 'tg-button'));
-            this.main = el('div.tg-main', null, this.contents, el('div.tg-center', null, this.board.el, zoom));
+            this.main = el('div.tg-main', null, this.myGame.el, el('div.tg-center', null, this.board.el, zoom), this.details.el);
             G.ui.put(root, bar, this.bannerEl, this.main);
             this.keys();
             addEventListener('resize', () => { if (this.editor) this.board.scheduleCull(); });
             this.banner(null);
             this.renderStatus();
+            this.showPanels();
+        }
+
+        // Opens or closes a panel, and remembers it
+        togglePanel(name, open = !this.open[name]) {
+            this.open[name] = open;
+            if (innerWidth >= 900) G.ui.remember(name, open);
+            // A phone has one sheet at a time
+            if (open && innerWidth < 640) for (const other of Object.keys(this.open)) if (other !== name) this.open[other] = false;
+            this.showPanels();
+            this.renderPanels();
+            requestAnimationFrame(() => this.board.scheduleCull());
+        }
+
+        showPanels() {
+            this.root.classList.toggle('tg-mygame-open', !!this.open.mygame);
+            this.root.classList.toggle('tg-details-open', !!this.open.details);
+            this.gameButton?.classList.toggle('tg-on', !!this.open.mygame);
+            this.detailsButton?.classList.toggle('tg-on', !!this.open.details);
+        }
+
+        renderPanels() {
+            if (!this.editor) return;
+            if (this.open.mygame) this.myGame.render(); else this.myGame.el.replaceChildren();
+            if (this.open.details) this.details.render(); else this.details.el.replaceChildren();
+        }
+
+        // What's selected changed: Details shows it, and My game marks it
+        selectionChanged() {
+            const ed = this.editor;
+            if (!ed) return;
+            const key = [G.slotKey(ed.slot), [...ed.selection].join(), [...ed.picked].join(), ed.row].join('|');
+            if (key === this.selectionKey) return;
+            this.selectionKey = key;
+            if (this.open.details && !this.details.el.contains(document.activeElement)) this.details.render();
+            for (const x of this.myGame.el.querySelectorAll('.tg-mygame-item')) x.classList.toggle('tg-on', ed.picked.has(Number(x.dataset.id)));
         }
 
         zoomChanged() {
@@ -166,7 +206,8 @@
                 this.banner(ed.error ? `This file isn't a graph the editor can read (${ed.error}). Fix it as text; the board comes back when it reads again.` : null);
                 this.problemCounts = null;
                 this.board.render();
-                this.renderContents();
+                this.selectionKey = null;
+                this.renderPanels();
                 this.renderStatus();
             } else if (what === 'selection') {
                 this.board.showSelection();
@@ -192,7 +233,7 @@
             }
             if (what === 'check' || what === 'diagnostics') {
                 this.board.markProblems();
-                this.renderContents();
+                if (this.open.mygame && !this.myGame.el.contains(document.activeElement)) this.myGame.render();
             }
             this.renderStatus();
         }
@@ -264,50 +305,6 @@
             popup({ anchor: this.statusChip, className: 'tg-popup tg-problems-popup', content: body });
         }
 
-        // Contents: the file's declarations by group, closed until asked for
-        toggleContents(open = !this.contentsOpen) {
-            this.contentsOpen = open;
-            this.root.classList.toggle('tg-contents-open', open);
-            this.contentsButton.classList.toggle('tg-on', open);
-            this.renderContents();
-            requestAnimationFrame(() => this.board.scheduleCull());
-        }
-
-        renderContents() {
-            const box = this.contents;
-            if (!this.contentsOpen || !this.editor || this.editor.error) {
-                box.replaceChildren();
-                return;
-            }
-            const entries = G.pickers.contents(this);
-            const typed = this.contentsFilter?.value ?? '';
-            const filter = el('input.tg-input.tg-contents-filter', { type: 'text', placeholder: 'Filter…', spellcheck: 'false', value: typed });
-            const list = el('div.tg-contents-list');
-            const fill = () => {
-                const text = filter.value.trim().toLowerCase();
-                list.replaceChildren();
-                let group = null;
-                for (const e of entries) {
-                    if (text && !e.title.toLowerCase().includes(text)) continue;
-                    if (e.group !== group) {
-                        group = e.group;
-                        G.ui.put(list, el('div.tg-contents-group', { text: group }));
-                    }
-                    G.ui.put(list, el('div.tg-contents-item', { dataset: { id: e.id }, onclick: () => { this.reveal(e.id); if (innerWidth < 640) this.toggleContents(false); }, title: e.detail },
-                        el('span.tg-contents-name', { text: e.title }), el('span.tg-contents-kind', { text: e.detail }),
-                        e.problems ? el('span.tg-badge.tg-badge-error', { text: String(e.problems) }) : null));
-                }
-                if (!list.childNodes.length) G.ui.put(list, el('div.tg-contents-none', { text: entries.length ? 'Nothing by that name' : 'Nothing here yet: + Add makes the first thing' }));
-            };
-            filter.addEventListener('input', fill);
-            filter.addEventListener('keydown', e => e.stopPropagation());
-            const focused = document.activeElement === this.contentsFilter;
-            this.contentsFilter = filter;
-            fill();
-            box.replaceChildren(el('div.tg-contents-head', null, el('span', { text: 'Contents' }), button('×', () => this.toggleContents(false), 'Close', 'tg-icon')), filter, list);
-            if (focused) filter.focus();
-        }
-
         // The board's own menu: what isn't on it
         boardMenu(anchor) {
             const ed = this.editor;
@@ -345,6 +342,111 @@
             }
             ed.select(id);
             this.board.reveal(id);
+        }
+
+        // A card or a frame renamed: what the file says of it by that name follows (Doc.renameUses), and a
+        // replacement keeps what it replaces only if that was its own name
+        renameDecl(item, name) {
+            const v = item.value;
+            this.edit(doc => {
+                const old = v.name;
+                v.name = name;
+                if (v.overrides && !v.overrides.endsWith('.' + name)) delete v.overrides;
+                if (!item.member && !item.accessor) doc.renameUses(old, name);
+            });
+        }
+
+        // Starts renaming what a name's field key names (`${id}:name`): on the board, drawn first if it isn't
+        rename(fk, target = null) {
+            const find = () => document.querySelector(`.tg-world [data-fk="${fk}"]`);
+            let named = find();
+            if (!named?.rename) {
+                const id = Number(fk.split(':')[0]);
+                const e = this.editor.doc.find(id);
+                if (!e) return;
+                this.board.reveal(target?.kind === 'row' ? target.item.id : e.role === 'node' ? id : this.editor.itemOf(id) || id);
+                named = find();
+            }
+            named?.rename?.(true);
+        }
+
+        // Renames what's selected (F2): a row, a node that declares a local, a card or a frame
+        renameSelection() {
+            const ed = this.editor;
+            const b = this.board;
+            let t = null;
+            if (ed.selection.size === 1) {
+                const f = b.frameOf(ed.slot);
+                const node = f?.views.get([...ed.selection][0])?.node;
+                if (node) t = { kind: 'node', frame: f, node };
+            } else if (ed.row) {
+                const item = ed.doc.items().find(i => i.id === [...ed.picked][0]);
+                const row = ed.doc.find(ed.row);
+                if (item && row) t = { kind: 'row', item, row };
+            } else if (ed.picked.size === 1) {
+                const item = ed.doc.items().find(i => i.id === [...ed.picked][0]);
+                if (item) t = { kind: item.card ? 'card' : item.region ? 'region' : 'frame', item };
+            }
+            const fk = t ? G.menus.nameOf(this, t) : null;
+            if (fk) this.rename(fk, t);
+            else if (t) toast('It has no name to change');
+        }
+
+        // What a frame takes, picked: a component, a singleton, a filter...
+        openNeeds(item, x, y) {
+            const f = this.board.frames.get(item.id);
+            const add = f?.mode === 'near' ? f.body.querySelector('.tg-entry .tg-add-row') : null;
+            G.pickers.needsPicker(this, item, add ? { anchor: add } : { x, y });
+        }
+
+        // ---------------------------------------------------------------------------------------------------------
+        // Dragged out of My game
+
+        // Where something of My game would go if dropped on `under`: { el (lit while it's over it), run() }, or null
+        dropTarget(item, under) {
+            const ed = this.editor;
+            if (!under?.closest || !item) return null;
+            const kind = item.value.kind;
+            const frame = this.board.frameAt(under);
+            if ((kind === 'component' || kind === 'singleton') && frame && !frame.isValue && (frame.item.spec?.keys || []).includes('params')) {
+                const routine = frame.item.value;
+                return { el: frame.el, run: () => {
+                    const taken = new Set((routine.params || []).map(p => p.name));
+                    let name = G.pickers.nameFor(item.value.name);
+                    for (let i = 2; taken.has(name); i++) name = G.pickers.nameFor(item.value.name) + i;
+                    let made;
+                    this.edit(d => {
+                        if (!Array.isArray(routine.params)) G.json.set(routine, 'params', [], frame.item.spec?.keys);
+                        made = d.newParam(item.value.name, name);
+                        routine.params.push(made);
+                    });
+                    if (made) ed.selectRow(frame.item.id, made.id);
+                } };
+            }
+            if (kind === 'function' && frame?.mode === 'near' && frame.graph) {
+                return { el: frame.el, run: (x, y) => {
+                    const fields = { name: item.value.name, args: (item.value.params || []).filter(p => !this.editor.schema.modeIsFilter(p.mode)).map(() => null) };
+                    const gives = item.value.returnType && item.value.returnType !== 'void';
+                    this.addFromSearch(frame, { node: { k: 'call', fields }, statement: !gives, detail: 'from My game' }, frame.toLocal(x, y), null);
+                } };
+            }
+            if (kind === 'const' && frame?.mode === 'near') {
+                const port = this.board.portAt(frame, under);
+                if (port && port.input && !port.exec) {
+                    return { el: frame.ports.get(G.frames.portKey(port))?.row, run: () => frame.setInput(port, (d, g, at) => d.makePath(g, { name: item.value.name }, [], at)) };
+                }
+            }
+            return null;
+        }
+
+        dropFromGame(item, x, y) {
+            const target = this.dropTarget(item, document.elementFromPoint(x, y));
+            if (target) { target.run(x, y); return; }
+            const kind = item.value.kind;
+            if (kind === 'component' || kind === 'singleton') toast(`Drop ${item.value.name} on a frame of code to add it to what the code needs.`);
+            else if (kind === 'function') toast(`Drop ${item.value.name} inside a frame of code to call it there.`);
+            else if (kind === 'const') toast(`Drop ${item.value.name} on an input of a node to put it there.`);
+            else toast(`Click ${this.editor.doc.titleOf(item)} to go to it.`);
         }
 
         // ---------------------------------------------------------------------------------------------------------
@@ -393,7 +495,7 @@
             });
             if (!made) return null;
             ed.pick([made.id]);
-            this.board.ensureVisible(made.id);
+            this.board.showWith(made.id);
             const fk = spec?.keys.includes('name') ? `${made.id}:name` : spec?.keys.includes('text') ? `${made.id}:text` : null;
             if (fk) this.board.focusSoon(fk, true);
             return made;
@@ -550,6 +652,8 @@
             let made = null;
             const whys = [];
             const say = why => { if (why) whys.push(why); };
+            // Where it's asked for when that's free, else as near it as it's free: nothing goes on top of anything
+            at = frame.freeSpot(at);
             this.edit(doc => {
                 const g = doc.ensureGraph(frame.slot);
                 if (!g) return;
@@ -662,12 +766,15 @@
                 case 'redo': ed.redo(); this.checkSoon(); break;
                 case 'delete':
                     if (ed.selection.size) { ed.deleteSelection(); this.checkSoon(); }
+                    else if (ed.row) this.deleteRow(ed.row);
                     else if (ed.picked.size) this.deleteItems([...ed.picked]);
                     break;
                 case 'duplicate':
                     if (ed.selection.size) { ed.duplicateSelection(); this.checkSoon(); }
+                    else if (ed.row) this.duplicateRow(ed.row);
                     else for (const item of ed.doc.items().filter(i => ed.picked.has(i.id))) this.duplicateItem(item);
                     break;
+                case 'rename': this.renameSelection(); break;
                 case 'selectAll': {
                     const f = this.activeFrame();
                     const g = f?.graph;
@@ -682,6 +789,11 @@
                 case 'copy':
                 case 'cut': {
                     let text = ed.selection.size ? ed.copySelection() : null;
+                    if (!text && ed.row) {
+                        // A row: a field, a choice, a parameter, which pastes onto a card or a frame that has those
+                        const e = ed.doc.find(ed.row);
+                        if (e) text = G.json.write({ tidegraphClip: 1, nodes: [], rows: [{ role: e.role, value: G.json.clone(e.value) }] });
+                    }
                     if (!text && ed.picked.size) {
                         // Cards and frames: as declarations, which paste on a board
                         const decls = ed.doc.items().filter(i => ed.picked.has(i.id) && !i.member && !i.accessor && !i.region).map(i => G.json.clone(i.value));
@@ -718,6 +830,8 @@
                     break;
                 }
                 case 'find': G.pickers.jumpTo(this, { anchor: this.findButton }); break;
+                case 'myGame': this.togglePanel('mygame'); break;
+                case 'details': this.togglePanel('details'); break;
                 default: break;
             }
         }
@@ -729,6 +843,10 @@
             let clip;
             try { clip = JSON.parse(text); } catch { return; }
             const p = b.lastPointer;
+            if (Array.isArray(clip.rows) && clip.rows.length) {
+                this.pasteRows(clip.rows);
+                return;
+            }
             if (Array.isArray(clip.decls) && clip.decls.length && !(clip.nodes || []).length) {
                 const r = b.el.getBoundingClientRect();
                 const inside = p.x >= r.left && p.x <= r.right && p.y >= r.top && p.y <= r.bottom;
@@ -759,16 +877,78 @@
             let dx = 40, dy = 40;
             const xs = [...(clip.nodes || []), ...(clip.notes || [])];
             const r = f.body.getBoundingClientRect();
+            const x0 = xs.length ? Math.min(...xs.map(n => Number(n.x) || 0)) : 0, y0 = xs.length ? Math.min(...xs.map(n => Number(n.y) || 0)) : 0;
             if (xs.length && p.x >= r.left && p.x <= r.right && p.y >= r.top && p.y <= r.bottom) {
                 const at = f.toLocal(p.x, p.y);
-                dx = at.x - Math.min(...xs.map(n => Number(n.x) || 0));
-                dy = at.y - Math.min(...xs.map(n => Number(n.y) || 0));
+                dx = at.x - x0;
+                dy = at.y - y0;
+            }
+            // Pasted where nothing is: the whole of it moved as one, as near as it's free
+            if (xs.length) {
+                const w = Math.max(...xs.map(n => (Number(n.x) || 0) + 220)) - x0, h = Math.max(...xs.map(n => (Number(n.y) || 0) + 96)) - y0;
+                const spot = f.freeSpot({ x: x0 + dx, y: y0 + dy }, { w, h });
+                dx = spot.x - x0;
+                dy = spot.y - y0;
             }
             const made = ed.paste(text, dx, dy, f.slot);
             // What's selected is what's drawn: not the values shown in inputs that came with it
             f.refresh();
             ed.selectNodes(f.slot, made.filter(id => { const n = ed.doc.get(id); return !n || n.k === undefined || f.drawn(n); }));
             this.checkSoon();
+        }
+
+        // A row deleted, duplicated, pasted: a card's fields and choices, a frame's parameters
+        deleteRow(id) {
+            const ed = this.editor;
+            const e = ed.doc.find(id);
+            if (!e || !Array.isArray(e.list)) return;
+            const name = ed.doc.describe(e);
+            this.edit(() => { const i = e.list.indexOf(e.value); if (i >= 0) e.list.splice(i, 1); });
+            ed.row = 0;
+            ed.emit('selection');
+            toast(`Deleted ${name}`, { action: 'Undo', run: () => this.command('undo') });
+        }
+
+        duplicateRow(id) {
+            const ed = this.editor;
+            const e = ed.doc.find(id);
+            if (!e || !Array.isArray(e.list)) return;
+            let copy;
+            this.edit(d => {
+                copy = d.duplicate(e.value);
+                if (copy.name) copy.name = d.uniqueName(e.list, copy.name);
+                e.list.splice(e.list.indexOf(e.value) + 1, 0, copy);
+            });
+            if (copy) ed.selectRow(ed.itemOf(copy.id), copy.id);
+        }
+
+        pasteRows(rows) {
+            const ed = this.editor;
+            const item = ed.picked.size === 1 ? ed.doc.items().find(i => i.id === [...ed.picked][0]) : null;
+            if (!item) { toast('Rows paste into a card or a frame: select the one they go in'); return; }
+            const v = item.value;
+            const keys = item.spec?.keys || [];
+            const at = ed.row ? ed.doc.find(ed.row) : null;
+            const listOf = role => (role === 'member' && keys.includes('members') && item.spec?.members ? 'members'
+                : role === 'enumMember' && keys.includes('members') && !item.spec?.members ? 'members'
+                : role === 'entry' && keys.includes('entries') ? 'entries'
+                : (role === 'param' || role === 'sampleParam') && keys.includes('params') ? 'params'
+                : role === 'payload' && keys.includes('payload') ? 'payload' : null);
+            const fit = rows.filter(r => listOf(r.role) && (r.role !== 'member' || item.spec?.memberKinds?.includes(r.value.kind)));
+            if (!fit.length) { toast(`${ed.doc.titleOf(item)} can't have what was copied`); return; }
+            let last = null;
+            this.edit(d => {
+                for (const r of fit) {
+                    const key = listOf(r.role);
+                    if (!Array.isArray(v[key])) G.json.set(v, key, [], keys);
+                    const copy = d.duplicate(r.value);
+                    if (copy.name) copy.name = d.uniqueName(v[key], copy.name);
+                    const i = at && at.list === v[key] ? v[key].indexOf(at.value) : -1;
+                    v[key].splice(i < 0 ? v[key].length : i + 1, 0, copy);
+                    last = copy;
+                }
+            });
+            if (last) ed.selectRow(item.id, last.id);
         }
 
         keys() {
@@ -790,6 +970,7 @@
                 else if (mod && key === 'd') this.command('duplicate');
                 else if (mod && key === 'a') this.command('selectAll');
                 else if (mod && key === 'f') this.command('find');
+                else if (!mod && e.key === 'F2') this.command('rename');
                 else if (!mod && (key === 'delete' || key === 'backspace')) this.command('delete');
                 else if (!mod && !e.altKey && key === 'f') this.command('frame');
                 else if (!mod && key === '/') this.command('find');
@@ -797,6 +978,8 @@
                 else if (key === 'escape') {
                     tooltip(0, 0, null);
                     if (this.board.drag) this.board.cancel();
+                    else if (this.open.mygame && innerWidth < 640) this.togglePanel('mygame', false);
+                    else if (this.open.details && innerWidth < 640) this.togglePanel('details', false);
                     else if (this.editor.selection.size || this.editor.picked.size) this.editor.clearSelection();
                     else if (this.board.valueFrame) this.closeValue();
                 }

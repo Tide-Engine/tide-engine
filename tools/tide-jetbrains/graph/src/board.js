@@ -25,7 +25,8 @@
             G.ui.put(this.world, this.regionsLayer, this.itemsLayer, this.valueLayer);
             this.band = el('div.tg-band');
             this.start = el('div.tg-start');
-            G.ui.put(this.el, this.world, this.band, this.start);
+            this.hint = el('div.tg-board-hint', { text: 'Drag: move or select · Right-drag or wheel: look around · Double-click a name: rename · Right-click: what can be done' });
+            G.ui.put(this.el, this.world, this.band, this.start, this.hint);
             this.pan = { x: 40, y: 40 };
             this.zoom = 1;
             this.cards = new Map();   // id -> { el, item, x, y, w, h, drawn }
@@ -313,13 +314,10 @@
                 const v = item.value;
                 r.el.replaceChildren(el('div.tg-region-head', null,
                     el('span.tg-chip.tg-chip-more', { text: item.spec?.title || 'Namespace', title: item.spec?.summary }),
-                    G.ui.field(v.name ?? '', x => this.app.edit(() => { v.name = x; }), { className: 'tg-input.tg-name', placeholder: 'Name', fk: `${v.id}:name`,
+                    G.ui.nameText(v.name ?? '', x => this.app.edit(() => { v.name = x; }), { className: 'tg-name', placeholder: 'Name', fk: `${v.id}:name`,
                         check: x => (/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/.test(x) ? null : 'Names joined by dots, like Game.Combat') }),
                     button('+ Add', e => G.pickers.addMenu(this.app, 0, 0, { anchor: e.currentTarget, namespace: v }), 'Add a declaration to this namespace', 'tg-button'),
-                    button('⋯', e => menu(e.clientX, e.clientY, [
-                        { label: 'Take the block away', summary: 'Its declarations stay, outside it', run: () => this.app.edit(() => { const list = item.list; list.splice(list.indexOf(v), 1, ...(v.decls || [])); }) },
-                        { label: 'Delete it and what is in it', danger: true, run: () => this.app.edit(() => { item.list.splice(item.list.indexOf(v), 1); }) },
-                    ], { anchor: e.currentTarget }), 'More', 'tg-more')));
+                    button('⋯', e => G.menus.contextMenu(this.app, { kind: 'region', item }, e.clientX, e.clientY, { anchor: e.currentTarget }), 'What can be done with it (or right-click it)', 'tg-more')));
             }
             for (const [id, r] of this.regions) if (!seen.has(id)) { r.el.remove(); this.regions.delete(id); }
         }
@@ -342,6 +340,10 @@
                 if (f.mode === 'near') f.showSelection();
             }
             if (this.valueFrame?.mode === 'near') this.valueFrame.showSelection();
+            // A row: of a card, or of a frame's entry
+            for (const x of this.world.querySelectorAll('.tg-row-selected')) if (Number(x.dataset.id) !== ed.row) x.classList.remove('tg-row-selected');
+            if (ed.row) for (const x of this.world.querySelectorAll(`.tg-row[data-id="${ed.row}"], .tg-entry-row[data-id="${ed.row}"]`)) x.classList.add('tg-row-selected');
+            this.app.selectionChanged?.();
         }
 
         // The frame a graph's slot is drawn as, or undefined
@@ -406,6 +408,31 @@
             if (box) this.bringIn(box, m);
         }
 
+        // Brings a new card or frame into view with what was in view before it, zoomed out a little if that's what
+        // it takes (no less than 0.6): what was just made isn't pushed off screen by what's made after it
+        showWith(id) {
+            const c = this.cards.get(id), f = this.frames.get(id);
+            const box = c ? { x0: c.x, y0: c.y, x1: c.x + c.w, y1: c.y + Math.max(c.h, 100) } : f ? { x0: f.x, y0: f.y, x1: f.x + f.size.w, y1: f.y + Math.min(f.size.h + HEAD, 320) } : null;
+            if (!box) return;
+            const r = this.el.getBoundingClientRect();
+            const w = r.width || 800, h = r.height || 600, m = 32;
+            const view = { x0: -this.pan.x / this.zoom, y0: -this.pan.y / this.zoom, x1: (w - this.pan.x) / this.zoom, y1: (h - this.pan.y) / this.zoom };
+            const all = { ...box };
+            for (const [other, x] of [...this.cards, ...this.frames]) {
+                if (other === id) continue;
+                const bw = x.w ?? x.size.w, bh = x.h ?? x.size.h + HEAD;
+                if (x.x < view.x1 && x.x + bw > view.x0 && x.y < view.y1 && x.y + bh > view.y0) {
+                    all.x0 = Math.min(all.x0, x.x); all.y0 = Math.min(all.y0, x.y); all.x1 = Math.max(all.x1, x.x + bw); all.y1 = Math.max(all.y1, x.y + Math.min(bh, 320));
+                }
+            }
+            const zoom = Math.min(1, (w - 2 * m) / (all.x1 - all.x0), (h - 2 * m) / (all.y1 - all.y0));
+            if (zoom < 0.6) { this.ensureVisible(id); return; }
+            if (zoom < this.zoom) this.zoom = zoom;
+            this.bringIn({ x: all.x0, y: all.y0, w: all.x1 - all.x0, h: all.y1 - all.y0 }, m);
+            this.applyTransform();
+            this.scheduleCull();
+        }
+
         // Brings a node of a frame into view when it isn't whole: one just made, or one whose input was just filled
         showNode(frame, id) {
             const v = frame?.mode === 'near' ? frame.views.get(frame.statementOf(id)) || frame.views.get(id) : null;
@@ -435,6 +462,7 @@
         // count on the card or frame they're in, which shows when that isn't drawn
         markProblems() {
             const lang = this.app.lang;
+            const shown = this.hover?.dataset?.problem; // A problem's words under the pointer go with the problem
             for (const x of this.world.querySelectorAll('.tg-has-error, .tg-has-warning')) {
                 x.classList.remove('tg-has-error', 'tg-has-warning');
                 delete x.dataset.problem;
@@ -457,6 +485,10 @@
                 // Each problem with its note, one after the other (see over())
                 const text = (error ? 'E' : 'W') + this.wordsOf(d, hole) + (d.note && !hole ? '\n' + d.note : '');
                 target.dataset.problem = target.dataset.problem ? target.dataset.problem + '\u0001' + text : text;
+            }
+            if (shown !== undefined && this.hover?.dataset?.problem !== shown) {
+                tooltip(0, 0, null);
+                this.hover = null;
             }
             for (const badge of this.world.querySelectorAll('[data-badge]')) {
                 const c = counts.get(Number(badge.dataset.badge));
@@ -519,16 +551,21 @@
         applyFocus() {
             const want = this.pendingFocus || (G.ui.focusAfter ? { fk: G.ui.focusAfter } : null);
             if (!want) return;
-            const target = document.querySelector(`[data-fk="${want.fk}"]`);
+            const target = document.querySelector(`.tg-world [data-fk="${want.fk}"]`) || document.querySelector(`[data-fk="${want.fk}"]`);
             if (!target) return;
             this.pendingFocus = null;
             G.ui.focusAfter = null;
+            // A name that reads as text: its renaming starts (a new thing's name, typed over)
+            if (target.rename) {
+                target.rename(want.select);
+                return;
+            }
             if (document.activeElement !== target) target.focus({ preventScroll: true });
             if (want.select && target.select) target.select();
             // A focus that was on its way to what was drawn before lands on nothing: back to where it was meant
             requestAnimationFrame(() => {
-                const again = document.querySelector(`[data-fk="${want.fk}"]`);
-                if (again && (!document.activeElement || document.activeElement === document.body)) again.focus({ preventScroll: true });
+                const again = document.querySelector(`.tg-world [data-fk="${want.fk}"]`) || document.querySelector(`[data-fk="${want.fk}"]`);
+                if (again && !again.rename && (!document.activeElement || document.activeElement === document.body)) again.focus({ preventScroll: true });
             });
         }
 
@@ -639,17 +676,26 @@
 
         // A free place for a new card or frame: where the pointer asked, else in the middle of what's seen when
         // nothing is there, else under the last of its kind
-        freePlace(isFrame, at) {
-            if (at) return { x: Math.round(at.x), y: Math.round(at.y) };
+        freePlace(isFrame, at, size = null) {
             const r = this.el.getBoundingClientRect();
-            const w = isFrame ? 620 : CARD_W, h = isFrame ? 220 : 130;
-            const c = this.toWorld(r.left + r.width / 2, r.top + r.height / 2);
-            const want = { x: Math.round(c.x - w / 2), y: Math.round(c.y - h / 2 - 40) };
+            const w = size?.w ?? (isFrame ? 620 : CARD_W), h = size?.h ?? (isFrame ? 220 : 130);
             const hits = (x, y) => {
                 for (const card of this.cards.values()) if (x < card.x + card.w + 20 && x + w > card.x - 20 && y < card.y + card.h + 20 && y + h > card.y - 20) return true;
                 for (const f of this.frames.values()) if (x < f.x + f.size.w + 20 && x + w > f.x - 20 && y < f.y + f.size.h + HEAD + 20 && y + h > f.y - 20) return true;
                 return false;
             };
+            if (at) {
+                // Where the pointer asked, or the nearest free place to it: nothing goes on top of anything
+                const x0 = Math.round(at.x), y0 = Math.round(at.y);
+                if (!hits(x0, y0)) return { x: x0, y: y0 };
+                for (let ring = 1; ring < 120; ring++) {
+                    const d = ring * 40;
+                    for (const [dx, dy] of [[0, d], [d, 0], [d, d], [0, -d], [-d, 0], [-d, d], [d, -d], [-d, -d]]) if (!hits(x0 + dx, y0 + dy)) return { x: x0 + dx, y: y0 + dy };
+                }
+                return { x: x0, y: y0 };
+            }
+            const c = this.toWorld(r.left + r.width / 2, r.top + r.height / 2);
+            const want = { x: Math.round(c.x - w / 2), y: Math.round(c.y - h / 2 - 40) };
             if (!hits(want.x, want.y)) return want;
             let x = Infinity, bottom = -Infinity;
             for (const card of this.cards.values()) if (!isFrame) { x = Math.min(x, card.x); bottom = Math.max(bottom, card.y + card.h); }
@@ -721,7 +767,10 @@
         }
 
         // ---------------------------------------------------------------------------------------------------------
-        // The pointer
+        // The pointer (notes/visual-scripting.md, Round three): everything moves by dragging any part of it that
+        // isn't a control; a drag on the empty board or an empty part of a frame draws a selection box; the board
+        // moves with the right or middle button, Space and a drag, the wheel, or one finger; a wire is dragged from
+        // a pin.
 
         listen() {
             const c = this.el;
@@ -735,8 +784,12 @@
                 this.context(e);
             });
             c.addEventListener('dblclick', e => {
-                if (e.target.closest('.tg-node, .tg-note, .tg-card, .tg-frame-head, .tg-region-head, .tg-start, input, textarea, select, button')) return;
-                this.openAdd(e.clientX, e.clientY, e.target);
+                // (A press captures the pointer, so the double click's target is the board: what's under it is asked)
+                const under = document.elementFromPoint(e.clientX, e.clientY) || e.target;
+                const named = under?.closest?.('[data-rename]');
+                if (named?.rename) { named.rename(true); return; }
+                if (under?.closest?.('.tg-node, .tg-note, .tg-card, .tg-frame-head, .tg-entry, .tg-region-head, .tg-start, input, textarea, select, button')) return;
+                this.openAdd(e.clientX, e.clientY, under);
             });
             c.addEventListener('wheel', e => this.wheel(e), { passive: false });
             c.addEventListener('pointerover', e => this.over(e));
@@ -757,6 +810,18 @@
             const region = target?.closest?.('.tg-region');
             const namespace = region ? this.regions.get(Number(region.dataset.id))?.item.value : null;
             G.pickers.addMenu(this.app, clientX, clientY, { at: this.toWorld(clientX, clientY), namespace });
+        }
+
+        // The node search of a frame from its menu: at a free place right of its entry, brought into view
+        openAddIn(f) {
+            if (f.mode !== 'near') this.reveal(f.item.id);
+            const frame = this.frames.get(f.item?.id) || f;
+            if (frame.mode !== 'near') return;
+            const spot = frame.freeSpot({ x: 0, y: 0 });
+            const r = frame.body.getBoundingClientRect();
+            const z = this.zoom;
+            const x = r.left + (frame.nodeX + spot.x - frame.origin.x + 20) * z, y = r.top + (G.frames.PAD + spot.y - frame.origin.y + 20) * z;
+            G.pickers.nodeSearch(this.app, frame, Math.min(x, innerWidth - 40), Math.min(y, innerHeight - 40), null);
         }
 
         portAt(frame, target) {
@@ -780,20 +845,33 @@
             this.el.focus({ preventScroll: true });
             const start = { x: e.clientX, y: e.clientY };
             this.panned = false;
+            // A second press on a name, soon and in the same place: it's renamed (the press is captured, so the
+            // browser's own double click isn't there to say so)
+            const last = this.lastPress;
+            this.lastPress = { time: e.timeStamp, x: e.clientX, y: e.clientY, button: e.button };
+            const named = e.button === 0 ? e.target.closest('[data-rename]') : null;
+            if (named?.rename && last && last.button === 0 && e.timeStamp - last.time < 500 && Math.abs(last.x - e.clientX) + Math.abs(last.y - e.clientY) < 8) {
+                this.lastPress = null;
+                e.preventDefault();
+                named.rename(true);
+                return;
+            }
             if (e.button === 1 || e.button === 2 || (e.button === 0 && this.app.spaceDown)) {
                 this.drag = { kind: 'pan', start, pan: { ...this.pan }, button: e.button };
                 capture(this.el, e);
                 return;
             }
             if (e.button !== 0) return;
+            const ed = this.editor;
             const frame = this.frameAt(e.target);
             if (frame && frame.mode === 'near') {
-                // A wire starts at an output or an arrow, or is taken off an input that has one: an input with a value
-                // shown in it, or nothing yet, is part of its node (it's pressed to move the node, and clicked to pick)
+                // A pin: a wire starts there (from an input too, to drag it back to a value). An input's row that
+                // isn't its pin is part of its node: pressed, it moves the node.
                 let port = this.portAt(frame, e.target);
-                if (port && port.input && !port.exec && !frame.hasNodeWire(port)) port = null;
+                const onPin = !!e.target.closest('.tg-dot');
+                if (port && port.input && !port.exec && !onPin && !frame.hasNodeWire(port)) port = null;
                 if (port) {
-                    if (e.altKey && port.input && frame.wireOf(port)) { frame.unwireNow(port); return; }
+                    if (e.altKey) { frame.breakLinks(port); return; }
                     this.beginWire(frame, port, e);
                     capture(this.el, e);
                     return;
@@ -816,8 +894,15 @@
                 if (nodeEl) {
                     const id = Number(nodeEl.dataset.id);
                     if (id < 0) {
-                        // The entry and the result stay where they are: a press on them is a press on the frame
-                        if (!frame.isValue) { this.pickItem(frame.item.id, e); this.beginMoveItems(start); capture(this.el, e); }
+                        // The entry and the result stay where they are: a press on them is a press on the frame (a
+                        // row of the entry is selected with it)
+                        if (!frame.isValue) {
+                            const row = e.target.closest('.tg-entry-row[data-id]');
+                            if (row && !(e.shiftKey || e.ctrlKey || e.metaKey)) ed.selectRow(frame.item.id, Number(row.dataset.id));
+                            else this.pickItem(frame.item.id, e);
+                            this.beginMoveItems(start);
+                            capture(this.el, e);
+                        }
                         return;
                     }
                     this.pickNode(frame, id, e);
@@ -830,7 +915,10 @@
             const cardEl = e.target.closest('.tg-card');
             if ((frame && !frame.isValue && (handle || frame.mode === 'far')) || cardEl) {
                 const id = cardEl ? Number(cardEl.dataset.id) : frame.item.id;
-                this.pickItem(id, e);
+                const row = cardEl ? e.target.closest('.tg-row[data-id]') : null;
+                const rowId = row ? Number(row.dataset.id) : 0;
+                if (rowId && rowId !== id && !(e.shiftKey || e.ctrlKey || e.metaKey)) ed.selectRow(id, rowId);
+                else this.pickItem(id, e);
                 this.beginMoveItems(start);
                 capture(this.el, e);
                 return;
@@ -840,14 +928,16 @@
                 capture(this.el, e);
                 return;
             }
-            if (e.shiftKey) {
-                // A box to select with: a frame's nodes inside it, the board's cards and frames outside
-                this.drag = { kind: 'band', start, frame: frame && frame.mode === 'near' ? frame : null, before: new Set(frame ? this.editor.selection : this.editor.picked) };
+            // One finger on nothing moves the board
+            if (e.pointerType === 'touch') {
+                this.drag = { kind: 'pan', start, pan: { ...this.pan }, button: 0, frame };
                 capture(this.el, e);
                 return;
             }
-            // Nothing: the board moves with the pointer
-            this.drag = { kind: 'pan', start, pan: { ...this.pan }, button: 0, frame };
+            // Nothing: a box to select with, a frame's nodes inside one, the board's cards and frames outside
+            const inFrame = frame && frame.mode === 'near' ? frame : null;
+            const add = e.shiftKey || e.ctrlKey || e.metaKey;
+            this.drag = { kind: 'band', start, frame: inFrame, add, before: new Set(add ? (inFrame ? (G.slotKey(ed.slot) === inFrame.key ? ed.selection : []) : ed.picked) : []) };
             capture(this.el, e);
         }
 
@@ -865,9 +955,9 @@
         pickItem(id, e) {
             const ed = this.editor;
             if (e.shiftKey || e.ctrlKey || e.metaKey) {
-                if (ed.picked.has(id)) { ed.picked.delete(id); ed.emit('selection'); }
-                else ed.pick([id], { add: true });
-            } else if (!ed.picked.has(id)) {
+                if (ed.picked.has(id)) { ed.picked.delete(id); ed.row = 0; ed.emit('selection'); }
+                else ed.pick([...ed.picked, id]);
+            } else if (!ed.picked.has(id) || ed.row) {
                 ed.pick([id]);
             }
         }
@@ -895,10 +985,10 @@
         }
 
         // Starts a wire from a port. A wired input (or a statement's exec in) gives up its wire to be dragged on
-        // from where it comes; an output starts a new one.
+        // from where it comes; an output, or an input with nothing or a value in it, starts a new one. The pins it
+        // can go to light, and the others dim.
         beginWire(frame, port, e) {
             const g = frame.graph;
-            const s = this.schema;
             let from = port, fromKey = portKey(port), taken = false;
             if (port.input && g) {
                 let source = null, key = null;
@@ -908,12 +998,10 @@
                         if (src) source = { node: src.node, input: false, exec: true, path: src.path, label: '' };
                         else if (g.entry === port.node) source = { node: ENTRY, input: false, exec: true, path: null };
                     }
-                } else {
+                } else if (frame.hasNodeWire(port)) {
                     const w = frame.wireOf(port);
-                    if (w) {
-                        source = { node: w, input: false, exec: false, path: null };
-                        key = frame.sourceKey(w);
-                    }
+                    source = { node: w, input: false, exec: false, path: null };
+                    key = frame.sourceKey(w);
                 }
                 if (source) {
                     // Take it off; dropping it again on a port wires it there
@@ -926,6 +1014,28 @@
             const a = frame.at(fromKey) || frame.at(portKey(port)) || { x: 0, y: 0 };
             this.drag = { kind: 'wire', frame, from, exec: from.exec, a, to: a, start: { x: e.clientX, y: e.clientY }, taken };
             frame.el.classList.add('tg-wiring');
+            // Where it can go: lit; where it can't: dimmed
+            for (const p of frame.ports.values()) {
+                const ok = frame.canJoin(from, p.port) && frame.fitsPort(from, p.port);
+                p.row.classList.toggle('tg-can', ok);
+                p.row.classList.toggle('tg-cannot', !ok && portKey(p.port) !== fromKey);
+            }
+        }
+
+        // A node a wire is over and not one of its pins: its first empty input the wire can go into, which it fills
+        // when dropped there
+        dropInput(frame, from, over) {
+            if (!from || from.exec || from.input) return null;
+            const nodeEl = over?.closest?.('.tg-node');
+            if (!nodeEl || !frame.el.contains(nodeEl)) return null;
+            const id = Number(nodeEl.dataset.id);
+            const view = frame.views.get(id);
+            if (!view) return null;
+            for (const p of frame.ports.values()) {
+                if (p.view !== view || !p.port.input || p.port.exec || frame.wireOf(p.port)) continue;
+                if (frame.canJoin(from, p.port) && frame.fitsPort(from, p.port)) return p.port;
+            }
+            return null;
         }
 
         move(e) {
@@ -980,6 +1090,7 @@
                     target.el.style.left = target.x + 'px';
                     target.el.style.top = target.y + 'px';
                 }
+                this.renderRegions();
             } else if (d.kind === 'move-value') {
                 d.frame.x = Math.round(d.x + dx / z);
                 d.frame.y = Math.round(d.y + dy / z);
@@ -996,14 +1107,16 @@
                 const r = f.body.getBoundingClientRect();
                 d.to = { x: (e.clientX - r.left) / z, y: (e.clientY - r.top) / z };
                 const over = document.elementFromPoint(e.clientX, e.clientY) || e.target;
-                const port = this.portAt(f, over);
+                const port = this.portAt(f, over) || this.dropInput(f, d.from, over);
                 for (const row of this.el.querySelectorAll('.tg-port.tg-target')) row.classList.remove('tg-target');
-                if (port && f.canJoin(d.from, port)) f.ports.get(portKey(port))?.row?.classList.add('tg-target');
+                if (port && f.canJoin(d.from, port) && f.fitsPort(d.from, port)) f.ports.get(portKey(port))?.row?.classList.add('tg-target');
                 // Outside its frame a wire has nowhere to go
                 const outside = !f.el.contains(over);
                 f.el.classList.toggle('tg-wire-out', outside);
                 f.drawWires();
             } else if (d.kind === 'band') {
+                if (!d.moved && Math.abs(dx) + Math.abs(dy) < 4) return;
+                d.moved = true;
                 const r = this.el.getBoundingClientRect();
                 const x0 = Math.min(d.start.x, e.clientX), y0 = Math.min(d.start.y, e.clientY);
                 const x1 = Math.max(d.start.x, e.clientX), y1 = Math.max(d.start.y, e.clientY);
@@ -1011,16 +1124,18 @@
                 const inside = b => b.right >= x0 && b.left <= x1 && b.bottom >= y0 && b.top <= y1;
                 const ed = this.editor;
                 if (d.frame) {
-                    const sel = new Set(G.slotKey(ed.slot) === d.frame.key ? d.before : []);
+                    const sel = new Set(d.before);
                     for (const [id, v] of d.frame.views) if (id > 0 && inside(v.el.getBoundingClientRect())) sel.add(id);
                     ed.slot = d.frame.slot;
                     ed.picked.clear();
+                    ed.row = 0;
                     ed.selection = sel;
                 } else {
                     const sel = new Set(d.before);
                     for (const [id, c] of this.cards) if (inside(c.el.getBoundingClientRect())) sel.add(id);
                     for (const [id, f] of this.frames) if (inside(f.el.getBoundingClientRect())) sel.add(id);
                     ed.selection.clear();
+                    ed.row = 0;
                     ed.picked = sel;
                 }
                 this.showSelection();
@@ -1036,22 +1151,19 @@
             this.el.classList.remove('tg-panning');
             const ed = this.editor;
             if (d.kind === 'pinch') return;
-            if (d.kind === 'pan') {
+            if (d.kind === 'pan' || d.kind === 'band') {
+                this.band.style.display = 'none';
                 if (d.moved) {
                     // A right drag is a pan, not a menu
-                    this.panned = d.button === 2;
+                    if (d.kind === 'pan') this.panned = d.button === 2;
+                    else ed.emit('selection');
                     return;
                 }
-                if (d.button === 0) {
-                    // A click on nothing: nothing is selected, and a value's graph closes
+                if (d.button === 0 || d.kind === 'band') {
+                    // A click on nothing: nothing is selected (unless it was to add to it), and a value's graph closes
                     if (this.valueFrame && !this.valueFrame.el.contains(e.target)) this.app.closeValue();
-                    ed.clearSelection();
+                    if (!d.add) ed.clearSelection();
                 }
-                return;
-            }
-            if (d.kind === 'band') {
-                this.band.style.display = 'none';
-                ed.emit('selection');
                 return;
             }
             if (d.kind === 'move') {
@@ -1092,26 +1204,32 @@
             if (d.kind === 'wire') {
                 const f = d.frame;
                 f.el.classList.remove('tg-wiring', 'tg-wire-out');
-                for (const row of this.el.querySelectorAll('.tg-port.tg-target')) row.classList.remove('tg-target');
+                for (const row of this.el.querySelectorAll('.tg-port.tg-target, .tg-port.tg-can, .tg-port.tg-cannot')) row.classList.remove('tg-target', 'tg-can', 'tg-cannot');
                 const pending = this.pendingUnwire;
                 this.pendingUnwire = null;
                 const over = document.elementFromPoint(e.clientX, e.clientY) || e.target;
-                const port = this.portAt(f, over);
+                const port = this.portAt(f, over) || this.dropInput(f, d.from, over);
                 const moved = Math.abs(e.clientX - d.start.x) + Math.abs(e.clientY - d.start.y) > 4;
                 const inFrame = f.el.contains(over);
                 if (port && f.canJoin(d.from, port)) {
                     let why = null;
-                    this.app.edit(doc => {
-                        if (pending) {
-                            // Dropped back where it was: nothing changes
-                            if (portKey(pending.port) === portKey(port)) return;
-                            f.unwire(doc, pending.port);
-                        }
-                        why = f.join(doc, d.from, port);
-                        doc.reindex();
-                        if (pending?.old && !why) doc.dropValue(f.graph, pending.old);
-                    });
-                    if (why) toast(`That wire can't be: ${why}.`);
+                    if (!f.fitsPort(d.from, port)) {
+                        const inp = port.input ? port : d.from;
+                        why = f.isPlace(inp) ? f.changeable(f.startOf(port.input ? d.from : port)).why : `${port.label || 'it'} takes ${f.expectedType(inp) || 'something else'}`;
+                    }
+                    if (!why) {
+                        this.app.edit(doc => {
+                            if (pending) {
+                                // Dropped back where it was: nothing changes
+                                if (portKey(pending.port) === portKey(port)) return;
+                                f.unwire(doc, pending.port);
+                            }
+                            why = f.join(doc, d.from, port);
+                            doc.reindex();
+                            if (pending?.old && !why) doc.dropValue(f.graph, pending.old);
+                        });
+                    }
+                    if (why) { toast(`That wire can't be: ${why}.`); f.drawWires(); }
                     return;
                 }
                 if (d.taken) {
@@ -1121,18 +1239,16 @@
                     return;
                 }
                 f.drawWires();
-                if (!moved) {
-                    // A click on a pin: what to do with it
-                    G.pickers.nodeSearch(this.app, f, e.clientX, e.clientY, { from: d.from });
-                    return;
-                }
-                if (!inFrame) {
+                if (moved && !inFrame) {
                     const other = this.frameAt(over);
                     toast(other ? "A wire can't leave its frame. To use a value in other code, keep it in a component or send it with an event."
-                        : "A wire stays inside its frame: drop it on a pin, or inside the frame to add what it goes to.");
+                        : 'A wire stays inside its frame: drop it on a pin, or inside the frame to add what it goes to.');
                     return;
                 }
-                G.pickers.nodeSearch(this.app, f, e.clientX, e.clientY, { from: d.from });
+                // A click on a pin, or a wire dropped on empty space: what can go there, as Blueprint's actions for
+                // a pin. An input's is the value picker (what fits it); an output's the node search.
+                if (d.from.input && !d.from.exec) f.pickValue(d.from, null, { x: e.clientX, y: e.clientY });
+                else G.pickers.nodeSearch(this.app, f, e.clientX, e.clientY, { from: d.from });
             }
         }
 
@@ -1150,6 +1266,7 @@
                 this.render();
             } else if (d.kind === 'wire') {
                 d.frame.el.classList.remove('tg-wiring', 'tg-wire-out');
+                for (const row of this.el.querySelectorAll('.tg-port.tg-target, .tg-port.tg-can, .tg-port.tg-cannot')) row.classList.remove('tg-target', 'tg-can', 'tg-cannot');
                 d.frame.drawWires();
             }
         }
@@ -1166,45 +1283,14 @@
             this.scheduleCull();
         }
 
-        // A right click (or a long press): what can be done there
+        // A right click (or a long press): the one menu of what's there, or the add search on nothing
         context(e) {
             if (!this.editor || this.editor.error) return;
-            const target = e.target;
-            if (target.closest('.tg-start')) return;
-            const frame = this.frameAt(target);
-            const x = e.clientX, y = e.clientY;
-            if (frame && frame.mode === 'near') {
-                const port = this.portAt(frame, target);
-                if (port && frame.portMenu(port, x, y)) return;
-                const nodeEl = target.closest('.tg-node');
-                const id = nodeEl ? Number(nodeEl.dataset.id) : 0;
-                if (id > 0) {
-                    frame.nodeMenu(frame.views.get(id).node, x, y);
-                    return;
-                }
-                const noteEl = target.closest('.tg-note');
-                if (noteEl) {
-                    const nid = Number(noteEl.dataset.note);
-                    this.editor.selectNodes(frame.slot, [nid]);
-                    menu(x, y, [{ label: 'Delete the note', danger: true, run: () => this.app.command('delete') }]);
-                    return;
-                }
-                if (!frame.isValue && target.closest('.tg-frame-head')) {
-                    G.cards.moreMenu(this.app, frame.item, x, y);
-                    return;
-                }
-                if (id === ENTRY || id === RESULT) return;
-            } else if (frame && !frame.isValue) {
-                G.cards.moreMenu(this.app, frame.item, x, y);
-                return;
-            }
-            const cardEl = target.closest('.tg-card');
-            if (cardEl) {
-                const c = this.cards.get(Number(cardEl.dataset.id));
-                if (c) G.cards.moreMenu(this.app, c.item, x, y);
-                return;
-            }
-            this.openAdd(x, y, target);
+            const target = e.target.closest?.('.tg-board') === this.el && e.target === this.el ? document.elementFromPoint(e.clientX, e.clientY) || e.target : e.target;
+            if (target.closest?.('.tg-start')) return;
+            const t = G.menus.targetAt(this.app, target);
+            if (t) { G.menus.contextMenu(this.app, t, e.clientX, e.clientY); return; }
+            this.openAdd(e.clientX, e.clientY, target);
         }
 
         // What the pointer is over says what it is: a problem's words, a node's type and what tidels says of it

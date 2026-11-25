@@ -33,15 +33,24 @@ Without `--replace` the game has both files, which declare the same things twice
 
 An empty board asks **What do you want to make?** and offers the usual first things, each with what it is for: a component, an event, a function, a system, an event handler. **More…** has the rest.
 
-Later, **+ Add**, or a right click anywhere on the board, opens the same choices as a menu with a search box: **Data** (what the game keeps), **Behaviour** (what the game does) and **More**. Type a few letters and press Enter to take the first match. What you add appears where you asked, with its name selected, ready to type over.
+Later, **+ Add**, or a right click on an empty part of the board, opens the same choices as a menu with a search box: **Data** (what the game keeps), **Behaviour** (what the game does) and **More**. Type a few letters and press Enter to take the first match. What you add appears where you asked, or as near it as there's room (nothing is put on top of anything), with its name being typed.
+
+The board has two panels, as Unreal's Blueprint editor does. **My game**, on the left, lists the file's declarations by group, with a **+** on each group to add one. **Details**, on the right, shows what's selected: its name, type and starting value, its options as ticks with what each does written under it, **Advanced** (closed) for the rest, and its note. With nothing selected it has the file's own: its namespace and the namespaces it uses. Each panel closes with its **×** and opens from the toolbar, and stays as you left it. On a phone they open as sheets over the board.
+
+## Moving, renaming and the menu
+
+- **Drag anything to move it**: a card, a frame or a node, by its title, its name, its kind or the room between its rows; only its controls (a type, a value, a button) don't move it. A frame's nodes stay in it, and it grows to hold them. A move is undone like any change.
+- **Drag on an empty part of the board** to select with a box (inside a frame, its nodes); Shift or Ctrl adds to what's selected. What's selected moves, copies and deletes together.
+- **Double-click a name to rename it**, or press F2: a card's, a frame's, a field's, a parameter's, a local's. Renaming a declaration renames what the file says of it by that name (a field's type, a system's need, a call); renaming a parameter renames its reads.
+- **A right click on anything, and its "…", open the same menu**, in the same order everywhere: what can be added to it (**Add a field**, **Add a node…**), **Rename**, then **Cut**, **Copy**, **Paste**, **Duplicate** and **Delete** with their keys, and **Note…**. Options and attributes are in Details, not menus.
 
 ## Cards: the game's data
 
 A component, a singleton, a struct, an event, an enum, an input, a scene, a constant, an asset and the game's settings are cards. A card is edited where it's drawn:
 
-- **Its name**, at the top. Press Enter to go on to its first field.
-- **A row for each field**: its name, its type, the value it starts with. Enter in a row goes to the next one, and makes it after the last; **+ field** does the same. An enum's rows are its choices, the settings' rows the settings.
-- **Its "…" menu** has what else its kind can have, and nothing more: a method or a property on a component, an operator on a struct only, `Sample` on an input only. It also has its options in words (**Dev builds only**, **This machine only**), **Generic over…** where a kind can be generic, attributes, a note, **Duplicate** and **Delete**.
+- **Its name**, at the top. A new card's name is typed as it's made: press Enter to go on to its first field.
+- **A row for each field**: its name, its type, the value it starts with. Enter in a row's name goes to the next one, and makes it after the last; the **+** on the card's title does the same. An enum's rows are its choices, the settings' rows the settings.
+- **Its menu** adds what else its kind can have, and nothing more: a method or a property on a component, an operator on a struct only, `Sample` on an input only. Its options (**Dev builds only**, **This machine only**), **Generic over** where a kind can be generic, its attributes and its place in the file are in Details.
 
 A member with code of its own, a method or an input's `Sample`, is a frame on the board named for its type (`Ball.Bounce`); its row on the card goes to it.
 
@@ -51,15 +60,15 @@ A type is never typed free. Click a type (or type a letter on it) to open the ty
 
 ### Values
 
-A value is edited by its type's own control: a number, a tick box, text, a vector's numbers, a colour, an enum's choices (the enum can be declared in any of the game's files). An empty control shows the type's default, greyed. To work a value out instead (`GRAVITY * 2`), press the small **ƒ** on its row: the value opens as a small graph beside its card, whose last node is where its value is wired in. **Done** closes it.
+A value is edited by its type's own control: a number, a tick box, text, a vector's numbers, a colour, an enum's choices (the enum can be declared in any of the game's files). An empty control shows the type's default, greyed. To work a value out instead (`GRAVITY * 2`), press the small **ƒ** on its row, or **Work it out…** in Details: the value opens as a small graph beside its card, whose last node is where its value is wired in. **Done** closes it.
 
 ## Frames: what the game does
 
-A system, a view, an event handler, a command, a function and a type's method are frames: a titled box that holds the code's nodes and the wires between them. Drag its title to move it with everything in it; it grows around its nodes.
+A system, a view, an event handler, a command, a function and a type's method are frames: a titled box that holds the code's nodes and the wires between them. Drag its title to move it with everything in it; it grows around its nodes. Its menu adds a node, a note box or what it needs; Details tidies its nodes.
 
 A frame's first node is its **entry**. It says when the code runs, in the kind's own words (**Every tick, for each entity with** for a system, **When this happens** for an event handler, **Takes** for a function), and has a row for each thing the code takes:
 
-- **+ needs…** adds one by picking what: a component of the game, a singleton, a filter (**only with**, **without**).
+- **+ needs…** adds one by picking what: a component of the game, a singleton, a filter (**only with**, **without**). A component or a singleton dragged out of My game onto the frame does the same.
 - How it's taken is a word on its row: **reads** or **changes**. Click it to change it.
 - An event handler's first row picks its event; a command's rows are the values a player sends with it; a function's last row is its result's type.
 - Each row has a **pin** on its right, and the entry has an **arrow** at its top right.
@@ -73,7 +82,7 @@ The code is nodes. A node says what it does (**Set**, **If**, `ball.Bounce`, **M
 - **Click an input**, or the **pick…** of an empty one, to choose what goes in it. The list has a search box and offers what fits there: a value to type, what this code has, the game's constants and functions, and **Work it out…**. Enter takes the first match. What doesn't fit is left out; **Show what doesn't fit too**, at the end, lists it.
 - **What the code has opens to its fields**: click its arrow, press the right arrow key, or type a dot after its name (`wobble.`). In a name already picked, click one of its parts (`phase` in `wobble.phase`) to change it from there.
 - **What's worked out is a node, wired in.** **Work it out…** has the operators (**Multiply**, **Less than**) and the calls. The new node goes beside the one that reads it, with a wire from its value, and what was in the input becomes its first input. Its own inputs are picked the same way. A value that two inputs read is a node too.
-- **Drag from a pin**, on the entry or on a local, onto an input to put it there, or let go inside the frame to pick what to do with it. With the pointer over a name, the row it comes from lights up, and its other reads. Renaming a parameter renames every read.
+- **Pins are always there**: every input has one on its left, hollow while it's empty and filled once something is in it, and every value has one on its right. **Drag from a pin** to connect it: while you drag, the pins it can go to light up and the rest dim. Dropped on an input (or on a node, for its first empty input that fits), it fills it; dropped on empty space, it opens what can go there, as Blueprint's actions do (an input's list of what fits it, or for a value the nodes that use it, with **Show everything**). **Alt+click** a pin to break its links, or right-click it for **Pick a value…**, **Work it out…** and **Break links**. With the pointer over a name, the row it comes from lights up, and its other reads.
 - **A local** is a node that names a value. Inputs after it are offered it by its name.
 - **Right-click, or press Space, inside a frame** to add any node. Type to search; Enter adds the first.
 - **A call in the flow of statements is one node**, with arrows through it, titled with what it's called on (`ball.Bounce`, `Math.Clamp`). Its arguments are named as the function names them.
@@ -81,13 +90,15 @@ The code is nodes. A node says what it does (**Set**, **If**, `ball.Bounce`, **M
 
 A system that adds to a field each tick is one node. Drag from the entry's arrow and pick **Set**. Click **what** and choose `wobble`, then `phase`. Click the `=` under it and choose **goes up by**, which is `+=`. Click the value beside it and choose `wobble`, then `frequency`. The node reads: Set `wobble.phase` `+=` `wobble.frequency`.
 
+**Set** only offers what it can do. Its **what** lists what this code can change: a need taken as **changes**, a local marked **Can be changed**, and their fields; what the code only reads is listed greyed, with how to change it. Its `=` lists only the ways Tide takes for what it changes and the value it's changed by: a `float3` changed by a `float` can go up, down, be multiplied or divided, but not become it, and a component (`transform` itself) can only become another. **Work it out…** offers only the operators that go with what's in the input.
+
 A wire stays inside its frame: code in one frame reaches another's through the game's data (a component, an event) or by calling it. Dropped outside, the wire says so.
 
 Nodes that nothing runs, and values nothing reads, are left out of the game; the editor shows them faded.
 
-Where a frame is on the board says nothing of when its code runs. Systems run in the file's order, which **Contents** shows, unless a stage says otherwise; **Move earlier in the file** and **Move later in the file**, in a frame's or a card's "…" menu, change it.
+Where a frame is on the board says nothing of when its code runs. Systems run in the file's order, which **My game** shows, unless a stage says otherwise; **Earlier** and **Later**, under a frame's or a card's **Advanced** in Details, change it.
 
-What's rare on a node is in its "…" menu, with **Copy**, **Duplicate** and **Delete**. The small **+** at the end of a call's last argument adds the next one its function takes; there is none once each has its value. A right click on an input can remove it, or name an argument.
+What's rare on a node (its options, a generic call's types) is in Details. The small **+** at the end of a call's last argument adds the next one its function takes; there is none once each has its value. A right click on an argument's pin can delete it, or name it. A function dragged out of My game into a frame is a call there; a constant dropped on an input fills it.
 
 ### Text in a graph
 
@@ -103,10 +114,10 @@ Without Tide's language server (`tidels`, which comes with `tide`), the chip say
 
 ## Finding your way
 
-- Drag the board to move it; the wheel scrolls, and Ctrl with the wheel (or a pinch) zooms. **Fit** shows the whole file. Far away, frames are blocks under their names.
-- **Contents** lists what the file has, by group. **Find…** (Ctrl+F) jumps to a declaration by its name.
-- The Tide a file stands for isn't on screen. **View as Tide**, in the board's "…" menu, opens it. The same menu has the file's namespace, the namespaces it uses, and **Tidy up the board**: data in a column, code beside it. A frame's own menu tidies its nodes.
-- Shift and drag selects with a box. Delete removes what's selected, Ctrl+D duplicates it, and Ctrl+C and Ctrl+V copy and paste nodes into a frame, between files and between editors.
+- Drag with the right or middle button (or hold Space and drag, or use one finger) to look around; the wheel scrolls, and Ctrl with the wheel (or a pinch) zooms. **Fit** shows the whole file. Far away, frames are blocks under their names.
+- **My game** lists what the file has, by group: click one to go to it. **Find…** (Ctrl+F) jumps to a declaration by its name.
+- The Tide a file stands for isn't on screen. **View as Tide**, in the board's "…" menu or the file's Details, opens it. The same menu has the file's namespace, the namespaces it uses, and **Tidy up the board**: data in a column, code beside it.
+- Delete removes what's selected, Ctrl+D duplicates it, and Ctrl+C and Ctrl+V copy and paste nodes into a frame, fields into a card, between files and between editors.
 - Undo and redo (Ctrl+Z, Ctrl+Y) go through what was done, step by step.
 
 ## In Unity

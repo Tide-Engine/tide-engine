@@ -7,7 +7,8 @@ import org.eclipse.lsp4j.services.LanguageServer;
 import java.util.concurrent.CompletableFuture;
 
 // tidels's own requests, which the graph editor asks (notes/visual-scripting.md): the graph schema and layout, and of
-// an open graph its Tide, types, completion, hover, signature help and a node's members. LSP4IJ makes its proxy of
+// an open graph its Tide, types, completion, hover, signature help, a node's members, its calls' parameters, the
+// game's own names and the operators a type takes. LSP4IJ makes its proxy of
 // tidels with this interface (TidelsFactory.getServerInterface).
 public interface TidelsServer extends LanguageServer {
     @JsonRequest("tide/graphSchema")
@@ -34,6 +35,15 @@ public interface TidelsServer extends LanguageServer {
     @JsonRequest("tide/graphMembers")
     CompletableFuture<JsonElement> graphMembers(JsonElement params);
 
+    @JsonRequest("tide/graphCalls")
+    CompletableFuture<JsonElement> graphCalls(JsonElement params);
+
+    @JsonRequest("tide/graphNames")
+    CompletableFuture<JsonElement> graphNames(JsonElement params);
+
+    @JsonRequest("tide/graphOperators")
+    CompletableFuture<JsonElement> graphOperators(JsonElement params);
+
     // One of them by its name, or null for a name that isn't one
     static CompletableFuture<JsonElement> request(TidelsServer server, String method, JsonElement params) {
         return switch (method) {
@@ -45,6 +55,9 @@ public interface TidelsServer extends LanguageServer {
             case "tide/graphHover" -> server.graphHover(params);
             case "tide/graphSignatureHelp" -> server.graphSignatureHelp(params);
             case "tide/graphMembers" -> server.graphMembers(params);
+            case "tide/graphCalls" -> server.graphCalls(params);
+            case "tide/graphNames" -> server.graphNames(params);
+            case "tide/graphOperators" -> server.graphOperators(params);
             default -> null;
         };
     }
