@@ -66,6 +66,7 @@ static bool folds(const layout *l, const graph_layout_node *n, const int *reader
     const graph_layout_node *of = n->inputs.count == 1 ? find(l, n->inputs.items[0]) : NULL;
     if (shown == 1) yes = n->inputs.count == 0;
     else if (shown == 2) yes = n->inputs.count == 0 || (of && graph_schema_inline(of->kind) != 3 && folds(l, of, readers, state));
+    else if (shown == 5) yes = n->inputs.count == 0 && n->name.len && n->name.ptr[0] >= 'A' && n->name.ptr[0] <= 'Z';
     else if (shown == 3) yes = str_eq_c(n->op, "-") && of && (str_eq_c(of->kind, "int") || str_eq_c(of->kind, "float")) && folds(l, of, readers, state);
     else if (shown == 4 && graph_schema_numbers(n->name)) { // float2(16, -14): each argument a number shown there
         yes = n->inputs.count > 0;
@@ -100,6 +101,12 @@ void graph_layout_fold(graph_layout_node *nodes, const int count)
             const graph_layout_node *read = find(&l, nodes[i].inputs.items[k]);
             if (read) readers[read - nodes]++;
         }
+    }
+    // What a Set changes, read by it alone, is in its title: Set score, Set scale (what it's a member of is wired in)
+    for (int i = 0; i < count; i++) {
+        const graph_layout_node *target = nodes[i].inputs.count ? find(&l, nodes[i].inputs.items[0]) : NULL;
+        if (!target || readers[target - nodes] != 1 || !graph_schema_titled(nodes[i].kind)) continue;
+        if (str_eq_c(target->kind, "name") || str_eq_c(target->kind, "member")) state[target - nodes] = 3;
     }
     for (int i = 0; i < count; i++) nodes[i].folded = folds(&l, &nodes[i], readers, state);
     // A reader is as wide as its widest input's row: the input's name, then what's shown in it

@@ -49,15 +49,19 @@ typedef struct graph_layout_node {
 // A node's size, from how many ports it has and its longest text
 void graph_layout_measure(graph_layout_node *n, int widest_text);
 // Which nodes editors show in the input that reads them and not as nodes of their own (the schema's "inline": a
-// literal, a name, a path of members from one, a negative number; each read by one input). They take no room,
+// literal, a type's, a namespace's or a constant's name, a path of members from one, a negative number; each read
+// by one input; and what a Set changes, in its title). A variable is a node of its own. They take no room,
 // and their reader is as wide as showing them takes. graph_layout_place does it; this is for a caller that
 // measures placed nodes.
 void graph_layout_fold(graph_layout_node *nodes, int count);
 // 0 for a kind of node that's always a node, 1 for one always shown in its reader's input, 2 for one that is
 // when what it's a member of is, 3 for a `-` over a number, 4 for a call that is when it's named a type made of
-// numbers (graph_schema_numbers) and its arguments are numbers.
+// numbers (graph_schema_numbers) and its arguments are numbers, 5 for a name that is when it starts with a capital
+// (a type, a namespace, an enum, a constant: Tide's naming).
 int graph_schema_inline(str kind);
 bool graph_schema_numbers(str name);
+// Whether what a node of this kind changes (its first input, a name or a member read by it alone) is in its title
+bool graph_schema_titled(str kind);
 // Where each node goes, from `root`: a body's first statement, or a value's node
 void graph_layout_place(graph_layout_node *nodes, int count, int root, bool body);
 // A graph's JSON ({"entry"|"root", "nodes"}) laid out: {"<id>": [x, y], ...}; false for what isn't a graph

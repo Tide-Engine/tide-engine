@@ -1,6 +1,6 @@
 // A game written as a graph (graph_nodes.tidegraph), with the nodes a .tide file made a graph doesn't have: a
 // statement whose value is kept, text and code nodes with inputs, a value wired to two inputs, an else-if chain,
-// and nodes nothing reaches (notes/visual-scripting.md).
+// reroutes (knots on wires) and nodes nothing reaches (notes/visual-scripting.md).
 #include "game.h"
 #include "tide_test.h"
 
@@ -19,6 +19,7 @@ TIDE_TEST(graph_nodes_run_as_written)
     TIDE_CHECK(world.Results.summed == 5);
     TIDE_CHECK(world.Results.fanned == 14);
     TIDE_CHECK(world.Results.chain == 1);
+    TIDE_CHECK(world.Results.knotted == 64); // -(-3) + 7 * 7 + Twice(6), each through a knot
 
     tide_world_tick(&world);
     TIDE_CHECK(world.Results.counted == 2);

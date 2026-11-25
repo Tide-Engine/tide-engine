@@ -608,6 +608,17 @@ static bool kind_is(const graph_json *n, const char *k)
     return str_eq_c(jstr(n, "k"), k);
 }
 
+// What a wire comes from past the reroutes on it (knots, which pass their value on)
+static int past_knots(lw *w, int id)
+{
+    for (int depth = 0; id && depth < 256; depth++) {
+        const graph_json *n = table_get(&w->nodes, id);
+        if (!n || !kind_is(n, "reroute")) break;
+        id = jwire(n, "value");
+    }
+    return id;
+}
+
 // The schema (graph_schema.json, which the build embeds): every kind of node and its ports. Read from the arena
 // each time it's asked for after one, as the language server's arena goes between analyses
 extern const unsigned char tide_graph_schema[];
@@ -659,11 +670,21 @@ bool graph_schema_numbers(const str name)
     return false;
 }
 
+bool graph_schema_titled(const str kind)
+{
+    const graph_json *shown = graph_json_get(schema_root ? schema_root : read_schema_root(), "inline");
+    const graph_json *kinds = shown ? graph_json_get(shown, "titled") : NULL;
+    for (int i = 0; kinds && kinds->kind == GJ_ARRAY && i < kinds->count; i++) {
+        if (kinds->items[i]->kind == GJ_STRING && str_eq(kinds->items[i]->text, kind)) return true;
+    }
+    return false;
+}
+
 int graph_schema_inline(const str kind)
 {
-    static const char *const lists[] = {"always", "path", "negative", "numbers"};
+    static const char *const lists[] = {"always", "path", "negative", "numbers", "named"};
     const graph_json *shown = graph_json_get(schema_root ? schema_root : read_schema_root(), "inline");
-    for (int l = 0; shown && l < 4; l++) {
+    for (int l = 0; shown && l < 5; l++) {
         const graph_json *kinds = graph_json_get(shown, lists[l]);
         for (int i = 0; kinds && kinds->kind == GJ_ARRAY && i < kinds->count; i++) {
             if (kinds->items[i]->kind == GJ_STRING && str_eq(kinds->items[i]->text, kind)) return l + 1;
@@ -952,7 +973,7 @@ static void expr_node(lw *w, const graph_json *n, const int id)
         put_str(w, op);
         // `- -x` and `-(-1)`, never `--x`
         const int operand = jwire(n, "value");
-        const graph_json *o = operand ? table_get(&w->nodes, operand) : NULL;
+        const graph_json *o = operand ? table_get(&w->nodes, past_knots(w, operand)) : NULL;
         const bool clash = o && (prec_of(o) == P_UNARY || kind_is(o, "unary"));
         input(w, n, "value", clash ? P_POSTFIX : P_UNARY);
     } else if (str_eq_c(k, "step")) {
@@ -1127,6 +1148,13 @@ static void expr(lw *w, const int id, const int min, const graph_json *from, con
         return;
     }
     vec_push(w->visiting.items, id);
+    if (kind_is(n, "reroute")) { // A knot on a wire: what's wired into it, as it would be without the knot
+        const int start = mark(w);
+        input(w, n, "value", min);
+        span(w, id, start);
+        w->visiting.items.count--;
+        return;
+    }
     // A text node's text is wrapped as a whole, whatever's in it
     const bool parens = kind_is(n, "text") || prec_of(n) < min;
     const int start = mark(w);
@@ -1473,8 +1501,9 @@ static bool use_graph(lw *w, const graph_json *g, const graph_json *owner, const
         graph_ids wires = {0};
         graph_data_wires(nodes->items[i], &wires);
         for (int k = 0; k < wires.count; k++) {
-            const graph_json *target = table_get(&w->nodes, wires.items[k]);
-            if (target && kind_is(target, "eval") && !set_has(&w->kept, wires.items[k])) vec_push(w->kept.items, wires.items[k]);
+            const int from = past_knots(w, wires.items[k]);
+            const graph_json *target = table_get(&w->nodes, from);
+            if (target && kind_is(target, "eval") && !set_has(&w->kept, from)) vec_push(w->kept.items, from);
         }
     }
     return true;

@@ -617,7 +617,8 @@ isn't on screen: "View as Tide" in the board's "..." menu opens it.
 **Finding.** A "Contents" list (closed until asked for) and a jump-to search list the file's declarations by
 group; picking one pans to it. Frames off screen aren't drawn.
 
-**Simple values are in the input** (2026-11-25, my pick after looking at the first rebuilt page; Provisional).
+**Simple values are in the input** (2026-11-25, my pick after looking at the first rebuilt page; replaced for
+variables by "Round four: full Blueprint" below, the owner's decision; what's here still holds for literals).
 With a node per name and per `.member`, one statement was three nodes and four wires (`wobble`'s pin → `phase` →
 Set's target), a converted function was a syntax tree, and in a big frame the wires from the entry's pins crossed
 all of it. So: **a value read by one input is shown in that input and edited there, and is no node and has no
@@ -796,3 +797,47 @@ allow to clear these fields?"):
   `-nographics`.
 - Not there: a node's input row can't be selected, so Delete works on the input under the pointer; "Empty it"
   and the × words are each editor's own until the schema has the menu words.
+
+## Round four: full Blueprint (owner, 2026-11-25)
+
+The owner, of a variable shown in a Set's input: "why is it that a variable is embeded in the node? why not allow
+a link such that one variable can be linked to multiple places? is this how blueprints handles it?", then, on
+being offered chips kept beside Get nodes or Blueprint's way: "we should go full Blueprint, if anything im ok
+with a 'clone'". So variables are nodes, as in Blueprint, and the editors follow Blueprint's conventions where
+Tide has the same thing. The file doesn't change: tidec already writes a node per name and per member, and a node
+wired to several inputs is worked out at each (Blueprint's pure nodes). What follows are my picks within that
+(Provisional).
+
+- **What never changes is in the pin; a variable is a node.** A pin holds what Blueprint's pin defaults hold: a
+  literal typed there (number, tick, text, char, `default`, `null`, a `-` number, a vector or colour of numbers)
+  and, as a chip, a name in PascalCase or FULL_CASE (a type, a namespace, an enum, a constant: Tide's naming,
+  spec) with the members of one (`Math.PI`, `Phase.Running`, `Color.red`, a shorthand `.Run`); `this` is shown
+  "self". Every variable read (a parameter, a local, a field, a path of members from one) is a node: the schema's
+  `inline` lost `name`, `local` from `always`, and has `named` (a `name` starting with a capital). tidec's layout
+  (`graph_layout_fold`) follows the schema, so converted files now give Gets room, left of their readers.
+- **Get nodes are compact**: no title bar, the variable's name and its value pin, in its type's colour. A member
+  is a compact node too, its field's name between a **Target** pin (what it's a member of, wired in) and its
+  value pin. A Get's value pin is wired to any number of inputs. Hovering a Get lights its declaration and its
+  variable's other Gets.
+- **Set is titled by what it changes**: "Set score"; "Set scale" with a Target pin for a member. What a Set (or a
+  step, `++`) changes is drawn in its title when it's a name or a member read by it alone (schema
+  `inline.titled`, which tidec's layout folds the same way); the title's name opens the picker of what can be
+  changed. The operator stays on the Set (Tide's `+=` and the rest, from `tide/graphOperators`), then the value.
+  A target read by other nodes too stays a node, wired into the Set's "what" pin.
+- **Calls**: a method's object is its Target pin (`ball.Bounce`: "Bounce", Target wired from a Get of ball); a
+  call on a type or namespace keeps it in the title as Blueprint's "Target is Math" line ("Clamp", "Math"
+  beneath), as that name is a chip folded there.
+- **Reroutes**: double-clicking a data wire puts a knot there (a `reroute` node: one input, one value pin, which
+  fans out like any). It's dragged like a node; deleting it joins its input to its readers. tidec lowers a knot
+  to what's wired into it (`graph.c`; `tidec_e2e_graph_nodes` has a knot before a `-` over a `-`, one wired to two
+  inputs and one from a kept statement value). Exec wires have no knots.
+- **Making a Get or a Set, Blueprint's ways**: My game lists the frame's **Variables** (its parameters and its
+  locals, each opening to its fields); dragging one onto the board asks "Get <name>" or "Set <name>", Ctrl-drag
+  makes a Get and Alt-drag a Set at once, and one dropped on an input is a Get wired to it. Dragging from an
+  entry's parameter pin and dropping on an input makes a Get of it beside the input, wired. The value picker's
+  "what this code has" makes the Gets (`ball.position.x`: Get ball, position, x) left of the input in free space,
+  wired. A wire dragged from a value pin into empty space lists its fields first (Gets with it as Target); one
+  dragged from an input lists the variables of the input's type first.
+- **Promote to a local**: a worked-out node's value pin's menu has "Keep it as a local" (Blueprint's Promote to
+  Variable): a Local declared before the statement that first reads it, its value that node, and Gets of the
+  local where the node's wires went, so it's worked out once.
