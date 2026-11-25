@@ -135,4 +135,5 @@ int analysis_graph_probe_offset(void);
 void analysis_graph_node_type(int node, jbuf *out);
 // ...or of a type by its name, as the document's code would write it: what a value of it has, for a pin nothing
 // reads yet. The same offset and the same reset after.
-void analysis_set_graph_type_probe(const char *uri, const char *type);
+// `named`: what the name itself has, after `Name.`: an enum's choices, a namespace's functions and constants.
+void analysis_set_graph_type_probe(const char *uri, const char *type, bool named);

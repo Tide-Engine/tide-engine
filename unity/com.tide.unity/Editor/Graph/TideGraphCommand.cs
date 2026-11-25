@@ -142,6 +142,8 @@ namespace Tide.Editor
         public string Severity;   // error, warning or note
         public string Message;
         public string Detail = ""; // What tidec wrote after it: the line of Tide it's in
+        public string Said;        // The same in the editor's words, where it has some: "Pick what goes in 'what'"
+        public string Text => Said ?? Message;
         public string Port;        // The pin of its node it's about (an input with nothing wired), when it names one
         public int Index = -1;     // ...and which of a list's (an argument, an item), from 0
     }
@@ -156,6 +158,30 @@ namespace Tide.Editor
         public string Json;              // The file's text it's of (tidels's)
         public GraphText Lowered;        // The Tide with each element's place in it (tidels's)
         public readonly Dictionary<int, string> Types = new Dictionary<int, string>(); // Each node's value's type (tidels's)
+        public readonly Dictionary<int, GraphCall> Calls = new Dictionary<int, GraphCall>(); // Each checked call's parameters (tidels's)
+        // What the game itself declares, and its packages, by name with its keyword (tidels's): null when not said,
+        // and then nothing is known to be the engine's
+        public Dictionary<string, string> Game, Packages;
+
+        // Whether a name is the game's own or a package's; unknown (null) when the check didn't say
+        public bool? IsGames(string name) => Game == null ? (bool?)null : Game.ContainsKey(name) || (Packages != null && Packages.ContainsKey(name));
+    }
+
+    // A checked call's callee, as the language server knows it: its parameters' names, their types where the game
+    // declares them ("" for a built-in's), and the parameter each written argument goes to
+    sealed class GraphCall
+    {
+        public string[] Params = Array.Empty<string>(), Types = Array.Empty<string>();
+        public int[] Args = Array.Empty<int>();
+
+        // The parameter the argument at `index` goes to: its name and type, or nulls
+        public (string name, string type) At(int index)
+        {
+            var p = index >= 0 && index < Args.Length ? Args[index] : -1;
+            if (p < 0 || p >= Params.Length) return (null, null);
+            var type = p < Types.Length ? Types[p] : null;
+            return (string.IsNullOrEmpty(Params[p]) ? null : Params[p], string.IsNullOrEmpty(type) ? null : type);
+        }
     }
 
     // What says what a graph's Tide is and what's wrong with it: the language server's check where there's one

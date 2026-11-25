@@ -66,7 +66,7 @@
     "binary": [{"op": "+", "title": "Add"}, {"op": "-", "title": "Subtract"}, {"op": "*", "title": "Multiply"}, {"op": "/", "title": "Divide"}, {"op": "%", "title": "Remainder"}, {"op": "==", "title": "Equal"}, {"op": "!=", "title": "Not equal"}, {"op": "<", "title": "Less than"}, {"op": "<=", "title": "Less or equal"}, {"op": ">", "title": "Greater than"}, {"op": ">=", "title": "Greater or equal"}, {"op": "&&", "title": "And"}, {"op": "||", "title": "Or"}, {"op": "&", "title": "Bitwise and"}, {"op": "|", "title": "Bitwise or"}, {"op": "^", "title": "Exclusive or"}, {"op": "<<", "title": "Shift left"}, {"op": ">>", "title": "Shift right"}],
     "unary": [{"op": "!", "title": "Not"}, {"op": "-", "title": "Negate"}, {"op": "~", "title": "Bitwise not"}],
     "assign": ["=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>=", "++", "--"],
-    "step": ["++", "--"],
+    "assignInfo": {"=": {"label": "becomes"}, "+=": {"label": "goes up by"}, "-=": {"label": "goes down by"}, "*=": {"label": "is multiplied by"}, "/=": {"label": "is divided by"}, "%=": {"label": "becomes its remainder by"}, "&=": {"label": "keeps the bits of"}, "|=": {"label": "gains the bits of"}, "^=": {"label": "flips the bits of"}, "<<=": {"label": "shifts left by"}, ">>=": {"label": "shifts right by"}, "++": {"label": "goes up by one"}, "--": {"label": "goes down by one"}}, "step": ["++", "--"],
     "overloadable": ["+", "-", "*", "/", "%", "==", "!=", "<", "<=", ">", ">=", "&", "|", "^", "<<", ">>", "!", "~"]
   },
   "types": ["int", "long", "byte", "char", "float", "double", "bool", "string", "void", "float2", "float3", "float4", "int2", "int3", "int4", "double2", "double3", "double4", "float2x2", "float3x3", "float4x4", "quaternion", "Color", "Rect", "Entity", "PlayerID", "Devices", "World", "List<T>", "Map<K, V>", "Set<T>", "Grid2<T>", "Grid3<T>", "Texture", "Mesh<V>", "Font", "Clip", "Sound", "RenderTarget"],
@@ -110,8 +110,8 @@
     {"k": "literal", "title": "Value of a type", "category": "values", "value": true, "keys": ["type", "inits"], "items": [{"key": "inits", "element": "init", "wires": ["value"], "label": "name"}], "help": "A value of a type, with its fields"},
     {"k": "interp", "title": "Text with values", "category": "values", "value": true, "keys": ["parts", "formats", "values"], "lists": [{"key": "values", "label": "value"}], "help": "Text with values in it"},
     {"k": "lambda", "title": "Lambda", "category": "values", "value": true, "keys": ["params", "body"], "inputs": ["body"], "help": "A small function given as a value"},
-    {"k": "call", "title": "Call", "category": "calls", "value": true, "keys": ["name", "typeArgs", "local", "args", "argNames"], "lists": [{"key": "args", "label": "arg", "names": "argNames"}], "help": "Calls a function"},
-    {"k": "method", "title": "Method", "category": "calls", "value": true, "keys": ["object", "name", "typeArgs", "args", "argNames"], "inputs": ["object"], "lists": [{"key": "args", "label": "arg", "names": "argNames"}], "help": "Calls a method of a value"},
+    {"k": "call", "title": "Call", "category": "calls", "value": true, "keys": ["name", "typeArgs", "local", "args", "argNames"], "lists": [{"key": "args", "label": "argument", "names": "argNames"}], "help": "Calls a function"},
+    {"k": "method", "title": "Method", "category": "calls", "value": true, "keys": ["object", "name", "typeArgs", "args", "argNames"], "inputs": ["object"], "lists": [{"key": "args", "label": "argument", "names": "argNames"}], "help": "Calls a method of a value"},
     {"k": "out", "title": "out", "category": "calls", "value": true, "keys": ["target"], "inputs": ["target"], "help": "Lets a call fill a variable"},
     {"k": "outVar", "title": "out var", "category": "locals", "value": true, "keys": ["mut", "type", "name"], "declares": "name", "help": "A local a call makes"},
     {"k": "binary", "title": "Binary", "category": "math", "value": true, "keys": ["op", "lhs", "rhs"], "inputs": ["lhs", "rhs"], "help": "Two values and an operator"},
@@ -179,10 +179,12 @@
     "query": {"label": "a query of", "help": "Other entities to go through, by what they have", "advanced": true}
   },
   "inline": {
-    "about": "A value read by one input is shown in that input, edited there, and is no node of its own: a literal or a name (always), a member of what is itself shown there (path: ball.position.x), a '-' over a number (negative). Everything else is a node wired in. tidec's layout gives them no room (graph_layout_fold).",
+    "about": "A value read by one input is shown in that input, edited there, and is no node of its own: a literal or a name (always), a member of what is itself shown there (path: ball.position.x), a '-' over a number (negative), a vector or a colour made of numbers alone (numbers: a call named one of numbersOf whose arguments are all numbers, float2(16, 14)). Everything else is a node wired in. tidec's layout gives them no room (graph_layout_fold).",
     "always": ["int", "float", "bool", "string", "char", "this", "default", "null", "name", "local"],
     "path": ["member"],
-    "negative": ["unary"]
+    "negative": ["unary"],
+    "numbers": ["call"],
+    "numbersOf": ["float2", "float3", "float4", "int2", "int3", "int4", "double2", "double3", "double4", "Color"]
   },
   "typePicker": {
     "common": ["int", "float", "bool", "string", "float2", "float3", "Color", "Entity"],

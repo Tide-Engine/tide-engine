@@ -10,10 +10,10 @@ namespace Tide.Editor
     // frame), with its entry first: what the code takes, each with a pin. It grows around its nodes, and dragging
     // its title moves all of it. A value that's more than a literal has a small frame of its own beside its card.
     //
-    // What reads a parameter or a local isn't drawn as a node: its wire comes from the parameter's pin on the entry,
-    // or from the pin of the node that declares the local. A number or a text one input reads is typed on that
-    // input. A statement that's a call is one node. So the frame keeps, for its graph, which nodes are drawn
-    // (Views), which are drawn with another (Absorbed) and which aren't drawn (Hidden).
+    // A simple value one input reads is shown in that input and is no node (the schema's `inline`: a literal, a
+    // name, a local, a path of members from one, a '-' over a number), as tidec's layout gives it no room. A
+    // statement that's a call is one node. So the frame keeps, for its graph, which nodes are drawn (Views), which
+    // are drawn with another (Absorbed) and which are shown in an input (Hidden).
     sealed class GraphFrame : GraphItem
     {
         public const int EntryId = -1, ResultId = -2;
@@ -23,6 +23,8 @@ namespace Tide.Editor
         internal readonly Dictionary<int, List<(int node, WirePath path)>> Readers = new Dictionary<int, List<(int, WirePath)>>();
         internal readonly Dictionary<int, int> Absorbed = new Dictionary<int, int>(); // A call drawn with its statement: its id, to the statement's
         internal readonly HashSet<int> Hidden = new HashSet<int>();
+        // Every node drawn as a node, whatever the schema's `inline` says: for a picture of a file as it was
+        internal static bool DrawEveryNode;
         internal readonly Dictionary<string, GraphDocument.Read> Reads = new Dictionary<string, GraphDocument.Read>();
         internal HashSet<int> Reached = new HashSet<int>();
         internal readonly Dictionary<int, GraphNodeView> Views = new Dictionary<int, GraphNodeView>();
@@ -132,22 +134,144 @@ namespace Tide.Editor
             }
             foreach (var n in list)
             {
-                var id = n.Wire("id");
                 var k = n.Str("k");
-                var readers = Count(id);
-                if (readers == 0 || !string.IsNullOrEmpty(n.Str("comment"))) continue;
-                if (k == "name" && !n.Flag("local") && Reads.ContainsKey(n.Str("name") ?? ""))
-                {
-                    Hidden.Add(id);
-                    readNames.Add(n.Str("name"));
-                }
-                else if (k == "local" && ById.TryGetValue(n.Wire("ref"), out var declares) && Declares(declares))
-                {
-                    Hidden.Add(id);
-                    readLocals.Add(n.Wire("ref"));
-                }
-                else if (IsLiteral(k) && readers == 1 && Readers[id][0].node != ResultId) Hidden.Add(id);
+                if (k == "name" && !n.Flag("local") && Reads.ContainsKey(n.Str("name") ?? "")) readNames.Add(n.Str("name"));
+                else if (k == "local" && n.Wire("ref") != 0) readLocals.Add(n.Wire("ref"));
             }
+            if (DrawEveryNode) return;
+            // Shown in the input that reads it, as tidec's layout folds it (graph_layout_fold): read by one input
+            // of a node, and a literal or a name; a member of what is itself shown there (or of nothing: a
+            // shorthand); a '-' over a number
+            var state = new Dictionary<int, bool>();
+            bool Folds(JValue n, int depth)
+            {
+                var id = n.Wire("id");
+                if (state.TryGetValue(id, out var known)) return known;
+                state[id] = false;
+                var how = Count(id) == 1 && Readers[id][0].node != ResultId && depth < 64 ? GraphSchema.Inline(n.Str("k")) : 0;
+                if (how == 0) return false;
+                var inputs = GraphPorts.DataWires(n).Where(w => w != 0).ToList();
+                var of = inputs.Count == 1 && ById.TryGetValue(inputs[0], out var found) ? found : null;
+                bool yes;
+                if (how == GraphSchema.InlineAlways) yes = inputs.Count == 0;
+                else if (how == GraphSchema.InlinePath) yes = inputs.Count == 0 || (of != null && GraphSchema.Inline(of.Str("k")) != GraphSchema.InlineNegative && Folds(of, depth + 1));
+                else yes = n.Str("op") == "-" && of != null && (of.Str("k") == "int" || of.Str("k") == "float") && Folds(of, depth + 1);
+                state[id] = yes;
+                return yes;
+            }
+            foreach (var n in list)
+                if (Folds(n, 0)) Hidden.Add(n.Wire("id"));
+        }
+
+        // What's shown in an input, when what's wired into it is: the node, else null
+        internal JValue ShownIn(int from) => from != 0 && Hidden.Contains(from) && ById.TryGetValue(from, out var n) ? n : null;
+
+        // What a value shown in an input is made of, from where it starts: wobble, then .phase
+        internal List<JValue> PathOf(JValue leaf)
+        {
+            var path = new List<JValue>();
+            for (var n = leaf; n != null && path.Count < 64;)
+            {
+                path.Insert(0, n);
+                var inputs = GraphPorts.DataWires(n).Where(w => w != 0).ToList();
+                n = inputs.Count == 1 ? ShownIn(inputs[0]) : null;
+            }
+            return path;
+        }
+
+        // One of a path's parts, as it's written: a name, a number, .member
+        internal string PartText(JValue n)
+        {
+            var k = n.Str("k");
+            switch (k)
+            {
+                case "string": return "\"" + n.Str("text") + "\"";
+                case "bool": return n.Flag("value") ? "true" : "false";
+                case "name": return n.Str("name") ?? "";
+                case "local": return ById.TryGetValue(n.Wire("ref"), out var d) ? GraphSchema.LocalName(d) : "?";
+                case "member": return "." + n.Str("member");
+                case "unary": return n.Str("op") ?? "";
+                case "int":
+                case "float":
+                case "char": return n.Str("text") ?? "";
+                default: return k ?? "";
+            }
+        }
+
+        // A value shown in an input, as it's written: wobble.phase, -2, "text", .Wild
+        internal string TextOf(JValue leaf)
+        {
+            var path = PathOf(leaf);
+            // A '-' is written before its number, a member after what it's of
+            var sb = new System.Text.StringBuilder();
+            foreach (var n in path.Where(n => n.Str("k") == "unary")) sb.Append(PartText(n));
+            var first = path.FirstOrDefault(n => n.Str("k") != "unary");
+            if (first != null && first.Str("k") == "member" && !first.Flag("shorthand")) sb.Append("…");
+            foreach (var n in path.Where(n => n.Str("k") != "unary")) sb.Append(PartText(n));
+            return sb.ToString();
+        }
+
+        // A value shown in an input and what it's made of: their ids
+        internal HashSet<int> ChainOf(int id)
+        {
+            var chain = new HashSet<int>();
+            void Walk(int at)
+            {
+                if (!Hidden.Contains(at) || !chain.Add(at) || !ById.TryGetValue(at, out var n)) return;
+                foreach (var w in GraphPorts.DataWires(n)) Walk(w);
+            }
+            Walk(id);
+            return chain;
+        }
+
+        // The node drawn that a value shown in an input is shown on
+        internal GraphNodeView ReaderOf(int id)
+        {
+            for (var i = 0; i < 64 && Hidden.Contains(id); i++)
+            {
+                if (!Readers.TryGetValue(id, out var readers) || readers.Count == 0) return null;
+                id = readers[0].node;
+            }
+            return ViewOf(id);
+        }
+
+        // What's wired into an input, and wiring it: a node's input, or a value frame's value (no owner)
+        internal int WireAt(JValue owner, WirePath path) => owner != null ? path.Get(owner) : Graph?.Wire("root") ?? 0;
+
+        // The type an input takes, where that's known: a call's parameter's (the language server's), what a Set
+        // changes, a condition's, the result its code gives, a local's own; else what's in it now has
+        internal string Wanted(JValue owner, WirePath path)
+        {
+            if (owner == null) return Owner?.Value.Str("type");
+            var k = owner.Str("k");
+            var key = path.Parts[path.Parts.Length - 1] as string ?? path.Key;
+            var id = owner.Wire("id");
+            if ((k == "call" || k == "method") && path.Key == "args" && path.Parts.Length == 2 && path.Parts[1] is int index)
+            {
+                var call = Window.Checked != null && Window.Checked.Calls.TryGetValue(id, out var c) ? c : null;
+                var type = call?.At(index).type;
+                if (type != null) return type;
+            }
+            else if (k == "assign" && key == "value" && path.Parts.Length == 1)
+            {
+                var target = TypeAt(owner.Wire("target"));
+                if (target != null) return target;
+            }
+            else if (key == "cond") return "bool";
+            else if (k == "return" && key == "value")
+            {
+                var result = Routine?.Str("returnType");
+                if (!string.IsNullOrEmpty(result) && result != "void") return result;
+            }
+            else if (GraphSchema.Spec(k)?.Declares != null && key == "value" && !string.IsNullOrEmpty(owner.Str("type"))) return owner.Str("type");
+            else if (k == "binary" && path.Parts.Length == 1 && (key == "lhs" || key == "rhs"))
+            {
+                // Both sides of an "and" are true or false; of the rest, numbers and vectors mix, so nothing's said
+                var op = owner.Str("op");
+                if (op == "&&" || op == "||") return "bool";
+            }
+            var now = path.Get(owner);
+            return now != 0 ? TypeAt(now) : null;
         }
 
         // The ids of the nodes drawn as nodes
@@ -209,7 +333,7 @@ namespace Tide.Editor
             {
                 var n = ById[id];
                 var at = GraphDocument.PlaceOf(n) - new Vector2(minX, minY);
-                var size = GraphNodeView.EstimateOf(n, CallOf(id));
+                var size = GraphNodeView.EstimateOf(n, CallOf(id), this);
                 right = Mathf.Max(right, left + at.x + size.x);
                 bottom = Mathf.Max(bottom, top + at.y + size.y);
             }
@@ -405,7 +529,7 @@ namespace Tide.Editor
                 Notes[view.Id] = view;
                 notesLayer.Add(view);
             }
-            hint.text = g == null ? "Its code is written in C." : IsValue ? "Right-click to add what works the value out, and wire it into The value." : "Drag from the arrow to add what happens";
+            hint.text = g == null ? "Its code is written in C." : IsValue ? "Pick what the value is, on \"The value\"." : "Drag from the arrow to add what happens";
             hint.style.display = Views.Count == 0 ? DisplayStyle.Flex : DisplayStyle.None;
             Connections();
             Arrange();
@@ -563,7 +687,8 @@ namespace Tide.Editor
                     if (port.Path != null)
                     {
                         var from = port.Path.Get(n);
-                        p.Connected = from != 0 && !(Hidden.Contains(from) && ById.TryGetValue(from, out var s) && IsLiteral(s.Str("k")));
+                        // What's shown in the input has no wire
+                        p.Connected = from != 0 && !Hidden.Contains(from);
                     }
                     else if (port.Exec) p.Connected = g.Wire("entry") == port.Node || GraphDocument.ExecSourceOf(g, port.Node).node != 0;
                     else p.Connected = Readers.TryGetValue(port.Node, out var readers) && readers.Count > 0;
@@ -587,6 +712,8 @@ namespace Tide.Editor
                 if (n.Str("k") == "local" && ById.TryGetValue(n.Wire("ref"), out var d)) return d.Str("type");
                 return null;
             }
+            foreach (var view in Views.Values.Append(Result).Where(v => v != null))
+                foreach (var (leaf, chip) in view.Chips) GraphNodeView.Tint(chip, TypeOf(leaf), Board.Light);
             foreach (var view in Views.Values)
             {
                 view.SetType(TypeOf(view.Call != null ? view.Call.Wire("id") : view.Id));
@@ -604,6 +731,7 @@ namespace Tide.Editor
                     if (p.Input) pin.SetType(owner != null && p.Path != null ? TypeOf(p.Path.Get(owner)) : null);
                     else pin.SetType(TypeOf(p.Node == view.Id && view.Call != null ? view.Call.Wire("id") : p.Node));
                 }
+                view.Relabel();
                 view.ForgetHover();
             }
             if (Result != null && Graph != null) Result.Ports[0].SetType(TypeOf(Graph.Wire("root")));
@@ -616,52 +744,62 @@ namespace Tide.Editor
             if (types != null && types.TryGetValue(id, out var t)) return t;
             if (!ById.TryGetValue(id, out var n)) return null;
             if (n.Str("k") == "name" && Reads.TryGetValue(n.Str("name") ?? "", out var read)) return read.Type;
+            if (n.Str("k") == "local" && ById.TryGetValue(n.Wire("ref"), out var d) && !string.IsNullOrEmpty(d.Str("type"))) return d.Str("type");
+            if (n.Str("k") == "int" || n.Str("k") == "float" || n.Str("k") == "bool" || n.Str("k") == "string" || n.Str("k") == "char") return n.Str("k");
             return n.Str("k") == "eval" && types != null && types.TryGetValue(n.Wire("value"), out t) ? t : null;
         }
 
-        // Whether what a node reads (a parameter, a local) is too far from it for a wire: the input names it
-        // instead. A wire across a big frame says less than the name.
-        internal bool IsFar(JValue reader, JValue read)
-        {
-            var at = GraphDocument.PlaceOf(Absorbed.TryGetValue(reader.Wire("id"), out var eval) && ById.TryGetValue(eval, out var statement) ? statement : reader);
-            if (read.Str("k") == "local")
-            {
-                if (!ById.TryGetValue(read.Wire("ref"), out var declares)) return false;
-                // ...or declared after it on the board (a loop's own variable in its condition): a wire going
-                // backwards says less than the name
-                var from = GraphDocument.PlaceOf(declares);
-                return from.x > at.x + 40 || Mathf.Abs(at.x - from.x) > 1100 || Mathf.Abs(at.y - from.y) > 500;
-            }
-            return at.x > 760 || at.y > 520;
-        }
-
-        // What a read is called: the parameter's name, the local's
-        internal string ReadName(JValue read) => read.Str("k") == "local" ? (ById.TryGetValue(read.Wire("ref"), out var d) ? GraphSchema.LocalName(d) : "?") : read.Str("name");
-
-        // The pin a value comes out of: a node's own, a parameter's on the entry, a local's on what declares it
+        // The pin a value comes out of: its node's own. What's shown in an input has none.
         internal PortView SourcePin(int from)
         {
-            if (from == 0) return null;
-            if (Hidden.Contains(from) && ById.TryGetValue(from, out var hidden))
-            {
-                var reader = Readers.TryGetValue(from, out var readers) && readers.Count > 0 && ById.TryGetValue(readers[0].node, out var r) ? r : null;
-                if (reader != null && IsFar(reader, hidden)) return null;
-                var k = hidden.Str("k");
-                if (k == "name") return Entry?.ReadPin(hidden.Str("name"));
-                if (k == "local") return ViewOf(hidden.Wire("ref"))?.LocalPin(hidden.Wire("ref"));
-                return null;
-            }
+            if (from == 0 || Hidden.Contains(from)) return null;
             return ViewOf(from)?.DataOut;
+        }
+
+        // Lights what reads a parameter or a local, and where it comes from: the entry's row, the node that
+        // declares it. Hovering any of them does.
+        internal void Light(string name, int local, bool on)
+        {
+            if (Level != GraphLevel.Near) return;
+            foreach (var view in Views.Values.Append(Result).Where(v => v != null))
+                foreach (var (key, chip) in view.Reads)
+                    if (name != null ? key.name == name : local != 0 && key.local == local) chip.EnableInClassList("tg-lit", on);
+            if (name != null) Entry?.RowOf(name)?.EnableInClassList("tg-lit", on);
+            else if (local != 0) ViewOf(local)?.LocalRowOf(local)?.EnableInClassList("tg-lit", on);
         }
 
         // ---------------------------------------------------------------------------------------------------------
         // Wiring
 
-        // A hidden node (a literal, a read) nothing reads any more goes with the wire that read it
-        void DropUnread(JValue g, int was, int now = 0)
+        // What was shown in an input (a number, a name, a path) goes with the wire that read it, all of it
+        internal void DropUnread(JValue g, int was, int now = 0)
         {
             if (was == 0 || was == now || !Hidden.Contains(was) || GraphDocument.Readers(g, was) > 0) return;
-            Doc.DeleteNodes(g, new[] { was });
+            var chain = ChainOf(was);
+            chain.Remove(now);
+            Doc.DeleteNodes(g, chain);
+        }
+
+        // Puts a value in an input: a node's id, or 0 for nothing. What was shown there goes.
+        internal bool SetWire(JValue owner, WirePath path, int from, out string why)
+        {
+            why = null;
+            var g = Graph;
+            if (g == null) return false;
+            var was = WireAt(owner, path);
+            if (owner == null) g.Set("root", from != 0 ? JValue.Of(from) : JValue.Null(), GraphSchema.ValueOrder);
+            else if (from == 0) path.Set(owner, 0);
+            else if (!GraphDocument.Connect(g, owner.Wire("id"), path, from, out why)) return false;
+            DropUnread(g, was, from);
+            return true;
+        }
+
+        // Where a node made for an input of a node goes: beside it, where tidec's layout puts what's shown there
+        internal Vector2 PlaceFor(JValue owner)
+        {
+            if (owner == null) return Vector2.zero;
+            var view = ReaderOf(owner.Wire("id")) ?? ViewOf(owner.Wire("id"));
+            return view != null && view.Node != null ? GraphDocument.PlaceOf(view.Node) + new Vector2(0, 136) : GraphDocument.PlaceOf(owner);
         }
 
         // Wires two pins, whichever way round they were dragged: false, with why, when they can't be
@@ -697,8 +835,8 @@ namespace Tide.Editor
             JValue made = null;
             if (output.IsRead)
             {
-                // Reading a parameter or a local is a node of its own in the file, which the board doesn't draw
-                var at = reader != null ? GraphDocument.PlaceOf(reader) + new Vector2(-180, 50) : Vector2.zero;
+                // Reading a parameter or a local is a node of its own in the file, shown in the input it's read by
+                var at = PlaceFor(reader);
                 made = Doc.AddNode(g, output.Local ? "local" : "name", at.x, at.y);
                 if (output.Local) made.Set("ref", JValue.Of(output.Node), GraphSchema.NodeOrder("local"));
                 else made.Set("name", JValue.Of(output.Name), GraphSchema.NodeOrder("name"));
@@ -743,9 +881,7 @@ namespace Tide.Editor
             }
             else if (p.IsRead)
             {
-                // Every read of the parameter or the local goes
-                var reads = ById.Values.Where(n => Hidden.Contains(n.Wire("id")) && (p.Local ? n.Str("k") == "local" && n.Wire("ref") == p.Node : n.Str("k") == "name" && n.Str("name") == p.Name)).Select(n => n.Wire("id")).ToList();
-                if (reads.Count > 0) Doc.DeleteNodes(g, reads);
+                // A parameter's or a local's pin has no wire of its own: what reads it says so itself
             }
             else
             {
@@ -756,63 +892,157 @@ namespace Tide.Editor
             }
         }
 
-        // What's typed on an input: a number, a text in quotes, true or false makes that value; the name of
-        // something the code takes (or a local) wires it; anything else opens the search with it
-        internal void TypeInto(JValue owner, WirePath path, string typed, VisualElement from)
+        // One part of a value shown in an input, to be made: a name, a local (Ref the node that declares it), a
+        // member of the part before it, a member of nothing (a shorthand: .Wild), or this, default, null
+        internal sealed class Part
+        {
+            public string Kind, Name, Type;
+            public int Ref;
+            public bool Space; // One of the engine's namespaces (Math): it has things, and is nothing by itself
+
+            public static Part Of(GraphFrame frame, JValue n)
+            {
+                var k = n.Str("k");
+                var type = frame.TypeAt(n.Wire("id"));
+                if (k == "name") return new Part { Kind = "name", Name = n.Str("name"), Type = type };
+                if (k == "local") return new Part { Kind = "local", Ref = n.Wire("ref"), Name = frame.PartText(n), Type = type };
+                if (k == "member") return new Part { Kind = n.Flag("shorthand") ? "shorthand" : "member", Name = n.Str("member"), Type = type };
+                return new Part { Kind = k, Name = k, Type = type };
+            }
+        }
+
+        // Makes the nodes of a path (wobble, then .phase), each a node of the file as tidec writes them: their ids
+        internal List<int> MakePath(JValue g, IList<Part> parts, Vector2 at)
+        {
+            var made = new List<int>();
+            var last = 0;
+            foreach (var part in parts)
+            {
+                JValue n;
+                switch (part.Kind)
+                {
+                    case "name":
+                        n = Doc.AddNode(g, "name", at.x, at.y);
+                        n.Set("name", JValue.Of(part.Name), GraphSchema.NodeOrder("name"));
+                        break;
+                    case "local":
+                        n = Doc.AddNode(g, "local", at.x, at.y);
+                        n.Set("ref", JValue.Of(part.Ref), GraphSchema.NodeOrder("local"));
+                        break;
+                    case "member":
+                    case "shorthand":
+                    {
+                        n = Doc.AddNode(g, "member", at.x, at.y);
+                        var order = GraphSchema.NodeOrder("member");
+                        if (part.Kind == "shorthand") n.SetFlag("shorthand", true, order);
+                        else if (last != 0) n.Set("object", JValue.Of(last), order);
+                        n.Set("member", JValue.Of(part.Name), order);
+                        break;
+                    }
+                    default:
+                        n = Doc.AddNode(g, part.Kind, at.x, at.y);
+                        break;
+                }
+                last = n.Wire("id");
+                made.Add(last);
+            }
+            return made;
+        }
+
+        // Puts a path in an input, in place of what was there
+        internal void PutPath(JValue owner, WirePath path, IList<Part> parts, string label)
         {
             var g = Graph;
+            if (g == null || parts.Count == 0) return;
+            string why = null;
+            Edit("Set " + label, () =>
+            {
+                Classify();
+                var made = MakePath(g, parts, PlaceFor(owner));
+                if (!SetWire(owner, path, made[made.Count - 1], out why)) Doc.DeleteNodes(g, made);
+            });
+            if (why != null) Window.Say(GraphLook.UpperFirst(why), true);
+        }
+
+        // Puts a value typed in an input: a number (a '-' before it is a node of its own, as tidec writes it), a
+        // text, a tick
+        internal void PutLiteral(JValue owner, WirePath path, string k, string text, string label)
+        {
+            var g = Graph;
+            if (g == null) return;
+            var negative = (k == "int" || k == "float") && text.StartsWith("-");
+            if (negative) text = text.Substring(1);
+            Edit("Set " + label, () =>
+            {
+                Classify();
+                var shown = ShownIn(WireAt(owner, path));
+                var simple = shown != null && Array.IndexOf(new[] { "int", "float", "string", "char", "bool" }, shown.Str("k")) >= 0;
+                if (simple && !negative)
+                {
+                    GraphValues.SetLiteral(shown, k, text);
+                    return;
+                }
+                var at = PlaceFor(owner);
+                var n = Doc.AddNode(g, k, at.x, at.y);
+                GraphValues.SetLiteral(n, k, text);
+                var made = n.Wire("id");
+                if (negative)
+                {
+                    var minus = Doc.AddNode(g, "unary", at.x, at.y);
+                    var order = GraphSchema.NodeOrder("unary");
+                    minus.Set("op", JValue.Of("-"), order);
+                    minus.Set("value", JValue.Of(made), order);
+                    made = minus.Wire("id");
+                }
+                SetWire(owner, path, made, out _);
+            });
+        }
+
+        // The parameter or the local of a name, as a part to read it: null when the code has none of that name
+        internal Part ReadOf(string name)
+        {
+            if (Reads.TryGetValue(name, out var read)) return new Part { Kind = "name", Name = name, Type = read.Type };
+            var local = ById.Values.FirstOrDefault(n => Declares(n) && GraphSchema.LocalName(n) == name);
+            return local != null ? new Part { Kind = "local", Ref = local.Wire("id"), Name = name, Type = local.Str("type") } : null;
+        }
+
+        // What's typed on an input: a number, a text, true or false is that value (of the input's type, where it's
+        // known); a name of something the code has, or a path from one (wobble.phase), is read; nothing takes
+        // away what was there; anything else opens the picker with it, to find what was meant
+        internal void TypeInto(JValue owner, WirePath path, string typed, VisualElement from, string label = "value")
+        {
             typed = (typed ?? "").Trim();
-            var was = path.Get(owner);
-            var source = was != 0 && Hidden.Contains(was) && ById.TryGetValue(was, out var s) ? s : null;
-            var literal = source != null && IsLiteral(source.Str("k")) ? source : null;
+            var shown = ShownIn(WireAt(owner, path));
             if (typed.Length == 0)
             {
-                if (literal != null)
-                    Edit("Clear value", () =>
-                    {
-                        path.Set(owner, 0);
-                        DropUnread(g, was);
-                    });
+                if (shown != null) Edit("Clear " + label, () => SetWire(owner, path, 0, out _));
                 else Refresh();
                 return;
             }
-            var port = new GraphPort { Node = owner.Wire("id"), Input = true, Path = path };
-            if (GraphValues.TryLiteral(typed, null, out var k, out var text))
+            if (shown != null && TextOf(shown) == typed)
             {
-                Edit("Set value", () =>
-                {
-                    if (literal != null)
-                    {
-                        GraphValues.SetLiteral(literal, k, text);
-                        return;
-                    }
-                    var at = GraphDocument.PlaceOf(owner) + new Vector2(-160, 60);
-                    var n = Doc.AddNode(g, k, at.x, at.y);
-                    GraphValues.SetLiteral(n, k, text);
-                    if (!GraphDocument.Connect(g, owner.Wire("id"), path, n.Wire("id"), out _)) GraphDocument.Nodes(g).Items.Remove(n);
-                    else DropUnread(g, was, n.Wire("id"));
-                });
+                Refresh();
                 return;
             }
-            var local = ById.Values.FirstOrDefault(n => Declares(n) && GraphSchema.LocalName(n) == typed);
-            if (Reads.ContainsKey(typed) || local != null)
+            var wanted = Wanted(owner, path);
+            if (GraphSchema.ValueControl(wanted) == null) wanted = shown != null && (shown.Str("k") == "string" || shown.Str("k") == "char") ? shown.Str("k") : null;
+            if (GraphValues.TryLiteral(typed, wanted, out var k, out var text))
             {
-                var read = Reads.ContainsKey(typed) ? new GraphPort { Node = EntryId, Name = typed } : new GraphPort { Node = local.Wire("id"), Local = true };
-                string why = null;
-                Edit("Wire " + typed, () => Join(read, port, out why));
-                if (why != null) Window.Say(why, true);
+                PutLiteral(owner, path, k, text, label);
                 return;
             }
-            if (literal != null && literal.Str("k") == "string")
+            var names = typed.Split('.');
+            var first = names.All(n => n.Length > 0 && GraphLook.Identifier(n) == n) ? ReadOf(names[0]) : null;
+            if (first != null)
             {
-                Edit("Set value", () => GraphValues.SetLiteral(literal, "string", typed));
+                var parts = new List<Part> { first };
+                parts.AddRange(names.Skip(1).Select(n => new Part { Kind = "member", Name = n }));
+                PutPath(owner, path, parts, label);
                 return;
             }
             // Not a value in itself: found, not typed
             Refresh();
-            var view = ViewOf(owner.Wire("id"));
-            var at2 = view != null ? view.Shown + new Vector2(-40, view.SizeNow.y + 10) : origin;
-            Board.OpenSearch(this, at2, port, typed);
+            Board.PickValue(this, owner, path, label, from, 0, typed);
         }
 
         // Takes one of a node's inputs that come and go away: an argument, an item, a case
@@ -1158,18 +1388,12 @@ namespace Tide.Editor
             list.Items.Insert(b, item);
         }
 
-        // Takes away something the code takes, and the reads of it with it
+        // Takes away something the code takes. What read it still says its name, and the check says where: a
+        // path with its start gone (.phase of nothing) would say less.
         internal void RemoveParam(JValue list, JValue p)
         {
-            var g = Graph;
             var name = p.Str("name");
-            Edit("Take away " + (name ?? p.Str("type")), () =>
-            {
-                list.Items.Remove(p);
-                if (g == null || string.IsNullOrEmpty(name)) return;
-                var reads = NodesOf(g).Where(n => n.Str("k") == "name" && n.Str("name") == name && !n.Flag("local") && Hidden.Contains(n.Wire("id"))).Select(n => n.Wire("id")).ToList();
-                if (reads.Count > 0) Doc.DeleteNodes(g, reads);
-            });
+            Edit("Take away " + (name ?? p.Str("type")), () => list.Items.Remove(p));
         }
     }
 
@@ -1294,7 +1518,7 @@ namespace Tide.Editor
             {
                 var n = frame.ById[id];
                 var at = GraphDocument.PlaceOf(n) - new Vector2(minX, minY);
-                var size = GraphNodeView.EstimateOf(n, null);
+                var size = GraphNodeView.EstimateOf(n, null, frame);
                 Box(new Rect(left + at.x, top + at.y, size.x, size.y));
             }
         }

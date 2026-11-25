@@ -85,10 +85,10 @@ namespace Tide.Editor
         }
     }
 
-    // A node in a frame: its title in its category's colour, its pins, and its own values on it. A statement that
-    // is a call is one node (the call with the statement's flow). What reads a parameter or a local, and a number
-    // or a text only one input reads, aren't nodes of their own: a wire from the parameter's or local's pin, and a
-    // value typed on the input.
+    // A node in a frame: its title in its category's colour, its inputs and its own values on it. A statement that
+    // is a call is one node (the call with the statement's flow). An input's row is its name, then what's in it:
+    // a number's, a tick's or a text's own control, a chip with a name or a path (wobble.phase) in its type's
+    // colour, a pin with a wire from the node that works it out, or "pick…" when nothing is.
     class GraphNodeView : VisualElement
     {
         public readonly GraphFrame Frame;
@@ -99,6 +99,14 @@ namespace Tide.Editor
         public string Signature;         // What it was built from: built again when that changes
         protected VisualElement Head, Body;
         Label problem;
+        // What its inputs show: each chip with the node it shows (coloured by its type), and with the parameter
+        // or local it reads; each row's name; the arguments' names, which a check gives
+        internal readonly List<(int leaf, VisualElement chip)> Chips = new List<(int, VisualElement)>();
+        internal readonly List<((string name, int local) key, VisualElement chip)> Reads = new List<((string, int), VisualElement)>();
+        readonly Dictionary<VisualElement, string> rowLabels = new Dictionary<VisualElement, string>();
+        readonly List<(Label label, JValue owner, WirePath path)> argLabels = new List<(Label, JValue, WirePath)>();
+        readonly List<(Button add, JValue call, string word)> argGrowers = new List<(Button, JValue, string)>();
+        readonly Dictionary<int, VisualElement> localRows = new Dictionary<int, VisualElement>();
         string typeText, hoverText;
         bool hoverAsked, selected;
 
@@ -138,20 +146,28 @@ namespace Tide.Editor
         }
 
         // tidec's layout's own estimate of a node's size (graph_layout_measure), until it's drawn
-        public virtual Vector2 Estimate() => EstimateOf(Node, Call);
+        public virtual Vector2 Estimate() => EstimateOf(Node, Call, Frame);
 
-        public static Vector2 EstimateOf(JValue n, JValue call)
+        // As wide as its widest input's row too: the input's name, then what's shown in it (graph_layout_fold)
+        public static Vector2 EstimateOf(JValue n, JValue call, GraphFrame frame = null)
         {
             var widest = 0;
             var ports = 1;
+            var width = 0f;
             foreach (var v in new[] { n, call })
             {
                 if (v == null) continue;
                 foreach (var value in v.Values)
                     if (value.Kind == JKind.String && value.String.Length > widest) widest = value.String.Length;
                 ports += GraphPorts.Of(v).Count(p => p.Path != null);
+                if (frame == null) continue;
+                foreach (var w in GraphPorts.DataWires(v))
+                {
+                    var shown = frame.ShownIn(w);
+                    if (shown != null) width = Mathf.Max(width, 100 + Mathf.Min(260, frame.TextOf(shown).Length * 8 + 24));
+                }
             }
-            return new Vector2(140 + Mathf.Min(260, widest * 8), 34 + 22 * ports);
+            return new Vector2(Mathf.Max(width, 140 + Mathf.Min(260, widest * 8)), 34 + 22 * ports);
         }
 
         public bool Selected
@@ -182,9 +198,9 @@ namespace Tide.Editor
                 foreach (var p in GraphPorts.Of(v))
                 {
                     if (p.Path == null || p.Exec) continue;
-                    var from = p.Path.Get(v);
-                    if (from == 0 || !frame.Hidden.Contains(from) || !frame.ById.TryGetValue(from, out var source)) continue;
-                    sb.Append('<').Append(GraphJson.Write(source)).Append(frame.IsFar(v, source) ? "far>" : ">");
+                    // What's shown in its inputs is part of it
+                    foreach (var id in frame.ChainOf(p.Path.Get(v)))
+                        if (frame.ById.TryGetValue(id, out var source)) sb.Append('<').Append(GraphJson.Write(source)).Append('>');
                 }
                 if (frame.Declares(v))
                     sb.Append(frame.Readers.TryGetValue(v.Wire("id"), out var readers) && readers.Count > 0 ? "R" : "");
@@ -199,7 +215,7 @@ namespace Tide.Editor
         {
             Clear();
             Ports.Clear();
-            hiddenRows.Clear();
+            ResetShown();
             problem = null;
             var n = Node;
             var shown = Call ?? n;
@@ -239,9 +255,11 @@ namespace Tide.Editor
 
             Fields(shown, k);
 
-            // Its inputs: the call's when it's drawn with one, but not the statement's value, which is the call
-            foreach (var p in callPorts.Where(p => p.Input && !p.Exec)) InputRow(Call, p);
-            foreach (var p in ports.Where(p => p.Input && !p.Exec && !(Call != null && p.Path.Key == "value" && p.Path.Parts.Length == 1))) InputRow(n, p);
+            // Its inputs: the call's when it's drawn with one, but not the statement's value, which is the call;
+            // and not what the title says it's of (ball.Bounce)
+            bool Titled(GraphPort p) => titled != null && p.Path.Parts.Length == 1 && p.Path.Key == "object";
+            foreach (var p in callPorts.Where(p => p.Input && !p.Exec && !(Call == titled && Titled(p)))) InputRow(Call, p);
+            foreach (var p in ports.Where(p => p.Input && !p.Exec && !(Call != null && p.Path.Key == "value" && p.Path.Parts.Length == 1) && !(n == titled && Titled(p)))) InputRow(n, p);
             Growers(shown);
             if (Call != null && Call != shown) Growers(Call);
 
@@ -270,6 +288,160 @@ namespace Tide.Editor
         }
 
         static bool IsLiteral(string k) => k == "int" || k == "float" || k == "string" || k == "bool" || k == "char";
+
+        JValue titled; // The method or member whose title says what it's of
+
+        protected void ResetShown()
+        {
+            hiddenRows.Clear();
+            Chips.Clear();
+            Reads.Clear();
+            rowLabels.Clear();
+            argLabels.Clear();
+            argGrowers.Clear();
+            localRows.Clear();
+            titled = null;
+        }
+
+        // A chip in its value's type's colour, which a check gives
+        internal static void Tint(VisualElement chip, string type, bool light)
+        {
+            var c = TideGraphTypes.ColorOf(type, light && !chip.ClassListContains("tg-value--title"));
+            chip.style.color = c;
+            var edge = new Color(c.r, c.g, c.b, 0.55f);
+            chip.style.borderLeftColor = edge;
+            chip.style.borderRightColor = edge;
+            chip.style.borderTopColor = edge;
+            chip.style.borderBottomColor = edge;
+            if (!string.IsNullOrEmpty(type)) chip.tooltip = type + "\nClick to change it.";
+        }
+
+        // What an input is called: an argument by its callee's parameter (the last check's), a single input by the
+        // schema's word for its key
+        internal static string LabelOf(GraphCheckResult check, JValue owner, WirePath path, string fallback)
+        {
+            if (owner == null) return fallback ?? "";
+            var k = owner.Str("k");
+            if ((k == "call" || k == "method") && path.Key == "args" && path.Parts.Length == 2 && path.Parts[1] is int index)
+            {
+                var names = owner.Arr("argNames");
+                var written = names != null && index < names.Items.Count ? names.Items[index].String : null;
+                if (!string.IsNullOrEmpty(written)) return written;
+                GraphCall call = null;
+                check?.Calls.TryGetValue(owner.Wire("id"), out call);
+                return call?.At(index).name ?? $"argument {index + 1}";
+            }
+            if (path.Parts.Length == 1) return GraphSchema.PortLabel(path.Key);
+            return fallback ?? "";
+        }
+
+        // The arguments' names, as the check that just came back has them; and the row that adds one says which
+        // comes next, and goes once the call has all its callee takes
+        internal void Relabel()
+        {
+            foreach (var (add, call, word) in argGrowers)
+            {
+                GraphCall callee = null;
+                Window.Checked?.Calls.TryGetValue(call.Wire("id"), out callee);
+                var given = call.Arr("args")?.Items.Count ?? 0;
+                add.style.display = callee != null && given >= callee.Params.Length ? DisplayStyle.None : DisplayStyle.Flex;
+                var next = callee != null && given < callee.Params.Length && !string.IsNullOrEmpty(callee.Params[given]) ? callee.Params[given] : word;
+                var said = add.Q<Label>();
+                if (said != null && said.text != next) said.text = next;
+            }
+            foreach (var (label, owner, path) in argLabels)
+            {
+                var text = LabelOf(Window.Checked, owner, path, label.text);
+                if (label.text == text) continue;
+                label.text = text;
+                var row = label.parent;
+                if (row != null && rowLabels.ContainsKey(row)) rowLabels[row] = text;
+            }
+        }
+
+        internal VisualElement LocalRowOf(int declares) => localRows.TryGetValue(declares, out var row) ? row : null;
+
+        // What's in an input, on its row: the value's own control, a chip with a name or a path, or "pick…". Null
+        // for an input with a wire, whose pin shows it.
+        protected VisualElement ValueOf(JValue owner, WirePath path, string label, bool onTitle = false)
+        {
+            var from = Frame.WireAt(owner, path);
+            var shown = Frame.ShownIn(from);
+            // By the name the input has now: a check may have named it since (an argument's)
+            void Open(VisualElement at, int keep = 0, string typed = null) => Frame.Board.PickValue(Frame, owner, path, LabelOf(Window.Checked, owner, path, label), at, keep, typed);
+            if (shown == null)
+            {
+                if (from != 0) return null;
+                Button pick = null;
+                pick = GraphLook.Plain(() => Open(pick), "tg-pick");
+                pick.text = "pick…";
+                pick.name = "pick";
+                pick.tooltip = string.IsNullOrEmpty(label) ? "Nothing's in it yet. Click to pick what goes in." : $"Nothing's in '{label}' yet. Click to pick what goes in.";
+                if (onTitle) pick.AddToClassList("tg-pick--title");
+                return pick;
+            }
+            var k = shown.Str("k");
+            if (k == "bool" || k == "int" || k == "float" || k == "string" || k == "char" || k == "unary")
+            {
+                // A value typed: its own control, and a way to something else
+                var box = GraphLook.Row("tg-pin-value");
+                if (k == "bool")
+                {
+                    var t = new Toggle { value = shown.Flag("value") };
+                    t.RegisterValueChangedCallback(e =>
+                    {
+                        e.StopPropagation();
+                        Frame.Edit("Set value", () => shown.Set("value", JValue.Of(e.newValue)));
+                    });
+                    t.name = "ticked";
+                    box.Add(t);
+                }
+                else
+                {
+                    var f = GraphLook.Inline(Frame.TextOf(shown), typed => Frame.TypeInto(owner, path, typed, box, LabelOf(Window.Checked, owner, path, label)), "", "tg-inline--value");
+                    f.tooltip = "Type another value here.";
+                    f.name = "typed";
+                    box.Add(f);
+                }
+                var other = GraphLook.IconButton("down", "Pick something else: a name, a field, something worked out", () => Open(box), "tg-on-hover");
+                other.name = "other";
+                box.Add(other);
+                return box;
+            }
+            // A name, or a path from one: each part is clicked to change it from there on
+            var chip = GraphLook.Row("tg-value");
+            chip.name = "chip";
+            if (onTitle) chip.AddToClassList("tg-value--title");
+            var parts = Frame.PathOf(shown);
+            if (parts[0].Str("k") == "member" && !parts[0].Flag("shorthand"))
+            {
+                var none = GraphLook.Plain(() => Open(chip), "tg-seg", "tg-seg--none");
+                none.text = "pick…";
+                chip.Add(none);
+            }
+            for (var i = 0; i < parts.Count; i++)
+            {
+                var at = i;
+                var part = GraphLook.Plain(() => Open(chip, at), "tg-seg");
+                part.text = Frame.PartText(parts[i]);
+                part.name = "part" + i;
+                chip.Add(part);
+            }
+            Chips.Add((shown.Wire("id"), chip));
+            var note = string.Join("\n", parts.Select(p => p.Str("comment")).Where(c => !string.IsNullOrEmpty(c)));
+            chip.tooltip = (note.Length > 0 ? note + "\n" : "") + "Click to change it.";
+            Tint(chip, Frame.TypeAt(shown.Wire("id")), Frame.Board.Light);
+            // What it reads is lit with it: the parameter's row, the node that declares the local, its other reads
+            var root = parts[0];
+            (string name, int local) key = root.Str("k") == "name" && Frame.Reads.ContainsKey(root.Str("name") ?? "") ? (root.Str("name"), 0) : root.Str("k") == "local" ? (null, root.Wire("ref")) : (null, 0);
+            if (key.name != null || key.local != 0)
+            {
+                Reads.Add((key, chip));
+                chip.RegisterCallback<PointerEnterEvent>(_ => Frame.Light(key.name, key.local, true));
+                chip.RegisterCallback<PointerLeaveEvent>(_ => Frame.Light(key.name, key.local, false));
+            }
+            return chip;
+        }
 
         protected PortView Pin(GraphPort p)
         {
@@ -320,7 +492,17 @@ namespace Tide.Editor
                 case "method":
                 case "member":
                 {
-                    Head.Add(GraphLook.Text(".", "tg-node-title", "tg-node-dot"));
+                    // What it's of, when that's a name or a path: ball.Bounce, Math.Clamp, with no "of" row
+                    if (Frame.ShownIn(shown.Wire("object")) != null)
+                    {
+                        titled = shown;
+                        var of = ValueOf(shown, new WirePath("object"), GraphSchema.PortLabel("object"), true);
+                        Head.Add(of);
+                        foreach (var id in Frame.ChainOf(shown.Wire("object"))) hiddenRows.Add((id, of));
+                    }
+                    var dot = GraphLook.Text(".", "tg-node-title", "tg-node-dot");
+                    if (titled == shown) dot.AddToClassList("tg-node-dot--after");
+                    Head.Add(dot);
                     Named(k == "member" ? "member" : "name");
                     if (!shown.Flag("shorthand"))
                     {
@@ -338,6 +520,10 @@ namespace Tide.Editor
                     Words(decl != null ? GraphSchema.LocalName(decl) : "a local that's gone");
                     break;
                 }
+                case "assign":
+                    // Its operator is on its value's row: Set / what wobble.phase / += wobble.frequency
+                    Words(spec?.Title ?? k);
+                    break;
                 default:
                     if (ops.Length > 0)
                     {
@@ -556,23 +742,26 @@ namespace Tide.Editor
         {
             var row = GraphLook.Row("tg-port-row");
             var from = p.Path.Get(owner);
-            var hidden = from != 0 && Frame.Hidden.Contains(from) && Frame.ById.TryGetValue(from, out var source) ? source : null;
-            var literal = hidden != null && IsLiteral(hidden.Str("k")) ? hidden : null;
+            var shown = Frame.ShownIn(from);
             var pin = Pin(p);
-            pin.Connected = from != 0 && literal == null;
+            pin.Connected = from != 0 && shown == null;
+            // A pin is where a wire ends: an input with its value in it shows none, until a wire is dragged
+            pin.EnableInClassList("tg-port--quiet", !pin.Connected);
             row.Add(pin);
             row.name = "in:" + p.Path;
-            // What it reads from far away is named here, not wired across the frame
-            var far = hidden != null && literal == null && Frame.IsFar(owner, hidden) ? Frame.ReadName(hidden) : null;
 
-            var spec = GraphSchema.Spec(owner.Str("k"));
+            var k = owner.Str("k");
+            var spec = GraphSchema.Spec(k);
             var items = p.Path.Parts.Length >= 3 ? spec?.Items.FirstOrDefault(i => i.Key == p.Path.Key) : null;
             var item = items != null ? owner.Arr(items.Key)?.Items[(int)p.Path.Parts[1]] : null;
+            string label;
+            var noValue = false;
             // An item with a name of its own (a value of a type's field): the name is typed on its row
             if (items != null && item != null && item.IsObject && item.Get(items.Label)?.Kind == JKind.String)
             {
                 var order = items.Element != null ? GraphSchema.Element(items.Element) : null;
                 var key = items.Label;
+                label = item.Str(key);
                 var name = GraphLook.Inline(item.Str(key), typed =>
                 {
                     var clean = GraphLook.Identifier(typed);
@@ -586,6 +775,7 @@ namespace Tide.Editor
             {
                 // A named input of a text or code node: its name is what stands for it in the text
                 var at = p.Index;
+                label = p.Label;
                 var name = GraphLook.Inline(p.Label, typed =>
                 {
                     var clean = GraphLook.Identifier(typed);
@@ -596,43 +786,44 @@ namespace Tide.Editor
                 name.style.maxWidth = 110;
                 row.Add(name);
             }
+            else if (k == "assign" && p.Path.Parts.Length == 1 && p.Path.Key == "value")
+            {
+                // How it's changed, then with what: the row reads "+= wobble.frequency"
+                label = GraphSchema.PortLabel("value");
+                var now = owner.Str("op") ?? "=";
+                Button op = null;
+                op = GraphLook.Plain(() => Frame.PickOperator(this, owner, op), "tg-word", "tg-op");
+                op.text = now;
+                op.name = "op";
+                op.tooltip = "How it's changed. Click for another way.";
+                row.Add(op);
+                // One more, one less: there's no value to give
+                noValue = GraphSchema.Ops("step").Any(o => o.op == now) && from == 0;
+            }
             else
             {
-                var word = Word(p);
-                if (!string.IsNullOrEmpty(word)) row.Add(GraphLook.Text(word, "tg-port-label"));
+                label = LabelOf(Window.Checked, owner, p.Path, Word(p));
+                if (!string.IsNullOrEmpty(label))
+                {
+                    var word = GraphLook.Text(label, "tg-port-label");
+                    row.Add(word);
+                    if (p.Path.Key == "args" && (k == "call" || k == "method")) argLabels.Add((word, owner, p.Path));
+                }
             }
-            if (far != null)
+            rowLabels[row] = label;
+            // Alt and a click empties it: what was in it, or its wire
+            var emptied = p.Path;
+            row.RegisterCallback<PointerDownEvent>(e =>
             {
-                var tag = GraphLook.Text(far, "tg-read");
-                tag.tooltip = $"Reads {far}, which is too far for a wire to be worth drawing. Drag from this pin to change it.";
-                row.Add(tag);
-            }
+                if (e.button != 0 || !e.altKey || Frame.WireAt(owner, emptied) == 0) return;
+                e.StopPropagation();
+                Frame.Edit("Empty " + label, () => Frame.SetWire(owner, emptied, 0, out _));
+            }, TrickleDown.TrickleDown);
 
-            // What's typed on it: a number, a text, true or false; nothing typed is nothing wired
-            if (literal != null || (from == 0 && TakesTyped(p)))
+            if (!noValue)
             {
-                var box = GraphLook.Row("tg-pin-value");
-                var path = p.Path;
-                if (literal != null && literal.Str("k") == "bool")
-                {
-                    var t = new Toggle { value = literal.Flag("value") };
-                    t.RegisterValueChangedCallback(e =>
-                    {
-                        e.StopPropagation();
-                        Frame.Edit("Set value", () => literal.Set("value", JValue.Of(e.newValue)));
-                    });
-                    box.Add(t);
-                }
-                else
-                {
-                    var k = literal?.Str("k");
-                    var text = literal == null ? "" : k == "string" ? "\"" + literal.Str("text") + "\"" : literal.Str("text") ?? "";
-                    var f = GraphLook.Inline(text, typed => Frame.TypeInto(owner, path, typed, row), from == 0 ? "…" : "", "tg-inline--value");
-                    f.tooltip = from == 0 ? "Type a number, a text in quotes, true or false. Or drag a wire here." : "";
-                    f.name = "typed";
-                    box.Add(f);
-                }
-                row.Add(box);
+                var value = ValueOf(owner, p.Path, label);
+                if (value != null) row.Add(value);
             }
             // One of a list that grows: taken away from its row
             if (p.Group != null && (spec?.Lists.Any(l => l.Key == p.Path.Key) == true || spec?.Map == p.Path.Key || items != null))
@@ -641,21 +832,13 @@ namespace Tide.Editor
                 row.Add(new VisualElement { style = { flexGrow = 1 } });
                 row.Add(GraphLook.IconButton("close", "Take this away", () => Frame.RemoveInput(owner, port), "tg-on-hover"));
             }
-            if (hidden != null) hiddenRows.Add((from, row));
+            foreach (var id in Frame.ChainOf(from)) hiddenRows.Add((id, row));
             Body.Add(row);
         }
 
-        // The rows of inputs that show a node that isn't drawn (a value typed, a read): its problems are the row's
+        // The rows of inputs that show a node that isn't drawn (a value typed, a name, a path): its problems are
+        // the row's
         readonly List<(int id, VisualElement row)> hiddenRows = new List<(int, VisualElement)>();
-
-        // Whether a value can be typed on an input: not on what a member is of, a loop goes through or an
-        // assignment changes, which take a name or a wire
-        static bool TakesTyped(GraphPort p)
-        {
-            if (p.Exec || p.Path == null) return false;
-            var key = p.Path.Parts[p.Path.Parts.Length - 1] as string ?? p.Path.Key;
-            return key != "object" && key != "target" && key != "collection" && key != "grid";
-        }
 
         // The rows that add to a node's lists: an argument, an item, a case, a field
         void Growers(JValue n)
@@ -664,24 +847,26 @@ namespace Tide.Editor
             var spec = GraphSchema.Spec(k);
             if (spec == null) return;
             var order = GraphSchema.NodeOrder(k);
-            void Grow(string what, Action add)
+            Button Grow(string what, Action add)
             {
                 var b = GraphLook.Labelled("plus", what, () => Frame.Edit("Add " + what, add), "tg-add-row", "tg-node-add");
                 b.name = "add:" + what;
                 Body.Add(b);
+                return b;
             }
             foreach (var list in spec.Lists)
             {
                 if (k == "interp") continue; // Its {} make its values
                 var l = list;
                 if (k == "index" && (n.Arr(l.Key)?.Items.Count ?? 0) >= 3) continue;
-                Grow(l.Label, () =>
+                var grower = Grow(l.Label, () =>
                 {
                     var a = n.Arr(l.Key);
                     if (a == null) n.Set(l.Key, a = JValue.NewArray(), order);
                     a.Items.Add(JValue.Null());
                     if (l.Names != null) n.Arr(l.Names)?.Items.Add(JValue.Of(""));
                 });
+                if (l.Key == "args" && (k == "call" || k == "method")) argGrowers.Add((grower, n, l.Label));
             }
             foreach (var items in spec.Items)
             {
@@ -743,10 +928,15 @@ namespace Tide.Editor
             row.Add(name);
             if (!string.IsNullOrEmpty(n.Str(key)))
             {
-                var pin = Pin(new GraphPort { Node = n.Wire("id"), Input = false, Exec = false, Local = true, Label = n.Str(key) });
-                pin.Connected = Frame.LocalIsRead(n.Wire("id"));
+                var declares = n.Wire("id");
+                var pin = Pin(new GraphPort { Node = declares, Input = false, Exec = false, Local = true, Label = n.Str(key) });
+                pin.Connected = Frame.LocalIsRead(declares);
                 pin.SetType(n.Str("type"));
+                pin.tooltip = "Drag from here to where it's used, or pick it there by its name.";
                 row.Add(pin);
+                localRows[declares] = row;
+                row.RegisterCallback<PointerEnterEvent>(_ => Frame.Light(null, declares, true));
+                row.RegisterCallback<PointerLeaveEvent>(_ => Frame.Light(null, declares, false));
             }
             Body.Add(row);
         }
@@ -818,7 +1008,7 @@ namespace Tide.Editor
             if (Call != null) said.AddRange(Frame.Board.Problems(Call.Wire("id")));
             foreach (var v in Call != null ? new[] { Node, Call } : new[] { Node })
                 foreach (var w in GraphPorts.DataWires(v))
-                    if (Frame.Hidden.Contains(w)) said.AddRange(Frame.Board.Problems(w));
+                    foreach (var id in Frame.ChainOf(w)) said.AddRange(Frame.Board.Problems(id));
             problem?.RemoveFromHierarchy();
             problem = null;
             EnableInClassList("tg-has-problem", said.Count > 0);
@@ -831,19 +1021,19 @@ namespace Tide.Editor
                 list.Add(message);
             }
             foreach (var (id, row) in hiddenRows)
-                foreach (var d in Frame.Board.Problems(id)) Mark(row, d.Message);
+                foreach (var d in Frame.Board.Problems(id)) Mark(row, d.Text);
             foreach (var d in said)
-                if (d.Port != null) Mark(this.Q("in:" + d.Port + (d.Index >= 0 ? "." + d.Index : "")) ?? this.Query<VisualElement>().Where(e => e.name != null && e.name.StartsWith("in:" + d.Port + (d.Index >= 0 ? "." + d.Index + "." : "."))).First(), d.Message);
-            this.Query<VisualElement>(className: "tg-port-row").ForEach(row =>
+                if (d.Port != null && !hiddenRows.Any(h => h.id == d.Id)) Mark(this.Q("in:" + d.Port + (d.Index >= 0 ? "." + d.Index : "")) ?? this.Query<VisualElement>().Where(e => e.name != null && e.name.StartsWith("in:" + d.Port + (d.Index >= 0 ? "." + d.Index + "." : "."))).First(), d.Text);
+            foreach (var row in rowLabels.Keys.Concat(hiddenRows.Select(h => h.row)).Distinct().ToList())
             {
                 var of = marked.TryGetValue(row, out var list) ? list : null;
                 row.EnableInClassList("tg-port-row--problem", of != null);
                 row.tooltip = of != null ? string.Join("\n", of) : "";
-            });
+            }
             if (said.Count == 0) return;
-            problem = GraphLook.Text(string.Join("\n", said.Select(d => GraphLook.FirstLine(d.Message))), "tg-node-problem", "tg-problem");
+            problem = GraphLook.Text(string.Join("\n", said.Select(d => GraphLook.FirstLine(d.Text)).Distinct()), "tg-node-problem", "tg-problem");
             if (said.All(d => d.Severity != "error")) problem.AddToClassList("tg-node-problem--warning");
-            problem.tooltip = string.Join("\n\n", said.Select(d => d.Message + (string.IsNullOrEmpty(d.Detail) ? "" : "\n" + d.Detail)));
+            problem.tooltip = string.Join("\n\n", said.Select(d => d.Text + (string.IsNullOrEmpty(d.Detail) ? "" : "\n" + d.Detail)));
             problem.pickingMode = PickingMode.Ignore;
             Add(problem);
         }
@@ -958,10 +1148,16 @@ namespace Tide.Editor
             Head = GraphLook.Row("tg-node-head");
             Head.style.backgroundColor = new Color(0.33f, 0.41f, 0.79f);
             var root = Graph?.Wire("root") ?? 0;
+            ResetShown();
             var pin = Pin(new GraphPort { Node = GraphFrame.ResultId, Input = true, Exec = false, Path = new WirePath("root"), Label = "the value" });
             pin.Connected = root != 0;
             Head.Add(pin);
             Head.Add(GraphLook.Text("The value", "tg-node-title"));
+            if (Graph != null)
+            {
+                var value = ValueOf(null, new WirePath("root"), "the value", true);
+                if (value != null) Head.Add(value);
+            }
             Add(Head);
         }
     }
@@ -1020,10 +1216,26 @@ namespace Tide.Editor
         // The last row's words, without the plus the row draws
         static string RowWords(string addRow) => addRow == null ? null : addRow.StartsWith("+") ? addRow.Substring(1).Trim() : addRow;
 
+        readonly Dictionary<string, VisualElement> rowsByName = new Dictionary<string, VisualElement>();
+
+        // The row of something the code takes, by its name
+        internal VisualElement RowOf(string name) => name != null && rowsByName.TryGetValue(name, out var row) ? row : null;
+
+        // A row of something with a name: hovering it lights what reads it
+        void Named(string name, VisualElement row, PortView pin)
+        {
+            if (string.IsNullOrEmpty(name)) return;
+            rowsByName[name] = row;
+            pin.tooltip = (string.IsNullOrEmpty(pin.Type) ? name : name + ": " + pin.Type) + "\nDrag from here to where it's used, or pick it there by its name.";
+            row.RegisterCallback<PointerEnterEvent>(_ => Frame.Light(name, 0, true));
+            row.RegisterCallback<PointerLeaveEvent>(_ => Frame.Light(name, 0, false));
+        }
+
         public override void Build()
         {
             Clear();
             Ports.Clear();
+            rowsByName.Clear();
             var e = Owner;
             var r = Routine;
             if (e == null || r == null) return;
@@ -1067,7 +1279,7 @@ namespace Tide.Editor
                 for (var i = 0; parameters != null && i < parameters.Items.Count; i++) Param(parameters, parameters.Items[i], 0, sample);
                 var function = Frame.TakesInputs;
                 if ((parameters?.Items.Count ?? 0) == 0 && kind != "handler" && kind != "command")
-                    Body.Add(GraphLook.Text(function ? "It takes nothing yet." : "Nothing yet. Add what it needs: its code reads each from a pin.", "tg-empty"));
+                    Body.Add(GraphLook.Text(function ? "It takes nothing yet." : "Nothing yet. Add what it needs: its code uses each by its name.", "tg-empty"));
                 Button needs = null;
                 needs = GraphLook.Labelled("plus", RowWords(addRow) ?? RowWords(GraphSchema.AddRow("function", false)), () => Frame.OpenNeeds(needs, parameters, sample), "tg-add-row");
                 needs.name = "needs";
@@ -1158,6 +1370,7 @@ namespace Tide.Editor
                 pin.Connected = Frame.NameIsRead(t.Str("name"));
                 pin.SetType(changed ? null : type);
                 row.Add(pin);
+                Named(t.Str("name"), row, pin);
             }
             Body.Add(row);
         }
@@ -1176,6 +1389,7 @@ namespace Tide.Editor
             pin.Connected = Frame.NameIsRead(p.Str("name"));
             pin.SetType(type);
             row.Add(pin);
+            Named(p.Str("name"), row, pin);
             Body.Add(row);
             Problems(id, row);
         }
@@ -1275,6 +1489,7 @@ namespace Tide.Editor
                 pin.Connected = Frame.NameIsRead(p.Str("name"));
                 pin.SetType(mode == "query" ? null : p.Str("type"));
                 row.Add(pin);
+                Named(p.Str("name"), row, pin);
             }
             Body.Add(row);
             if (p.Get("default") != null)

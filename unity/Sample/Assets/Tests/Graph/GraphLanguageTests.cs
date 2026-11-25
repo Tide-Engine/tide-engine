@@ -227,30 +227,31 @@ public class GraphLanguageTests
         listed.Pick();
         Assert.IsTrue(window.Board.Nodes.Contains(12));
 
-        // What reads the parameter isn't a node: its wire comes from the parameter's pin, of the parameter's type
+        // What the return gives is in its input: the parameter and its field are no nodes, and there's no wire
         Assert.IsFalse(frame.Views.ContainsKey(17));
-        Assert.IsTrue(frame.Hidden.Contains(17));
-        var pin = frame.Entry.ReadPin("ball");
-        Assert.AreSame(pin, frame.SourcePin(17));
-        Assert.AreEqual("Ball", pin.Type);
+        Assert.IsFalse(frame.Views.ContainsKey(16));
+        Assert.IsTrue(frame.Hidden.Contains(16) && frame.Hidden.Contains(17));
+        Assert.IsNull(frame.SourcePin(16));
+        var gives = frame.Views[15];
+        var chip = gives.Q("in:value").Q("chip");
+        CollectionAssert.AreEqual(new[] { "ball", ".hits" }, chip.Query<Button>().ToList().Select(b => b.text).ToList());
+        Assert.AreEqual("Ball", frame.Entry.ReadPin("ball").Type);
         // ...and one nothing reads is a small node, faded
         Assert.IsTrue(frame.Views[18].ClassListContains("tg-node--unreached"));
 
-        // Each value's type: on the node and its pin, and on the input it's wired to
+        // Each value's type: the chip is in its value's type's colour, and says it
         Assert.AreEqual("int", window.Checked.Types[16]);
         Assert.AreEqual("Ball", window.Checked.Types[17]);
-        var member = frame.Views[16];
-        Assert.AreEqual("int", member.TypeText);
-        Assert.AreEqual("int", member.DataOut.Type);
-        Assert.AreEqual("Ball", member.Input("object").Type, "what it's of");
-        Assert.AreNotEqual(TideGraphTypes.Untyped, member.DataOut.Tint);
+        Assert.AreEqual("int", frame.TypeAt(16));
+        StringAssert.StartsWith("int", chip.tooltip);
+        Assert.AreEqual(TideGraphTypes.ColorOf("int", window.Light), chip.style.color.value);
+        Assert.AreNotEqual(TideGraphTypes.Untyped, chip.style.color.value);
+        Assert.AreEqual("int", frame.Wanted(gives.Node, new WirePath("value")), "what a return gives is its code's result");
         // ...and what tidels says of it
         string hover = null;
         TideGraphLanguage.Hover(window, 16, text => hover = text);
         for (var clock = Stopwatch.StartNew(); hover == null && clock.Elapsed.TotalSeconds < 30;) yield return null;
         StringAssert.Contains("int hits", hover);
-        member.SetHover(hover);
-        StringAssert.Contains("int hits", member.Q(className: "tg-node-head").tooltip);
         window.Close();
     }
 
@@ -295,18 +296,34 @@ public class GraphLanguageTests
         StringAssert.Contains("ball.Bounce(2.5);\n    Missing();", window.Checked.Text.Replace("\r\n", "\n"));
         Assert.IsFalse(window.Checked.Diagnostics.Any(d => d.Severity == "error" && d.Id != 13), string.Join("; ", window.Checked.Diagnostics.Select(d => $"@{d.Id} {d.Message}")));
 
-        // A member node picks its member from what its value has
-        popup = board.OpenMemberSearch(frame, 16, frame.Views[16]);
+        // The method's node is titled with what it's of, which is no node any more, and has no row for it
+        frame = Hit(window);
+        var called = frame.ViewOf(method.Wire("id"));
+        Assert.IsTrue(frame.Hidden.Contains(18), "the ball is in the title");
+        Assert.AreEqual("ball", called.Q(className: "tg-node-head").Q("chip").Q<Button>("part0").text);
+        Assert.AreEqual("Bounce", called.Q<TextField>("title").value);
+        Assert.IsNull(called.Q("in:object"));
+        Assert.AreEqual("height", called.Q("in:args.0").Q<Label>(className: "tg-port-label").text, "its argument is named by the method's parameter");
+        Assert.AreEqual("float", frame.Wanted(method, new WirePath("args", 0)), "and takes its type");
+        // It picks its member from what its value has
+        popup = board.OpenMemberSearch(frame, method.Wire("id"), called);
         yield return Answered(popup);
         Assert.IsTrue(popup.Entries.All(e => e.Group == "Members of Ball"), Titles(popup));
-        Assert.IsTrue(popup.Pick("Bounce(height)"));
-        var retargeted = GraphDocument.NodeIn(frame.Graph, 16);
-        Assert.AreEqual("method", retargeted.Str("k"));
-        Assert.AreEqual("Bounce", retargeted.Str("name"));
-        Assert.AreEqual(17, retargeted.Wire("object"));
+        Assert.IsTrue(popup.Pick("hits"));
+        var retargeted = GraphDocument.NodeIn(frame.Graph, method.Wire("id"));
+        Assert.AreEqual("member", retargeted.Str("k"));
+        Assert.AreEqual("hits", retargeted.Str("member"));
+        Assert.AreEqual(18, retargeted.Wire("object"));
         Undo.PerformUndo();
         frame = Hit(window);
-        Assert.AreEqual("member", GraphDocument.NodeIn(frame.Graph, 16).Str("k"));
+        Assert.AreEqual("method", GraphDocument.NodeIn(frame.Graph, method.Wire("id")).Str("k"));
+        // A part of a path shown in an input is changed from there on: what the ball has that the return can give
+        var values = board.PickValue(frame, GraphDocument.NodeIn(frame.Graph, 15), new WirePath("value"), "value", frame.Views[15], 1);
+        yield return Until(() => !values.Asking, "tidels says what a Ball has");
+        Assert.AreEqual("ball: which of it?", values.Title);
+        Assert.IsTrue(values.Shown.Any(o => o.Title == "hits"), Titles(values));
+        Assert.IsFalse(values.Shown.Any(o => o.Title.StartsWith("Bounce")), "a method that gives nothing isn't a value: " + Titles(values));
+        window.ClosePopup(values);
 
         // Where a step goes: the game's functions as calls, its types as values of them, the parameter once
         popup = board.OpenSearch(frame, new Vector2(400, 200), null);
@@ -340,7 +357,9 @@ public class GraphLanguageTests
         var read = GraphDocument.NodeIn(frame.Graph, hits.Wire("object"));
         Assert.AreEqual("name", read.Str("k"));
         Assert.AreEqual("ball", read.Str("name"));
-        Assert.IsTrue(frame.Hidden.Contains(read.Wire("id")), "the read is a wire from the pin, not a node");
+        frame = Hit(window);
+        Assert.IsTrue(frame.Hidden.Contains(read.Wire("id")), "the read is in the member's title, not a node");
+        Assert.AreEqual("ball", frame.Views[hits.Wire("id")].Q(className: "tg-node-head").Q("chip").Q<Button>("part0").text);
         window.Close();
     }
 
@@ -384,7 +403,11 @@ public class GraphLanguageTests
         Assert.IsFalse(picker.Shown.Any(o => o.Title == "Shaken"), "an event isn't a field's type, and isn't offered: " + Titles(picker));
         Assert.IsTrue(picker.Shown.Any(o => o.Title == "Pair of…"), "a generic struct asks what it's of: " + Titles(picker));
         Assert.IsTrue(picker.Shown.Any(o => o.Title == "List of…" && o.Section == GraphSchema.TypeGroup("builders")), Titles(picker));
-        Assert.IsTrue(picker.Shown.Any(o => o.Title == "Random" && o.Section == GraphSchema.TypeGroup("game")), "the engine's own, under the game's: " + Titles(picker));
+        // "In this game" is what the game declares (tide/graphNames): the engine's own are with the rest
+        Assert.AreEqual("enum", window.Checked.Game["Mood"], string.Join(", ", window.Checked.Game.Keys));
+        Assert.IsFalse(window.Checked.Game.ContainsKey("Random"));
+        Assert.IsTrue(picker.Shown.Any(o => o.Title == "Random" && o.Section == GraphSchema.TypeGroup("rest")), "the engine's own, with the rest: " + Titles(picker));
+        Assert.IsFalse(picker.Shown.Any(o => o.Section == GraphSchema.TypeGroup("game") && window.Checked.IsGames(o.Title.Replace(" of…", "")) == false), "nothing of the engine's is the game's: " + Titles(picker));
         Assert.IsFalse(picker.Shown.Any(o => o.Title == "Wobble" || o.Title == "Transform"), "a component isn't a field's type, and isn't offered");
         Assert.IsFalse(picker.Shown.Any(o => o.Title == "List" || o.Title == "void" || o.Title == "mut"), "nothing that isn't a type one can pick: " + Titles(picker));
         // Typing completes: the first match is taken by Enter
@@ -749,6 +772,166 @@ public class GraphLanguageTests
     // The story: what a first-time user does, through what the board's own clicks and keys call. With
     // TIDE_GRAPH_SHOTS set, and a graphics device, each step is a picture too.
 
+    const string SpinGraph =
+        "{\"tidegraph\": 1, \"nextId\": 90, \"decls\": [\n" +
+        "  {\"kind\": \"scene\", \"id\": 1, \"name\": \"Main\", \"members\": []},\n" +
+        "  {\"kind\": \"enum\", \"id\": 70, \"name\": \"Mood\", \"members\": [{\"id\": 71, \"name\": \"Calm\"}, {\"id\": 72, \"name\": \"Wild\"}]},\n" +
+        "  {\"kind\": \"const\", \"id\": 60, \"name\": \"SPEED\", \"type\": \"float\", \"value\": {\"root\": 61, \"nodes\": [{\"id\": 61, \"k\": \"float\", \"x\": 0, \"y\": 0, \"text\": \"2.0\"}]}},\n" +
+        "  {\"kind\": \"component\", \"id\": 2, \"name\": \"Wobble\", \"members\": [\n" +
+        "    {\"kind\": \"field\", \"id\": 3, \"type\": \"float\", \"name\": \"frequency\"},\n" +
+        "    {\"kind\": \"field\", \"id\": 4, \"type\": \"float\", \"name\": \"phase\"},\n" +
+        "    {\"kind\": \"field\", \"id\": 5, \"type\": \"float3\", \"name\": \"axis\"},\n" +
+        "    {\"kind\": \"field\", \"id\": 6, \"type\": \"Mood\", \"name\": \"mood\"}]},\n" +
+        "  {\"kind\": \"function\", \"id\": 40, \"x\": 0, \"y\": 600, \"name\": \"Twice\", \"returnType\": \"float\", \"params\": [{\"id\": 41, \"mode\": \"read\", \"type\": \"float\", \"name\": \"amount\"}], \"body\": {\"entry\": 42, \"nodes\": [\n" +
+        "    {\"id\": 42, \"k\": \"return\", \"x\": 300, \"y\": 0, \"value\": 43},\n" +
+        "    {\"id\": 43, \"k\": \"binary\", \"x\": 0, \"y\": 100, \"op\": \"*\", \"lhs\": 44, \"rhs\": 45},\n" +
+        "    {\"id\": 44, \"k\": \"name\", \"x\": 0, \"y\": 236, \"name\": \"amount\"},\n" +
+        "    {\"id\": 45, \"k\": \"unary\", \"x\": 0, \"y\": 236, \"op\": \"-\", \"value\": 46},\n" +
+        "    {\"id\": 46, \"k\": \"int\", \"x\": 0, \"y\": 236, \"text\": \"2\"}]}},\n" +
+        "  {\"kind\": \"system\", \"id\": 10, \"x\": 0, \"y\": 0, \"name\": \"Spin\", \"params\": [{\"id\": 11, \"mode\": \"mut\", \"type\": \"Wobble\", \"name\": \"wobble\"}, {\"id\": 18, \"mode\": \"read\", \"type\": \"Time\", \"name\": \"time\"}],\n" +
+        "   \"body\": {\"entry\": 80, \"nodes\": [\n" +
+        "    {\"id\": 80, \"k\": \"var\", \"x\": 0, \"y\": 0, \"name\": \"speed\", \"value\": 81, \"next\": 12},\n" +
+        "    {\"id\": 81, \"k\": \"float\", \"x\": 0, \"y\": 112, \"text\": \"1.5\"},\n" +
+        "    {\"id\": 12, \"k\": \"assign\", \"x\": 552, \"y\": 0, \"op\": \"+=\", \"target\": 13, \"value\": 15, \"next\": 20},\n" +
+        "    {\"id\": 13, \"k\": \"member\", \"x\": 552, \"y\": 136, \"object\": 14, \"member\": \"phase\"},\n" +
+        "    {\"id\": 14, \"k\": \"name\", \"x\": 552, \"y\": 136, \"name\": \"wobble\"},\n" +
+        "    {\"id\": 15, \"k\": \"call\", \"x\": 260, \"y\": 136, \"name\": \"Twice\", \"args\": [16]},\n" +
+        "    {\"id\": 16, \"k\": \"member\", \"x\": 260, \"y\": 136, \"object\": 17, \"member\": \"frequency\"},\n" +
+        "    {\"id\": 17, \"k\": \"name\", \"x\": 260, \"y\": 136, \"name\": \"wobble\"},\n" +
+        "    {\"id\": 20, \"k\": \"assign\", \"x\": 1152, \"y\": 0, \"op\": \"=\", \"target\": 21, \"value\": 23, \"next\": 30},\n" +
+        "    {\"id\": 21, \"k\": \"member\", \"x\": 1152, \"y\": 136, \"object\": 22, \"member\": \"frequency\"},\n" +
+        "    {\"id\": 22, \"k\": \"name\", \"x\": 1152, \"y\": 136, \"name\": \"wobble\"},\n" +
+        "    {\"id\": 23, \"k\": \"method\", \"x\": 860, \"y\": 136, \"object\": 24, \"name\": \"Clamp\", \"args\": [25, 26, 27]},\n" +
+        "    {\"id\": 24, \"k\": \"name\", \"x\": 860, \"y\": 136, \"name\": \"Math\"},\n" +
+        "    {\"id\": 25, \"k\": \"member\", \"x\": 860, \"y\": 136, \"object\": 28, \"member\": \"frequency\"},\n" +
+        "    {\"id\": 28, \"k\": \"name\", \"x\": 860, \"y\": 136, \"name\": \"wobble\"},\n" +
+        "    {\"id\": 26, \"k\": \"int\", \"x\": 860, \"y\": 136, \"text\": \"0\"},\n" +
+        "    {\"id\": 27, \"k\": \"name\", \"x\": 860, \"y\": 136, \"name\": \"SPEED\"},\n" +
+        "    {\"id\": 30, \"k\": \"assign\", \"x\": 1484, \"y\": 0, \"op\": \"=\", \"target\": 31, \"value\": 33},\n" +
+        "    {\"id\": 31, \"k\": \"member\", \"x\": 1484, \"y\": 136, \"object\": 32, \"member\": \"mood\"},\n" +
+        "    {\"id\": 32, \"k\": \"name\", \"x\": 1484, \"y\": 136, \"name\": \"wobble\"},\n" +
+        "    {\"id\": 33, \"k\": \"member\", \"x\": 1484, \"y\": 136, \"shorthand\": true, \"member\": \"Wild\"}\n" +
+        "  ]}}\n" +
+        "]}\n";
+
+    // Simple values are in the input that reads them (the schema's `inline`), a call's arguments are named by its
+    // callee's parameters and take their types (tide/graphCalls), a method is titled with what it's of, and an
+    // input is picked from what fits it
+    [UnityTest]
+    public IEnumerator SimpleValuesAreInTheInput()
+    {
+        NeedTidels();
+        var game = GameIn("GraphInputs");
+        foreach (var old in Directory.GetFiles(game, "*.tidegraph")) File.Delete(old);
+        var path = Path.Combine(game, "Spin.tidegraph");
+        File.WriteAllText(path, SpinGraph, new UTF8Encoding(false));
+        using var logged = new Logged();
+        var window = TideGraphWindow.Open(path);
+        GraphShots.Size(window);
+        yield return Checked(window);
+        var board = window.Board;
+        window.Reveal(10);
+        var frame = board.Frame(10);
+
+        // A local, three Sets and the two calls that work a value out: six nodes of the file's twenty-one
+        CollectionAssert.AreEquivalent(new[] { 80, 12, 15, 20, 23, 30 }, frame.Views.Keys);
+        Assert.AreEqual(21, GraphDocument.Nodes(frame.Graph).Items.Count);
+        var opened = window.Doc.Text;
+        Assert.IsFalse(window.Dirty, "showing them where they're read changes nothing of the file");
+        Assert.AreEqual("1.5", frame.Views[80].Q("in:value").Q<TextField>("typed").value, "a number is typed where it's read");
+        Assert.AreEqual("wobble.phase", frame.TextOf(frame.ShownIn(13)));
+        Assert.AreEqual(".Wild", frame.TextOf(frame.ShownIn(33)), "a choice of what's expected");
+        Assert.AreEqual("+=", frame.Views[12].Q("in:value").Q<Button>("op").text);
+        Assert.IsTrue(frame.Views[12].Input("value").Connected, "what's worked out is wired in");
+        Assert.IsFalse(frame.Views[12].Input("target").Connected);
+        // A call's arguments are named by its callee's parameters, and take their types
+        var twice = frame.Views[15];
+        Assert.AreEqual("amount", twice.Q("in:args.0").Q<Label>(className: "tg-port-label").text);
+        Assert.AreEqual("float", frame.Wanted(twice.Node, new WirePath("args", 0)));
+        Assert.AreEqual("float", frame.Wanted(frame.Views[12].Node, new WirePath("value")), "a Set's value takes what it changes");
+        // A method of something shown is titled with it, and has no row for it
+        var clamp = frame.Views[23];
+        Assert.IsNull(clamp.Q("in:object"));
+        Assert.AreEqual("Math", clamp.Q(className: "tg-node-head").Q("chip").Q<Button>("part0").text);
+        Assert.AreEqual("Clamp", clamp.Q<TextField>("title").value);
+        CollectionAssert.AreEqual(new[] { "x", "a", "b" }, Enumerable.Range(0, 3).Select(i => clamp.Q("in:args." + i).Q<Label>(className: "tg-port-label").text).ToList());
+        Assert.AreEqual("0", clamp.Q("in:args.1").Q<TextField>("typed").value);
+        Assert.AreEqual("SPEED", clamp.Q("in:args.2").Q("chip").Q<Button>("part0").text, "a constant is a name");
+        // What the game declares, by name: the engine's own aren't among them
+        Assert.AreEqual("component", window.Checked.Game["Wobble"]);
+        Assert.AreEqual("function", window.Checked.Game["Twice"]);
+        Assert.IsFalse(window.Checked.Game.ContainsKey("Transform"));
+        yield return GraphShots.Take(window, "40-values-in-their-inputs");
+
+        // What goes in Twice's amount: a float typed, what this code has that is one or has one, the game's
+        // constants and functions
+        GraphShots.Click(twice.Q("in:args.0").Q("chip").Q<Button>("part0"));
+        var values = (GraphValuePicker)window.Popup;
+        yield return Until(() => !values.Asking, "tidels says what can go there");
+        Assert.AreEqual("What goes in 'amount'?", values.Title);
+        Assert.AreEqual("float", values.Wanted);
+        Assert.AreEqual("What this code has", values.Shown.First(o => o.Title == "speed").Section, "a local declared before it: " + Titles(values));
+        Assert.IsTrue(values.Shown.Any(o => o.Title == "wobble") && values.Shown.Any(o => o.Title == "time"), "what has a float in it opens to it: " + Titles(values));
+        Assert.AreEqual("Constants", values.Shown.First(o => o.Title == "SPEED").Section);
+        Assert.IsTrue(values.Shown.Any(o => o.Title == "Twice(amount)"), "a function that gives a float: " + Titles(values));
+        Assert.IsFalse(values.Shown.Any(o => o.Title.StartsWith("Spawn") || o.Title.StartsWith("Send")), "not the engine's steps: " + Titles(values));
+        yield return GraphShots.Take(window, "41-what-fits-a-float");
+        // What's typed is a value when it reads as a float, and the names found as they're typed
+        values.Type("true");
+        Assert.IsFalse(values.Shown.Any(o => o.Section == "A value" && o.Title == "true"), "true isn't a float: " + Titles(values));
+        values.Type("0.25");
+        Assert.AreEqual("0.25", values.Shown[0].Title);
+        values.Type("dt");
+        Assert.AreEqual("time.dt", values.Shown[0].Title, Titles(values));
+        values.Type("math");
+        Assert.AreEqual("Math", values.Shown[0].Title, "the engine's namespaces are found by name: " + Titles(values));
+        Assert.IsTrue(values.PickCurrent());
+        Assert.AreSame(values, window.Popup, "and open to what they have");
+        yield return Until(() => !values.Asking, "tidels says what Math has");
+        Assert.IsTrue(values.Shown.Any(o => o.Title.StartsWith("Sin(")), Titles(values));
+        values.Type("sqrt");
+        yield return GraphShots.Take(window, "42-what-math-has");
+        Assert.IsTrue(values.PickCurrent());
+        frame = board.Frame(10);
+        var sqrt = GraphDocument.NodeIn(frame.Graph, GraphDocument.NodeIn(frame.Graph, 15).Arr("args").Items[0].Number > 0 ? (int)GraphDocument.NodeIn(frame.Graph, 15).Arr("args").Items[0].Number : 0);
+        Assert.AreEqual("method", sqrt.Str("k"), "a call is a node, wired in");
+        Assert.AreEqual("Sqrt", sqrt.Str("name"));
+        Assert.AreEqual("Math", GraphDocument.NodeIn(frame.Graph, sqrt.Wire("object")).Str("name"));
+        Assert.IsTrue(frame.Views.ContainsKey(sqrt.Wire("id")));
+        Assert.IsNull(window.Doc.Find(16), "what was in the input went with it");
+        Undo.PerformUndo();
+        frame = board.Frame(10);
+        Assert.AreEqual(opened, window.Doc.Text);
+
+        // A part of a path clicked changes it from there on
+        GraphShots.Click(frame.Views[15].Q("in:args.0").Q("chip").Q<Button>("part1"));
+        values = (GraphValuePicker)window.Popup;
+        yield return Until(() => !values.Asking, "tidels says what a Wobble has");
+        Assert.AreEqual("wobble: which of it?", values.Title);
+        Assert.AreNotEqual("‹ Back", values.Shown[0].Title, "Enter takes something it has");
+        Assert.IsTrue(values.Choose("phase"));
+        yield return CheckedAgain(window);
+        StringAssert.Contains("wobble.phase += Twice(wobble.phase);", window.Checked.Text);
+        // A local isn't offered for its own value, and a parameter's pin dropped on an input fills it
+        frame = board.Frame(10);
+        values = board.PickValue(frame, frame.Views[80].Node, new WirePath("value"), "value", frame.Views[80]);
+        yield return Until(() => !values.Asking, "tidels says what can go there");
+        Assert.IsFalse(values.Shown.Any(o => o.Title == "speed"), Titles(values));
+        window.ClosePopup(values);
+        Assert.IsTrue(board.Connect(frame.Entry.ReadPin("time"), frame.Views[15].Input("args.0"), out var why), why);
+        frame = board.Frame(10);
+        Assert.AreEqual("time", frame.Views[15].Q("in:args.0").Q("chip").Q<Button>("part0").text);
+        Assert.AreEqual(6, frame.Views.Count, "a chip, not a node");
+
+        // The function's "-2": a '-' over a number, typed in the input
+        window.Reveal(40);
+        var body = board.Frame(40);
+        CollectionAssert.AreEquivalent(new[] { 42, 43 }, body.Views.Keys);
+        Assert.AreEqual("-2", body.Views[43].Q("in:rhs").Q<TextField>("typed").value);
+        Assert.AreEqual("amount", body.Views[43].Q("in:lhs").Q("chip").Q<Button>("part0").text);
+        window.Close();
+    }
+
     [UnityTest]
     public IEnumerator TheStoryFromAnEmptyFile() => Story(false);
 
@@ -761,8 +944,9 @@ public class GraphLanguageTests
         // A game of its own for each telling: what tidels knows of one isn't the other's
         var game = GameIn(light ? "GraphStoryLight" : "GraphStory");
         foreach (var old in Directory.GetFiles(game, "*.tidegraph")) File.Delete(old);
-        // The game has a scene already, as a game does: the file being made is the first of its code
-        File.WriteAllText(Path.Combine(game, "main.tide"), "scene Main {\n}\n");
+        // The game has a scene already, as a game does, and something in it that will have the component the
+        // story makes: the file being made is the first of its code
+        File.WriteAllText(Path.Combine(game, "main.tide"), "scene Main {\n}\n\nevent(Spawned) Setup(with Main)\n{\n    Spawn(Wobble);\n}\n");
         var path = Path.Combine(game, "Story.tidegraph");
         File.WriteAllText(path, TideGraphImporter.EmptyText, new UTF8Encoding(false));
         using var logged = new Logged();
@@ -778,8 +962,6 @@ public class GraphLanguageTests
         yield return GraphShots.Take(window, "01-empty-file");
         board.OpenAdd(null, window.rootVisualElement.Q<Button>("add"));
         yield return GraphShots.Take(window, "02-add-menu");
-        ((GraphOptionList)window.Popup).Type("ev");
-        yield return GraphShots.Take(window, "03-add-menu-searched");
         window.ClosePopup(window.Popup);
 
         // 2. A component, from the start's first choice: its name is typed, then Enter goes on to its first field
@@ -787,7 +969,6 @@ public class GraphLanguageTests
         var wobble = window.Doc.Decls.Items.Single().Wire("id");
         Assert.AreEqual(wobble, board.Fresh);
         Assert.IsNull(board.Q<Label>(className: "tg-start-title"), "the start goes");
-        yield return GraphShots.Take(window, "04-new-component");
         var name = board.Card(wobble).Q<TextField>("name");
         name.SetValueWithoutNotify("Wobble");
         GraphShots.Key(name, KeyCode.Return);
@@ -795,7 +976,6 @@ public class GraphLanguageTests
         Assert.AreEqual("Wobble", decl.Str("name"));
         var frequency = decl.Arr("members").Items.Single();
         Assert.AreEqual(frequency.Wire("id"), board.Fresh, "Enter on a new card's name starts its first field");
-        yield return GraphShots.Take(window, "05-first-field");
         name = board.Card(wobble).Q<TextField>("name" + frequency.Wire("id"));
         GraphShots.Enter(name, "frequency");
         // Its type, picked: the list completes as it's typed
@@ -803,195 +983,276 @@ public class GraphLanguageTests
         var picker = (GraphTypePicker)window.Popup;
         yield return Asked(picker);
         Assert.IsTrue(picker.FromServer);
-        yield return GraphShots.Take(window, "06-type-picker");
+        yield return GraphShots.Take(window, "03-type-picker");
         picker.Type("fl");
         Assert.AreEqual("float", picker.Shown[0].Title);
-        yield return GraphShots.Take(window, "07-type-picker-typed");
         Assert.IsTrue(picker.PickCurrent());
         Assert.AreEqual("float", frequency.Str("type"), "the first match is taken");
+        // A starting value, typed
+        GraphShots.Enter(board.Card(wobble).Q("row" + frequency.Wire("id")).Q(className: "tg-row-value").Q<TextField>(), "2");
         // Enter in the field's name: the next field, of the same type
         name = board.Card(wobble).Q<TextField>("name" + frequency.Wire("id"));
         GraphShots.Key(name, KeyCode.Return);
-        var amplitude = decl.Arr("members").Items[1];
-        Assert.AreEqual("float", amplitude.Str("type"));
-        GraphShots.Enter(board.Card(wobble).Q<TextField>("name" + amplitude.Wire("id")), "amplitude");
-        // A starting value, typed
-        GraphShots.Enter(board.Card(wobble).Q("row" + amplitude.Wire("id")).Q(className: "tg-row-value").Q<TextField>(), "0.5");
+        var phase = decl.Arr("members").Items[1];
+        Assert.AreEqual("float", phase.Str("type"));
+        GraphShots.Enter(board.Card(wobble).Q<TextField>("name" + phase.Wire("id")), "phase");
         yield return CheckedAgain(window);
         Assert.AreEqual("Checked", window.ChipText, string.Join("; ", window.Checked.Diagnostics.Select(d => d.Message)));
-        StringAssert.Contains("component Wobble {\n    float frequency;\n    float amplitude = 0.5;\n}", window.Checked.Text.Replace("\r\n", "\n"));
-        yield return GraphShots.Take(window, "08-two-fields");
-        // The pointer on a row shows what else there is for it, and the keyboard is where a type is picked
-        GraphShots.Hover(window, board.Card(wobble).Q("row" + frequency.Wire("id")));
-        board.Card(wobble).Q<GraphTypeChip>("type" + amplitude.Wire("id")).Focus();
-        yield return GraphShots.Take(window, "08b-pointer-and-keyboard");
-        board.Focus();
-        // What else a component can have: its menu
-        GraphShots.Click(board.Card(wobble).Q<Button>("more"));
-        CollectionAssert.AreEqual(new[] { "method", "property", "tweak", "text" }, ((GraphOptionList)window.Popup).Shown.Where(o => o.Section == "Add").Select(o => (string)o.Data));
-        yield return GraphShots.Take(window, "09-card-menu");
-        window.ClosePopup(window.Popup);
+        StringAssert.Contains("component Wobble {\n    float frequency = 2;\n    float phase;\n}", window.Checked.Text.Replace("\r\n", "\n"));
+        yield return GraphShots.Take(window, "04-component-wobble");
 
         // 3. A system over it, from the add menu: named, then Enter asks what it needs
         var menu = board.OpenAdd(null, window.rootVisualElement.Q<Button>("add"));
         Assert.IsTrue(menu.Pick(GraphSchema.DeclTitle("system")));
-        var shake = window.Doc.Decls.Items.Last().Wire("id");
-        var frame = board.Frame(shake);
+        var spin = window.Doc.Decls.Items.Last().Wire("id");
+        var frame = board.Frame(spin);
         Assert.IsNotNull(frame);
         Assert.AreEqual(GraphSchema.Sentence("system", false), frame.Entry.Q<Label>(className: "tg-node-title").text);
-        yield return GraphShots.Take(window, "10-new-system");
         name = frame.Q<TextField>("name");
-        name.SetValueWithoutNotify("Shake");
+        name.SetValueWithoutNotify("Spin");
         GraphShots.Key(name, KeyCode.Return);
-        Assert.AreEqual("Shake", window.Doc.Get(shake).Str("name"));
+        Assert.AreEqual("Spin", window.Doc.Get(spin).Str("name"));
         yield return Until(() => window.Popup is GraphOptionList, "Enter on a new system's name asks what it needs");
         var needs = (GraphOptionList)window.Popup;
         yield return Until(() => string.IsNullOrEmpty(needs.Status), "tidels says what it can take");
         Assert.AreEqual("Wobble", needs.Shown[0].Title, "the file's own component first: " + Titles(needs));
-        yield return GraphShots.Take(window, "11-what-it-needs");
+        yield return GraphShots.Take(window, "05-what-it-needs");
         Assert.IsTrue(needs.Pick("Wobble"));
-        frame = board.Frame(shake);
-        var takes = window.Doc.Get(shake).Arr("params").Items.Single();
+        frame = board.Frame(spin);
+        var takes = window.Doc.Get(spin).Arr("params").Items.Single();
         Assert.AreEqual("read", takes.Str("mode"));
         Assert.AreEqual("wobble", takes.Str("name"));
-        var pin = frame.Entry.ReadPin("wobble");
-        Assert.IsNotNull(pin, "what it takes has a pin");
-        Assert.AreEqual(GraphSchema.ParamModeInfo("read").Label, frame.Entry.Q<Button>("mode" + takes.Wire("id")).text, "and says how it's taken, in words");
-        yield return GraphShots.Take(window, "12-takes-wobble");
-
-        // 4. wobble.frequency, wired into something: a wire dragged from the pin and dropped asks what to do with it
-        var search = board.OpenSearch(frame, new Vector2(440, 150), pin.Port);
-        yield return Answered(search);
-        Assert.AreEqual("frequency", search.Entries[0].Title, Titles(search));
-        yield return GraphShots.Take(window, "13-wire-dropped");
-        Assert.IsTrue(search.Pick("frequency"));
-        frame = board.Frame(shake);
-        var member = frame.Views.Values.Single();
-        Assert.AreEqual("member", member.Node.Str("k"));
-        Assert.AreSame(frame.Entry.ReadPin("wobble"), frame.SourcePin(member.Node.Wire("object")), "wired from the parameter's pin");
-        // What happens: from the entry's arrow
-        search = board.OpenSearch(frame, new Vector2(700, 60), frame.Entry.Ports.First(p => p.Port.Exec).Port);
-        yield return Answered(search);
-        yield return GraphShots.Take(window, "14-what-happens");
-        search.Type("assign");
-        Assert.IsTrue(search.PickCurrent());
-        frame = board.Frame(shake);
-        var assign = frame.Views.Values.First(v => v.Node.Str("k") == "assign");
-        // A step just added has nothing wired into it: the file is still checked, and the pins that need a wire
-        // say so themselves
-        yield return CheckedAgain(window);
-        var holes = window.Checked.Diagnostics.Where(d => d.Id == assign.Id && d.Port != null).ToList();
-        CollectionAssert.AreEquivalent(new[] { "target", "value" }, holes.Select(d => d.Port), string.Join("; ", window.Checked.Diagnostics.Select(d => $"@{d.Id} {d.Port} {d.Message}")));
-        StringAssert.Contains("system Shake", window.Checked.Text, "the rest of the file is still read");
-        frame = board.Frame(shake);
-        assign = frame.Views.Values.First(v => v.Node.Str("k") == "assign");
-        Assert.IsTrue(assign.Q("in:target").ClassListContains("tg-port-row--problem"), "the empty pin is marked");
-        Assert.IsTrue(assign.Q("in:value").ClassListContains("tg-port-row--problem"));
-        yield return GraphShots.Take(window, "14b-nothing-wired-yet");
-        member = frame.Views.Values.First(v => v.Node.Str("k") == "member");
-        Assert.IsTrue(board.Connect(member.DataOut, assign.Input("target"), out var why), why);
-        // Its value, typed on its input
-        frame.TypeInto(assign.Node, new WirePath("value"), "2.5", assign);
-        Assert.AreEqual(2, board.Frame(shake).Views.Count, "the member and the assignment: the read and the number aren't nodes");
-        yield return CheckedAgain(window);
-        StringAssert.Contains("system Shake(Wobble wobble) {\n    wobble.frequency = 2.5;\n}", window.Checked.Text.Replace("\r\n", "\n"));
-        frame = board.Frame(shake);
-        Assert.IsFalse(frame.Query<VisualElement>(className: "tg-port-row--problem").ToList().Any(r => r.name == "in:target" || r.name == "in:value"), "wired, the pins' marks are gone");
-
-        // 5. An error, on what it's about, in the compiler's words: the system only reads the wobble it changes
-        Assert.AreEqual("1 problem", window.ChipText, string.Join("; ", window.Checked.Diagnostics.Select(d => d.Message)));
-        frame = board.Frame(shake);
-        member = frame.Views.Values.First(v => v.Node.Str("k") == "member");
-        StringAssert.Contains("read-only", member.ProblemText);
-        Assert.AreEqual(1, board.ProblemsShown().Count(t => t.Contains("read-only")), "said once, where it is");
-        yield return GraphShots.Take(window, "15-a-problem");
-        GraphShots.Click(window.rootVisualElement.Q<Button>("check"));
-        var problems = (GraphOptionList)window.Popup;
-        StringAssert.Contains("read-only", problems.Shown[0].Title);
-        StringAssert.Contains("mut", problems.Shown[0].Detail, "with the compiler's note of what to do");
-        yield return GraphShots.Take(window, "16-problems-list");
-        window.ClosePopup(problems);
-        // Fixed where it is: how the wobble is taken, from "reads" to "changes"
-        var modes = frame.OpenModes(frame.Entry.Q<Button>("mode" + takes.Wire("id")), window.Doc.Get(shake).Arr("params"), takes);
+        Assert.IsNotNull(frame.Entry.RowOf("wobble"), "what it takes has a row");
+        // ...which it changes: how it's taken, from "reads" to "changes"
+        var modes = frame.OpenModes(frame.Entry.Q<Button>("mode" + takes.Wire("id")), window.Doc.Get(spin).Arr("params"), takes);
         yield return Until(() => !modes.Shown.Any(o => (string)o.Data == "out"), "tidels says which ways a system has");
-        yield return GraphShots.Take(window, "17-how-its-taken");
+        yield return GraphShots.Take(window, "06-how-its-taken");
         Assert.IsTrue(modes.Pick(GraphSchema.ParamModeInfo("mut").Label));
         Assert.AreEqual("mut", takes.Str("mode"));
-        // The mark stays until the next check says otherwise, and then nothing of it is left anywhere
+        frame = board.Frame(spin);
+        Assert.AreEqual(GraphSchema.ParamModeInfo("mut").Label, frame.Entry.Q<Button>("mode" + takes.Wire("id")).text, "and says how it's taken, in words");
+        yield return GraphShots.Take(window, "07-system-spin");
+
+        // 4. What happens: a wire dragged from the entry's arrow and dropped asks, and "Set" is the schema's word
+        var search = board.OpenSearch(frame, new Vector2(420, 60), frame.Entry.Ports.First(p => p.Port.Exec).Port);
+        yield return Answered(search);
+        yield return GraphShots.Take(window, "08-what-happens");
+        search.Type("set");
+        Assert.AreEqual(GraphSchema.Spec("assign").Title, search.Entries[0].Title, Titles(search));
+        Assert.IsTrue(search.PickCurrent());
+        frame = board.Frame(spin);
+        var set = frame.Views.Values.Single();
+        Assert.AreEqual("assign", set.Node.Str("k"));
+        Assert.AreEqual("Set", set.Q<Label>(className: "tg-node-title").text);
+        // Its two inputs say "pick…": no pin to wire, nothing to know
+        Assert.AreEqual("pick…", set.Q("in:target").Q<Button>("pick").text);
+        Assert.AreEqual(GraphSchema.PortLabel("target"), set.Q("in:target").Q<Label>(className: "tg-port-label").text);
+        Assert.AreEqual("=", set.Q("in:value").Q<Button>("op").text, "how it's changed is on the value's row");
+        // The check says they're holes, and the editor says it in its own words, on the rows
         yield return CheckedAgain(window);
-        Assert.IsFalse(window.Checked.Diagnostics.Any(d => d.Severity == "error"), string.Join("; ", window.Checked.Diagnostics.Select(d => d.Message)));
-        Assert.IsFalse(board.ProblemsShown().Any(t => t.Contains("read-only")), "no message of the check before stays: " + string.Join(" | ", board.ProblemsShown()));
-        Assert.IsNull(board.Frame(shake).Views.Values.First(v => v.Node.Str("k") == "member").ProblemText);
-        Assert.IsFalse(board.Frame(shake).Query<VisualElement>(className: "tg-node").ToList().Any(n => n.ClassListContains("tg-has-problem")), "and no node is marked");
-        Assert.IsFalse(window.ProblemOptions().Any(o => o.Title.Contains("read-only")));
-        StringAssert.Contains("system Shake(mut Wobble wobble) {\n    wobble.frequency = 2.5;\n}", window.Checked.Text.Replace("\r\n", "\n"));
-        // What the compiler has left to say is the next step of the story: nothing has a Wobble yet. It's on the
-        // system it's about, as a thing to look at, not a problem.
-        var left = window.Checked.Diagnostics.Single();
-        Assert.AreEqual("warning", left.Severity);
-        StringAssert.Contains("never runs", left.Message);
-        Assert.AreEqual(shake, left.Id);
-        Assert.AreEqual("1 thing to look at", window.ChipText);
-        StringAssert.Contains("never runs", board.Frame(shake).Q<Label>(className: "tg-problem").text);
-        yield return GraphShots.Take(window, "18-fixed");
+        var holes = window.Checked.Diagnostics.Where(d => d.Id == set.Id && d.Port != null).ToList();
+        CollectionAssert.AreEquivalent(new[] { "target", "value" }, holes.Select(d => d.Port), string.Join("; ", window.Checked.Diagnostics.Select(d => $"@{d.Id} {d.Port} {d.Message}")));
+        frame = board.Frame(spin);
+        set = frame.Views.Values.Single();
+        Assert.IsTrue(set.Q("in:target").ClassListContains("tg-port-row--problem"), "the empty input is marked");
+        Assert.IsTrue(set.Q("in:value").ClassListContains("tg-port-row--problem"));
+        StringAssert.Contains("Pick what goes in 'what'", set.ProblemText);
+        StringAssert.Contains("Pick what goes in 'value'", set.ProblemText);
+        StringAssert.DoesNotContain("isn't connected", set.ProblemText, "not in the compiler's words");
+        Assert.IsTrue(window.ProblemOptions().Any(o => o.Title == "Pick what goes in 'what'"), "the list says the same");
+        yield return GraphShots.Take(window, "09-set-with-nothing-in-it");
+
+        // 5. What it changes: a click on "pick…" lists what this code has, and wobble opens to its fields
+        GraphShots.Click(set.Q("in:target").Q<Button>("pick"));
+        var values = (GraphValuePicker)window.Popup;
+        yield return Until(() => !values.Asking, "tidels says what can go there");
+        Assert.AreEqual("What goes in 'what'?", values.Title);
+        var offered = values.Shown.First(o => o.Title == "wobble");
+        Assert.AreEqual("What this code has", offered.Section, Titles(values));
+        Assert.IsTrue(values.Shown.Any(o => o.Title == "Work it out…"), Titles(values));
+        yield return GraphShots.Take(window, "10-what-goes-in-what");
+        Assert.IsTrue(values.Choose("wobble"));
+        Assert.AreSame(values, window.Popup, "it opens to what it has");
+        yield return Until(() => !values.Asking, "tidels says what a Wobble has");
+        CollectionAssert.IsSubsetOf(new[] { "frequency", "phase" }, values.Shown.Select(o => o.Title).ToList(), Titles(values));
+        yield return GraphShots.Take(window, "11-wobble-opened");
+        Assert.IsTrue(values.Choose("phase"));
+        Assert.IsNull(window.Popup);
+        frame = board.Frame(spin);
+        set = frame.Views.Values.Single();
+        Assert.AreEqual(1, frame.Views.Count, "the name and the field are in the input: no node, no wire");
+        CollectionAssert.AreEqual(new[] { "wobble", ".phase" }, set.Q("in:target").Q("chip").Query<Button>().ToList().Select(b => b.text).ToList());
+        var target = GraphDocument.NodeIn(frame.Graph, set.Node.Wire("target"));
+        Assert.AreEqual("member", target.Str("k"), "the file has a node for each, as tidec writes them");
+        Assert.AreEqual("name", GraphDocument.NodeIn(frame.Graph, target.Wire("object")).Str("k"));
+        // How it's changed
+        GraphShots.Click(set.Q("in:value").Q<Button>("op"));
+        var ops = (GraphOptionList)window.Popup;
+        yield return GraphShots.Take(window, "12-how-its-changed");
+        Assert.IsTrue(ops.Pick("+="));
+        yield return CheckedAgain(window);
+        frame = board.Frame(spin);
+        set = frame.Views.Values.Single();
+        Assert.IsFalse(set.Q("in:target").ClassListContains("tg-port-row--problem"), "filled, its mark is gone");
+        Assert.AreEqual("Pick what goes in 'value'", set.ProblemText);
+        Assert.AreEqual("1 problem", window.ChipText);
+        yield return GraphShots.Take(window, "13-what-is-picked");
+
+        // 6. With what: the input takes a float now (what it changes is one), so only what's a float is listed
+        GraphShots.Click(set.Q("in:value").Q<Button>("pick"));
+        values = (GraphValuePicker)window.Popup;
+        yield return Until(() => !values.Asking, "tidels says what can go there");
+        Assert.AreEqual("float", values.Wanted, "a Set's value takes what it changes");
+        yield return GraphShots.Take(window, "14-what-goes-in-value");
+        Assert.IsTrue(values.Choose("wobble"));
+        yield return Until(() => !values.Asking, "tidels says what a Wobble has");
+        Assert.IsFalse(values.Shown.Any(o => (o.Data as string) == "itself"), "a Wobble isn't a float: " + Titles(values));
+        Assert.IsTrue(values.Shown.Any(o => (o.Data as string) == "everything"), "what doesn't fit can be asked for");
+        yield return GraphShots.Take(window, "15-only-what-fits");
+        Assert.IsTrue(values.Choose("frequency"));
+        frame = board.Frame(spin);
+        Assert.AreEqual(1, frame.Views.Count, "one node");
+        yield return CheckedAgain(window);
+        StringAssert.Contains("system Spin(mut Wobble wobble) {\n    wobble.phase += wobble.frequency;\n}", window.Checked.Text.Replace("\r\n", "\n"));
+        Assert.AreEqual("Checked", window.ChipText, string.Join("; ", window.Checked.Diagnostics.Select(d => d.Message)));
+        frame = board.Frame(spin);
+        set = frame.Views.Values.Single();
+        Assert.IsNull(set.ProblemText);
+        // It reads as a sentence: Set / what wobble.phase / += wobble.frequency
+        Assert.AreEqual("wobble.phase", frame.TextOf(frame.ShownIn(set.Node.Wire("target"))));
+        Assert.AreEqual("wobble.frequency", frame.TextOf(frame.ShownIn(set.Node.Wire("value"))));
+        Assert.AreEqual("+=", set.Q("in:value").Q<Button>("op").text);
+        yield return GraphShots.Take(window, "16-one-node");
+        // Hovering a chip lights the row it comes from and the other reads of it
+        var chip = set.Q("in:value").Q("chip");
+        frame.Light("wobble", 0, true);
+        Assert.IsTrue(frame.Entry.RowOf("wobble").ClassListContains("tg-lit"));
+        Assert.IsTrue(set.Q("in:target").Q("chip").ClassListContains("tg-lit") && chip.ClassListContains("tg-lit"));
+        yield return GraphShots.Take(window, "17-where-it-comes-from");
+        frame.Light("wobble", 0, false);
+        Assert.IsFalse(frame.Entry.RowOf("wobble").ClassListContains("tg-lit"));
+
+        // 7. More than a name: "Work it out…" makes a node, wired in, with its own inputs to pick
+        GraphShots.Click(chip.Q<Button>("part0"));
+        values = (GraphValuePicker)window.Popup;
+        yield return Until(() => !values.Asking, "tidels says what can go there");
+        Assert.IsTrue(values.Choose("Work it out…"));
+        search = (GraphSearchPopup)window.Popup;
+        yield return Answered(search);
+        search.Type("multiply");
+        yield return GraphShots.Take(window, "18-work-it-out");
+        StringAssert.StartsWith("Multiply", search.Entries[0].Title, Titles(search));
+        Assert.IsTrue(search.PickCurrent());
+        frame = board.Frame(spin);
+        Assert.AreEqual(2, frame.Views.Count, "the Set and what works its value out");
+        var times = frame.Views.Values.First(v => v.Node.Str("k") == "binary");
+        set = frame.Views.Values.First(v => v.Node.Str("k") == "assign");
+        Assert.AreEqual(times.Id, set.Node.Wire("value"), "wired in");
+        Assert.IsNull(set.Q("in:value").Q("chip"), "the value's row has a wire now");
+        Assert.AreEqual(4, GraphDocument.Nodes(frame.Graph).Items.Count, "what was in the input went with it");
+        Assert.AreEqual("pick…", times.Q("in:lhs").Q<Button>("pick").text);
+        Assert.AreEqual("pick…", times.Q("in:rhs").Q<Button>("pick").text);
+        yield return GraphShots.Take(window, "19-a-node-wired-in");
+        // Its inputs: a field found by typing its name, a number typed
+        GraphShots.Click(times.Q("in:lhs").Q<Button>("pick"));
+        values = (GraphValuePicker)window.Popup;
+        yield return Until(() => !values.Asking, "tidels says what can go there");
+        values.Type("freq");
+        Assert.AreEqual("wobble.frequency", values.Shown[0].Title, Titles(values));
+        yield return GraphShots.Take(window, "20-found-by-typing");
+        Assert.IsTrue(values.PickCurrent());
+        frame = board.Frame(spin);
+        times = frame.Views.Values.First(v => v.Node.Str("k") == "binary");
+        GraphShots.Click(times.Q("in:rhs").Q<Button>("pick"));
+        values = (GraphValuePicker)window.Popup;
+        values.Type("2");
+        Assert.AreEqual("2", values.Shown[0].Title, Titles(values));
+        Assert.IsTrue(values.PickCurrent());
+        yield return CheckedAgain(window);
+        StringAssert.Contains("wobble.phase += wobble.frequency * 2;", window.Checked.Text);
+        Assert.AreEqual("Checked", window.ChipText, string.Join("; ", window.Checked.Diagnostics.Select(d => d.Message)));
+        frame = board.Frame(spin);
+        times = frame.Views.Values.First(v => v.Node.Str("k") == "binary");
+        Assert.AreEqual("2", times.Q("in:rhs").Q<TextField>("typed").value, "a number is typed where it is");
+        yield return GraphShots.Take(window, "21-worked-out");
 
         // The Tide isn't on screen until it's asked for
         Assert.IsNull(window.TideView);
         window.ShowTide(true);
-        StringAssert.Contains("wobble.frequency = 2.5;", window.TideView.Text);
-        yield return GraphShots.Take(window, "19-view-as-tide");
+        StringAssert.Contains("wobble.phase += wobble.frequency * 2;", window.TideView.Text);
+        yield return GraphShots.Take(window, "22-view-as-tide");
         window.ShowTide(false);
-        GraphShots.Click(window.rootVisualElement.Q<Button>("menu"));
-        yield return GraphShots.Take(window, "20-board-menu");
-        window.ClosePopup(window.Popup);
-        // A value that's more than a number is a small graph of its own, beside its card
-        var value = board.OpenValue(new GraphSlot(frequency.Wire("id"), "default"));
+        // A value that's more than a number is a small graph of its own, beside its card: picked the same way
+        var value = board.OpenValue(new GraphSlot(phase.Wire("id"), "default"));
         Assert.IsNotNull(value);
         Assert.IsTrue(value.IsValue);
-        var made = board.OpenSearch(value, new Vector2(40, 80), value.Result.Ports[0].Port);
-        made.Type("multiply");
-        Assert.IsTrue(made.PickCurrent());
+        GraphShots.Click(value.Result.Q<Button>("pick"));
+        values = (GraphValuePicker)window.Popup;
+        Assert.AreEqual("float", values.Wanted, "a field's value takes its type");
+        Assert.IsTrue(values.Choose("Work it out…"));
+        search = (GraphSearchPopup)window.Popup;
+        search.Type("multiply");
+        Assert.IsTrue(search.PickCurrent());
         value = board.ValueFrame(value.Slot);
-        var times = value.Views.Values.Single();
+        times = value.Views.Values.Single();
         value.TypeInto(times.Node, new WirePath("lhs"), "2", times);
         value.TypeInto(times.Node, new WirePath("rhs"), "1.5", times);
         Assert.AreEqual(times.Id, value.Graph.Wire("root"), "what was picked for the value is the value");
         yield return CheckedAgain(window);
-        StringAssert.Contains("float frequency = 2 * 1.5;", window.Checked.Text);
-        Assert.IsNotNull(board.Card(wobble).Q("row" + frequency.Wire("id")).Q<Button>(className: "tg-link"), "its row says it's worked out, and opens it");
-        yield return GraphShots.Take(window, "20b-a-value-worked-out");
+        StringAssert.Contains("float phase = 2 * 1.5;", window.Checked.Text);
+        Assert.IsNotNull(board.Card(wobble).Q("row" + phase.Wire("id")).Q<Button>(className: "tg-link"), "its row says it's worked out, and opens it");
+        yield return GraphShots.Take(window, "23-a-value-worked-out");
         board.CloseValue(value.Slot);
         Assert.IsNull(board.ValueFrame(value.Slot));
-        // An event and what hears it, in a namespace of their own: a region around them
-        var space = board.AddDeclaration("namespace");
-        var block = window.Doc.Get(space);
-        var shaken = board.AddDeclaration("event", new Vector2(0, 420), block);
-        window.Edit("Name", () => window.Doc.Get(shaken).Set("name", JValue.Of("Shaken")), shaken);
-        var hears = board.AddDeclaration("handler", new Vector2(380, 420), block);
-        GraphShots.Click(board.Frame(hears).Entry.Q<GraphTypeChip>("event"));
-        var events = (GraphTypePicker)window.Popup;
-        yield return Asked(events);
-        Assert.IsTrue(events.Choose("Shaken"), Titles(events));
-        Assert.AreEqual("Shaken", window.Doc.Get(hears).Get("trigger").Str("type"));
-        Assert.AreEqual(1, board.Spaces.Count, "a namespace is a region");
-        Assert.IsTrue(board.Spaces[0].Rect.Contains(board.Frame(hears).World.center) && board.Spaces[0].Rect.Contains(board.Card(shaken).World.center), "around what's declared in it");
-        window.Reveal(hears);
-        yield return GraphShots.Take(window, "20c-a-namespace");
-        window.Reveal(shake);
 
         // A wire can't leave its frame: said, where it's tried
         var other = board.AddDeclaration("function");
-        Assert.IsFalse(board.Connect(board.Frame(shake).Entry.ReadPin("wobble"), board.Frame(other).Entry.Ports.First(p => p.Port.Exec), out why));
-        window.Say(GraphLook.UpperFirst(board.WhyNotAcross(board.Frame(shake), board.Frame(other))), true);
-        yield return GraphShots.Take(window, "21-a-wire-cant-leave");
+        Assert.IsFalse(board.Connect(board.Frame(spin).Entry.ReadPin("wobble"), board.Frame(other).Entry.Ports.First(p => p.Port.Exec), out var why));
         board.Delete(other);
         window.Save();
         Assert.IsFalse(window.Dirty);
         window.Close();
-
-        // 6. A big converted file, in a game of its own: found by its contents
-        var arena = Path.Combine(GameIn(light ? "GraphStoryArenaLight" : "GraphStoryArena"), "Arena.tidegraph");
         File.Delete(path);
+
+        // 8. Converted files, in a game of their own: a small one, then a big one found by its contents
+        var converted = GameIn(light ? "GraphStoryArenaLight" : "GraphStoryArena");
+        foreach (var old in Directory.GetFiles(converted, "*.tidegraph")) File.Delete(old);
+        var small = Path.Combine(converted, "Systems.tidegraph");
+        Assert.IsNull(TideGraphCommand.Convert(Path.Combine(Repository, "docs", "examples", "systems.tide"), small));
+        window = TideGraphWindow.Open(small);
+        GraphShots.Size(window);
+        if (light) window.ForceTheme(true);
+        board = window.Board;
+        yield return GraphShots.Settle(4);
+        var code = window.Doc.Elements.Where(e => e.Role == GraphRole.Decl && board.Frame(e.Id) != null).Select(e => board.Frame(e.Id)).ToList();
+        Assert.IsNotEmpty(code);
+        var inFile = code.Sum(f => GraphDocument.Nodes(f.Graph)?.Items.Count ?? 0);
+        foreach (var f in code) f.Classify();
+        var drawn = code.Sum(f => f.Visible().Count());
+        Assert.Less(drawn, inFile * 0.6f, $"simple values are in the inputs: {drawn} nodes drawn of the file's {inFile}");
+        board.FitAll();
+        yield return GraphShots.Take(window, "30-a-small-file");
+        var busiest = code.OrderByDescending(f => GraphDocument.Nodes(f.Graph)?.Items.Count ?? 0).First();
+        window.Reveal(busiest.Id);
+        yield return GraphShots.Take(window, "31-its-busiest-code");
+        // The same with a node for every name and member, as the file has them: what the inputs spare
+        GraphFrame.DrawEveryNode = true;
+        try
+        {
+            board.Reload();
+            yield return GraphShots.Settle(4);
+            window.Reveal(busiest.Id);
+            yield return GraphShots.Take(window, "32-with-a-node-for-each");
+        }
+        finally
+        {
+            GraphFrame.DrawEveryNode = false;
+        }
+        Assert.IsFalse(window.Dirty, "looking changes nothing");
+        window.Close();
+        File.Delete(small);
+
+        var arena = Path.Combine(converted, "Arena.tidegraph");
         Assert.IsNull(TideGraphCommand.Convert(Path.Combine(Repository, "examples", "sumo", "arena.tide"), arena));
         window = TideGraphWindow.Open(arena);
         GraphShots.Size(window);
@@ -999,21 +1260,20 @@ public class GraphLanguageTests
         board = window.Board;
         yield return GraphShots.Settle(4);
         Assert.Less(board.NodesDrawn, 400, "what's on screen is drawn, of over a thousand nodes");
-        yield return GraphShots.Take(window, "22-a-big-file");
+        yield return GraphShots.Take(window, "33-a-big-file");
         window.ShowContents(true);
         Assert.IsNotNull(window.Contents);
-        yield return GraphShots.Take(window, "23-contents");
         window.Contents.Type("sta");
         var found = window.Contents.Shown.First(r => r.title == "Stands");
-        yield return GraphShots.Take(window, "24-contents-searched");
+        yield return GraphShots.Take(window, "34-contents-searched");
         window.Reveal(found.id);
         Assert.AreEqual(GraphLevel.Near, board.Frame(found.id).Level, "picked, it's brought on screen");
         Assert.IsTrue(board.Chosen.Contains(found.id));
         window.ShowContents(false);
-        yield return GraphShots.Take(window, "25-jumped-to");
+        yield return GraphShots.Take(window, "35-jumped-to");
         board.ZoomAbout(new Vector2(640, 380), 0.3f);
         Assert.AreEqual(0, board.NodesDrawn, "from far away, names");
-        yield return GraphShots.Take(window, "26-from-far-away");
+        yield return GraphShots.Take(window, "36-from-far-away");
         Assert.IsFalse(window.Dirty, "looking changes nothing");
         window.Close();
         File.Delete(arena);

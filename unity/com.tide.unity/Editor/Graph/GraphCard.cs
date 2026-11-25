@@ -368,9 +368,9 @@ namespace Tide.Editor
             row?.EnableInClassList("tg-row--warning", said.Count > 0 && !error);
             foreach (var d in said)
             {
-                var line = GraphLook.Text(GraphLook.FirstLine(d.Message, 160), "tg-problem-text", "tg-problem");
+                var line = GraphLook.Text(GraphLook.FirstLine(d.Text, 160), "tg-problem-text", "tg-problem");
                 if (d.Severity != "error") line.AddToClassList("tg-problem-text--warning");
-                line.tooltip = d.Message + (string.IsNullOrEmpty(d.Detail) ? "" : "\n\n" + d.Detail);
+                line.tooltip = d.Text + (string.IsNullOrEmpty(d.Detail) ? "" : "\n\n" + d.Detail);
                 holder.Add(line);
             }
         }

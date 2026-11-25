@@ -23,6 +23,23 @@ namespace Tide.Editor
         static readonly Regex fraction = new Regex(@"^-?(\d[\d_]*)?(\.\d[\d_]*)?([eE][+-]?\d+)?(deg|rad|[fFdD])?$");
 
         // Which control a type's value has is the schema's (valueControls)
+        // Whether a value of a type goes where another is taken: the same type (an optional takes its type), or a
+        // number that widens by itself (the spec's: byte and int to long, float and double; float to double). A
+        // type that isn't known fits: the check says.
+        public static bool Fits(string have, string want)
+        {
+            if (string.IsNullOrEmpty(have) || string.IsNullOrEmpty(want)) return true;
+            have = have.Trim();
+            if (have.StartsWith("const ")) have = have.Substring(6).Trim();
+            want = want.Trim().TrimEnd('?');
+            have = have.TrimEnd('?');
+            if (have == want) return true;
+            if (have == "byte") return want == "int" || want == "long" || want == "float" || want == "double";
+            if (have == "int") return want == "long" || want == "float" || want == "double";
+            if (have == "float" || have == "long") return want == "double";
+            return false;
+        }
+
         public static bool IsWhole(string type) => GraphSchema.ValueControl(type) == "whole";
         public static bool IsFraction(string type) => GraphSchema.ValueControl(type) == "decimal";
         public static bool IsVector(string type) => GraphSchema.ValueControl(type) == "vector";

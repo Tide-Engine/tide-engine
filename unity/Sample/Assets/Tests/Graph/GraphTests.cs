@@ -1127,7 +1127,7 @@ public class GraphTests
         var call = GraphDocument.NodeIn(graph, eval.Wire("value"));
         GraphShots.Enter(frame.Views[eval.Wire("id")].Q<TextField>("title"), "Print");
         Assert.AreEqual("Print", call.Str("name"));
-        // An argument, and the parameter wired into it: a wire from the pin, and no node drawn for the read
+        // An argument, and the parameter dragged into it: its name in the input, and no node or wire for the read
         GraphShots.Click(frame.Views[eval.Wire("id")].Q<Button>("add:arg"));
         var arg = frame.Views[eval.Wire("id")].Input("args.0");
         Assert.IsNotNull(arg);
@@ -1137,8 +1137,10 @@ public class GraphTests
         Assert.AreEqual("times", read.Str("name"));
         Assert.IsTrue(frame.Hidden.Contains(read.Wire("id")), "the read isn't a node on the board");
         Assert.AreEqual(1, frame.Views.Count);
-        Assert.IsTrue(frame.Entry.ReadPin("times").Connected);
-        Assert.AreSame(frame.Entry.ReadPin("times"), frame.SourcePin(read.Wire("id")), "its wire comes from the parameter's pin");
+        Assert.IsTrue(frame.Entry.ReadPin("times").Connected, "the parameter's pin says it's used");
+        Assert.IsNull(frame.SourcePin(read.Wire("id")), "no wire: the input says what it reads");
+        Assert.AreEqual("times", frame.Views[eval.Wire("id")].Q("in:args.0").Q("chip").Q<Button>("part0").text);
+        Assert.AreEqual("argument 1", frame.Views[eval.Wire("id")].Q("in:args.0").Q<Label>(className: "tg-port-label").text, "until a check names it");
         // Renaming the parameter renames what reads it
         GraphShots.Enter(frame.Entry.Q<TextField>("name" + times), "count");
         Assert.AreEqual("count", read.Str("name"));
@@ -1159,11 +1161,62 @@ public class GraphTests
         Assert.AreEqual("bool", cond.Str("k"));
         Assert.IsTrue(frame.Hidden.Contains(cond.Wire("id")));
         Assert.AreEqual(2, frame.Views.Count);
-        // Typing nothing takes it away again, and typing the parameter's name wires it
+        Assert.IsTrue(frame.Views[@if.Wire("id")].Q("in:cond").Q<Toggle>("ticked").value, "a tick is its control");
+        // Typing nothing takes it away again, and the input says "pick…"
         frame.TypeInto(@if, new WirePath("cond"), "", frame.Views[@if.Wire("id")]);
         Assert.AreEqual(0, @if.Wire("cond"));
         Assert.IsNull(window.Doc.Find(cond.Wire("id")), "what was typed is gone with it");
+        Assert.AreEqual("pick…", frame.Views[@if.Wire("id")].Q("in:cond").Q<Button>("pick").text);
+        Assert.AreEqual("bool", frame.Wanted(@if, new WirePath("cond")), "a condition takes true or false");
+        // A path typed is a node for each part in the file, and one chip on the board; a '-' before a number is
+        // a node of its own too, as tidec writes it
+        frame.TypeInto(call, new WirePath("args", 0), "count.digits.first", frame.Views[eval.Wire("id")]);
+        var leaf = GraphDocument.NodeIn(graph, call.Arr("args").Items[0].Number > 0 ? (int)call.Arr("args").Items[0].Number : 0);
+        Assert.AreEqual("member", leaf.Str("k"));
+        Assert.AreEqual("first", leaf.Str("member"));
+        Assert.AreEqual("digits", GraphDocument.NodeIn(graph, leaf.Wire("object")).Str("member"));
+        Assert.AreEqual("count", GraphDocument.NodeIn(graph, GraphDocument.NodeIn(graph, leaf.Wire("object")).Wire("object")).Str("name"));
+        Assert.IsNull(window.Doc.Find(read.Wire("id")), "what was in the input went with it");
+        Assert.AreEqual("count.digits.first", frame.TextOf(frame.ShownIn(leaf.Wire("id"))));
+        CollectionAssert.AreEqual(new[] { "count", ".digits", ".first" }, frame.Views[eval.Wire("id")].Q("in:args.0").Q("chip").Query<Button>().ToList().Select(b => b.text).ToList());
+        Assert.AreEqual(2, frame.Views.Count, "none of it is a node on the board");
+        var nodes = GraphDocument.Nodes(graph).Items.Count;
+        frame.TypeInto(call, new WirePath("args", 0), "-3", frame.Views[eval.Wire("id")]);
+        var minus = GraphDocument.NodeIn(graph, call.Arr("args").Items[0].Number > 0 ? (int)call.Arr("args").Items[0].Number : 0);
+        Assert.AreEqual("unary", minus.Str("k"));
+        Assert.AreEqual("-", minus.Str("op"));
+        Assert.AreEqual("3", GraphDocument.NodeIn(graph, minus.Wire("value")).Str("text"));
+        Assert.AreEqual(nodes - 1, GraphDocument.Nodes(graph).Items.Count, "the three of the path went, and two came");
+        Assert.AreEqual("-3", frame.Views[eval.Wire("id")].Q("in:args.0").Q<TextField>("typed").value);
+        Assert.AreEqual(2, frame.Views.Count);
+        // A value two inputs read is a node, wired to both: it has to be seen to be one
         frame.TypeInto(@if, new WirePath("cond"), "false", frame.Views[@if.Wire("id")]);
+        var shared = @if.Wire("cond");
+        Assert.IsTrue(frame.Hidden.Contains(shared));
+        window.Edit("Read twice", () => call.Arr("args").Items.Add(JValue.Of(shared)), f);
+        frame = board.Frame(f);
+        Assert.IsFalse(frame.Hidden.Contains(shared), "read by two inputs, it's a node");
+        Assert.IsTrue(frame.Views.ContainsKey(shared));
+        Assert.IsTrue(frame.Views[@if.Wire("id")].Input("cond").Connected);
+        Assert.AreSame(frame.Views[shared].DataOut, frame.SourcePin(shared));
+        // ...and every node is one, for a picture of the file as it is
+        GraphFrame.DrawEveryNode = true;
+        try
+        {
+            frame.Classify();
+            Assert.IsEmpty(frame.Hidden);
+        }
+        finally
+        {
+            GraphFrame.DrawEveryNode = false;
+            frame.Classify();
+        }
+        window.Edit("Read once", () => call.Arr("args").Items.RemoveAt(1), f);
+        frame = board.Frame(f);
+        Assert.IsTrue(frame.Hidden.Contains(shared), "read by one again, it's in the input again");
+        // The parameter's name typed puts it back
+        frame.TypeInto(call, new WirePath("args", 0), "count", frame.Views[eval.Wire("id")]);
+        Assert.AreEqual("count", frame.TextOf(frame.ShownIn(call.Arr("args").Items[0].Number > 0 ? (int)call.Arr("args").Items[0].Number : 0)));
 
         // A wire can't leave its frame, and the board says why
         var g = board.AddDeclaration("function");
@@ -1310,7 +1363,7 @@ public class GraphTests
         GraphShots.Drag(window, GraphShots.Middle(start), GraphShots.Middle(frame.Views[print].ExecIn));
         Assert.AreEqual(print, frame.Graph.Wire("entry"), "a drag from pin to pin wires them");
         yield return GraphShots.Settle(3);
-        // ...and from a parameter's pin to an input: a read, with no node of its own
+        // ...and from a parameter's pin to an input: its name in the input, with no node or wire of its own
         frame = board.Frame(f);
         GraphShots.Drag(window, GraphShots.Middle(frame.Entry.ReadPin("count")), GraphShots.Middle(frame.Views[print].Input("args.0")));
         var call = GraphDocument.NodeIn(frame.Graph, window.Doc.Get(print).Wire("value"));
@@ -1319,12 +1372,12 @@ public class GraphTests
         Assert.AreEqual("count", read.Str("name"));
         Assert.IsTrue(frame.Hidden.Contains(read.Wire("id")));
         yield return GraphShots.Settle(3);
-        // Alt and a click on the input takes the wire off, and the read with it
+        // Alt and a click on the input empties it, and the read goes with it
         frame = board.Frame(f);
         var input = GraphShots.Middle(frame.Views[print].Input("args.0"));
         GraphShots.Mouse(window, EventType.MouseDown, input, 0, EventModifiers.Alt);
         GraphShots.Mouse(window, EventType.MouseUp, input, 0, EventModifiers.Alt);
-        Assert.IsNull(window.Doc.Find(read.Wire("id")), "Alt+click unwires");
+        Assert.IsNull(window.Doc.Find(read.Wire("id")), "Alt+click empties the input");
         yield return GraphShots.Settle(3);
 
         // A wire dropped on nothing in its frame asks what to add for it

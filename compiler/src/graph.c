@@ -649,11 +649,21 @@ void graph_schema_hold(const bool hold)
     }
 }
 
+bool graph_schema_numbers(const str name)
+{
+    const graph_json *shown = graph_json_get(schema_root ? schema_root : read_schema_root(), "inline");
+    const graph_json *names = shown ? graph_json_get(shown, "numbersOf") : NULL;
+    for (int i = 0; names && names->kind == GJ_ARRAY && i < names->count; i++) {
+        if (names->items[i]->kind == GJ_STRING && str_eq(names->items[i]->text, name)) return true;
+    }
+    return false;
+}
+
 int graph_schema_inline(const str kind)
 {
-    static const char *const lists[] = {"always", "path", "negative"};
+    static const char *const lists[] = {"always", "path", "negative", "numbers"};
     const graph_json *shown = graph_json_get(schema_root ? schema_root : read_schema_root(), "inline");
-    for (int l = 0; shown && l < 3; l++) {
+    for (int l = 0; shown && l < 4; l++) {
         const graph_json *kinds = graph_json_get(shown, lists[l]);
         for (int i = 0; kinds && kinds->kind == GJ_ARRAY && i < kinds->count; i++) {
             if (kinds->items[i]->kind == GJ_STRING && str_eq(kinds->items[i]->text, kind)) return l + 1;

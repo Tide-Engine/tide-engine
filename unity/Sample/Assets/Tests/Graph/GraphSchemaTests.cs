@@ -192,6 +192,17 @@ public class GraphSchemaTests
     [Test]
     public void TheWordingAndTheRulesAreTheSchemas()
     {
+        // Which nodes are shown in the input that reads them is the schema's to say (`inline`)
+        var inline = GraphSchema.Json.Get("inline");
+        Assert.IsNotNull(inline, "the schema says which values are shown in their input");
+        foreach (var k in inline.Arr("always").Items) Assert.AreEqual(GraphSchema.InlineAlways, GraphSchema.Inline(k.String), k.String);
+        foreach (var k in inline.Arr("path").Items) Assert.AreEqual(GraphSchema.InlinePath, GraphSchema.Inline(k.String), k.String);
+        foreach (var k in inline.Arr("negative").Items) Assert.AreEqual(GraphSchema.InlineNegative, GraphSchema.Inline(k.String), k.String);
+        Assert.AreEqual(0, GraphSchema.Inline("call"), "anything worked out is a node");
+        Assert.AreEqual(0, GraphSchema.Inline("binary"));
+        Assert.AreEqual(inline.Str("about"), GraphSchema.InlineAbout);
+        Assert.AreEqual("Set", GraphSchema.Spec("assign").Title);
+
         NeedTidec();
         var j = GraphSchema.Json;
         var groups = j.Arr("groups").Items;

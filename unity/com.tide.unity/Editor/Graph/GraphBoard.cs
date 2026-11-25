@@ -693,7 +693,17 @@ namespace Tide.Editor
             var world = item.World;
             var room = size / zoom;
             var target = new Vector2(world.width + 80 <= room.x ? world.center.x : world.xMin + room.x / 2 - 40, world.height + 80 <= room.y ? world.center.y : world.yMin + room.y / 2 - 40);
-            pan = size / 2 - target * zoom;
+            var to = size / 2 - target * zoom;
+            // Near what's on screen, and fitting: moved just enough to show all of it, so what's beside it stays
+            // in sight (the component a new system is for)
+            var seen = new Rect(-pan / zoom, room);
+            if (world.width + 120 <= room.x && world.height + 120 <= room.y)
+            {
+                var dx = world.xMin - 60 < seen.xMin ? world.xMin - 60 - seen.xMin : world.xMax + 60 > seen.xMax ? world.xMax + 60 - seen.xMax : 0;
+                var dy = world.yMin - 60 < seen.yMin ? world.yMin - 60 - seen.yMin : world.yMax + 60 > seen.yMax ? world.yMax + 60 - seen.yMax : 0;
+                if (Mathf.Abs(dx) < room.x * 0.75f && Mathf.Abs(dy) < room.y * 0.75f) to = pan - new Vector2(dx, dy) * zoom;
+            }
+            pan = to;
             ApplyTransform();
             Cull();
             var frame = item as GraphFrame;
@@ -1158,12 +1168,18 @@ namespace Tide.Editor
             WireEnd = mouse;
             Capture(e);
             frame.MarkWires();
+            // The inputs show where a wire can end
+            AddToClassList("tg-wiring");
         }
 
         PortView PortUnder(Vector2 panelPosition)
         {
             for (var e = panel?.Pick(panelPosition); e != null; e = e.parent)
+            {
                 if (e is PortView p) return p;
+                // An input's row is the input: its pin shows only once it has a wire
+                if (e.ClassListContains("tg-port-row") && e.Q<PortView>() is PortView of && of.Port.Input && !of.Port.Exec) return of;
+            }
             // Near a pin is on it
             PortView best = null;
             var bestD = 16f * 16f;
@@ -1176,6 +1192,7 @@ namespace Tide.Editor
                 foreach (var v in views)
                     foreach (var p in v.Ports)
                     {
+                        if (p.resolvedStyle.display == DisplayStyle.None) continue;
                         var d = (p.worldBound.center - panelPosition).sqrMagnitude;
                         if (d >= bestD) continue;
                         bestD = d;
@@ -1198,6 +1215,7 @@ namespace Tide.Editor
             var undo = wireUndo;
             wireFrom = null;
             wireUndo = null;
+            RemoveFromClassList("tg-wiring");
             var frame = from.Frame;
             frame.MarkWires();
             var target = PortUnder(panelPosition);
@@ -1268,6 +1286,35 @@ namespace Tide.Editor
             return popup;
         }
 
+        // The picker of what goes in an input: `keep` of the parts shown there stay, and it's picked from there on
+        internal GraphValuePicker PickValue(GraphFrame frame, JValue owner, WirePath path, string label, VisualElement from, int keep = 0, string typed = null)
+        {
+            if (frame.Graph == null) return null;
+            if (owner != null) SelectNode(frame, (frame.ReaderOf(owner.Wire("id")) ?? frame.ViewOf(owner.Wire("id")))?.Id ?? owner.Wire("id"), false);
+            var picker = new GraphValuePicker(this, frame, owner, path, label, keep);
+            Window.Open(picker, from);
+            if (!string.IsNullOrEmpty(typed)) picker.Type(typed);
+            return picker;
+        }
+
+        // The search for a node that works out what goes in an input, placed beside the node whose input it is
+        internal GraphSearchPopup WorkOut(GraphFrame frame, JValue owner, WirePath path, VisualElement from, string typed = null)
+        {
+            var graph = frame.Graph;
+            if (graph == null) return null;
+            var port = new GraphPort { Node = owner != null ? owner.Wire("id") : GraphFrame.ResultId, Input = true, Path = path };
+            var view = owner != null ? frame.ReaderOf(owner.Wire("id")) ?? frame.ViewOf(owner.Wire("id")) : frame.Result;
+            // Left of it and lower, where nothing is yet
+            var at = view != null ? view.Shown + new Vector2(-250, view.SizeNow.y + 24) : frame.Origin;
+            for (var tries = 0; tries < 12 && frame.Views.Values.Any(v => new Rect(v.Shown, v.SizeNow).Overlaps(new Rect(at, new Vector2(200, 80)))); tries++) at.y += 90;
+            var context = new GraphSearchContext { Doc = Doc, Graph = graph, Slot = frame.Slot, Window = Window, Pending = port, Frame = frame };
+            var popup = new GraphSearchPopup(this, frame, context, at);
+            if (from != null && from.panel != null) Window.Open(popup, from);
+            else Window.Open(popup, new Rect(frame.LocalToWorld(at), Vector2.zero));
+            if (!string.IsNullOrEmpty(typed)) popup.Type(typed);
+            return popup;
+        }
+
         // The search for the member a member or method node is: what its value has, as the language server knows it
         public GraphSearchPopup OpenMemberSearch(GraphFrame frame, int node, VisualElement from)
         {
@@ -1292,7 +1339,8 @@ namespace Tide.Editor
         public JValue Insert(GraphFrame frame, GraphSearchEntry entry, Vector2 frameLocal, GraphPort pending)
         {
             var graph = frame.Graph;
-            var at = Vector2.Max(frameLocal - frame.Origin, Vector2.zero);
+            // A node for an input goes left of its reader, which can be left of every node there is
+            var at = pending != null && pending.Input && !pending.Exec ? frameLocal - frame.Origin : Vector2.Max(frameLocal - frame.Origin, Vector2.zero);
             JValue made = null;
             Window.Edit("Add " + entry.Title, () =>
             {
@@ -1714,6 +1762,7 @@ namespace Tide.Editor
             {
                 var e = Doc?.Find(d.Id);
                 if (e == null) continue;
+                d.Said = Said(e, d);
                 Put(d.Id, d);
                 // An attribute's is its element's too; a value's node's is its row's
                 if (e.Role == GraphRole.Attribute) Put(e.Owner?.Wire("id") ?? 0, d);
@@ -1721,6 +1770,17 @@ namespace Tide.Editor
             }
             foreach (var item in items.Values.Concat(values.Values))
                 if (item.Level != GraphLevel.None) item.ShowProblems();
+        }
+
+        // An input with nothing in it, as the check found it (its node and the input's key): said in the editor's
+        // words, by the name the input has on its row. Anything else is the compiler's to say.
+        string Said(GraphElement e, GraphDiagnostic d)
+        {
+            if (d.Port == null || e.Role != GraphRole.Node) return null;
+            var path = d.Index >= 0 ? new WirePath(d.Port, d.Index) : new WirePath(d.Port);
+            if (path.Get(e.Value) != 0) return null;
+            var label = GraphNodeView.LabelOf(Window.Checked, e.Value, path, d.Port);
+            return string.IsNullOrEmpty(label) ? "Pick what goes in here" : $"Pick what goes in '{label}'";
         }
 
         public List<GraphDiagnostic> Problems(int id) => id != 0 && problemsById.TryGetValue(id, out var list) ? list : none;

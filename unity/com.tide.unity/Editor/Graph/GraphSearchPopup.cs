@@ -45,7 +45,7 @@ namespace Tide.Editor
             var p = c.Pending;
             if (p == null) return "Add to " + frame.Title;
             if (p.Exec) return p.Input ? "What happens before it?" : "What happens next?";
-            return p.Input ? "What goes in here?" : p.IsRead ? $"Do what with {p.Name ?? p.Label}?" : "Do what with this value?";
+            return p.Input ? "What works it out?" : p.IsRead ? $"Do what with {p.Name ?? p.Label}?" : "Do what with this value?";
         }
 
         GraphOption Option(GraphSearchEntry e) => new GraphOption

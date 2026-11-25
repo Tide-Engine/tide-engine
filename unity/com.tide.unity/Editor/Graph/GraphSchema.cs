@@ -88,6 +88,8 @@ namespace Tide.Editor
             public readonly Dictionary<string, string> TypeGroups = new Dictionary<string, string>();
             public readonly Dictionary<string, (string control, string help)> ValueControls = new Dictionary<string, (string, string)>();
             public string ChoiceHelp;
+            public readonly Dictionary<string, int> Inline = new Dictionary<string, int>();
+            public string InlineAbout;
             public string[] TypeCommon = Array.Empty<string>(), Rules = Array.Empty<string>();
             public TypeBuilder[] TypeBuilders = Array.Empty<TypeBuilder>();
         }
@@ -307,6 +309,11 @@ namespace Tide.Editor
                 if (c.Str("of") == "enum") s.ChoiceHelp = c.Str("help");
             }
             s.Rules = Strings(j.Arr("rules"));
+            var inline = j.Get("inline");
+            s.InlineAbout = inline?.Str("about");
+            foreach (var k in Strings(inline?.Arr("always"))) s.Inline[k] = InlineAlways;
+            foreach (var k in Strings(inline?.Arr("path"))) s.Inline[k] = InlinePath;
+            foreach (var k in Strings(inline?.Arr("negative"))) s.Inline[k] = InlineNegative;
             return s;
         }
 
@@ -380,6 +387,13 @@ namespace Tide.Editor
         public static string ValueControl(string type) => type != null && S.ValueControls.TryGetValue(type, out var c) ? c.control : null;
         public static string ValueHelp(string type) => type != null && S.ValueControls.TryGetValue(type, out var c) ? c.help : null;
         public static string ChoiceHelp => S.ChoiceHelp;
+
+        // Which kinds of node are shown in the input that reads them, when one input does (`inline`): always (a
+        // literal, a name), as a path (a member of what is itself shown there), as a negative (a '-' over a number);
+        // 0 for a kind that's always a node. And the rule in the schema's words.
+        public const int InlineAlways = 1, InlinePath = 2, InlineNegative = 3;
+        public static int Inline(string k) => k != null && S.Inline.TryGetValue(k, out var how) ? how : 0;
+        public static string InlineAbout => S.InlineAbout;
 
         // The type picker's headings: common, file, game, builders, own, rest
         public static string TypeGroup(string name) => S.TypeGroups.TryGetValue(name, out var title) ? title : GraphLook.UpperFirst(name);

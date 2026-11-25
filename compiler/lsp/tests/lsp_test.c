@@ -14335,6 +14335,8 @@ TIDE_TEST(lsp_graphs)
     const char *of_type = request_at(uri, "tide/graphMembers", 0, 0, "\"type\":\"Score\"");
     TIDE_CHECK(offers(of_type, "points") && has(of_type, "\"type\":\"Score\""));
     TIDE_CHECK(offers(request_at(uri, "tide/graphMembers", 0, 0, "\"type\":\"float3\""), "x"));
+    // ...and what a name itself has: a namespace's functions
+    TIDE_CHECK(offers(request_at(uri, "tide/graphMembers", 0, 0, "\"name\":\"Math\""), "Max"));
     TIDE_CHECK(!offers(request_at(uri, "tide/graphMembers", 0, 0, "\"type\":\"Score s) { } void F(\""), "points"));
     // ...and the graph as it is again after
     TIDE_CHECK(has(request_at(uri, "tide/graphText", 0, 0, ""), "score.points += Bonus(3);"));
@@ -14378,13 +14380,21 @@ TIDE_TEST(lsp_graphs)
     TIDE_CHECK(has(last_sent(), "\"k\": \"switchExpr\"") && has(last_sent(), "\"declarations\""));
     clear_sent();
     handle("{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"tide/graphLayout\",\"params\":{\"graph\":{\"entry\":1,\"nodes\":["
-           "{\"id\":1,\"k\":\"return\",\"value\":2},{\"id\":2,\"k\":\"call\",\"name\":\"Most\",\"args\":[3]},"
-           "{\"id\":3,\"k\":\"int\",\"text\":\"3\"}]}}}");
+           "{\"id\":1,\"k\":\"return\",\"value\":2},{\"id\":2,\"k\":\"call\",\"name\":\"Most\",\"args\":[3,4]},"
+           "{\"id\":3,\"k\":\"int\",\"text\":\"3\"},{\"id\":4,\"k\":\"call\",\"name\":\"float2\",\"args\":[5,6]},"
+           "{\"id\":5,\"k\":\"int\",\"text\":\"16\"},{\"id\":6,\"k\":\"unary\",\"op\":\"-\",\"value\":7},"
+           "{\"id\":7,\"k\":\"int\",\"text\":\"14\"}]}}}");
     const json *layout = json_path(json_parse(last_sent(), strlen(last_sent())), "result", NULL);
     TIDE_CHECK(layout && json_get(layout, "1") && json_get(layout, "2"));
     if (layout && json_get(layout, "1") && json_get(layout, "2")) {
         TIDE_CHECK(json_int(json_get(layout, "2")->items[0], 0) < json_int(json_get(layout, "1")->items[0], 0));
         TIDE_CHECK(json_get(layout, "3") && json_int(json_get(layout, "3")->items[0], -1) == json_int(json_get(layout, "2")->items[0], 0));
+        // ...as a vector of numbers is, float2(16, -14), with its numbers
+        for (int id = 4; id <= 7; id++) {
+            char key[8];
+            snprintf(key, sizeof key, "%d", id);
+            TIDE_CHECK(json_get(layout, key) && json_int(json_get(layout, key)->items[0], -1) == json_int(json_get(layout, "2")->items[0], 0));
+        }
     }
     clear_sent();
     lsp_free(&server);

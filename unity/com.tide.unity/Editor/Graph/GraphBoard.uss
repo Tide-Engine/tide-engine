@@ -368,16 +368,111 @@
     margin-right: 4px;
 }
 
-.tg-read {
-    font-size: 11px;
-    padding: 0 6px;
-    margin: 0 2px;
-    border-radius: 7px;
+/* What's in an input: a chip with a name or a path (wobble.phase), in its type's colour; each part is clicked to
+   change it from there on. "pick…" where nothing is. */
+
+.tg-value {
+    flex-direction: row;
+    align-items: center;
+    height: 18px;
+    padding: 0 5px;
+    margin: 1px 2px;
+    border-radius: 9px;
     border-width: 1px;
     border-color: var(--tg-line);
     background-color: var(--tg-hover);
-    color: var(--tg-text);
     flex-shrink: 0;
+}
+
+.tg-value:hover {
+    background-color: var(--tg-accent-soft);
+}
+
+.tg-value.tg-lit {
+    background-color: rgba(88, 166, 255, 0.34);
+}
+
+.tg-value--title {
+    background-color: rgba(0, 0, 0, 0.28);
+    margin-left: 4px;
+    margin-right: 0;
+}
+
+.tg-value--title:hover {
+    background-color: rgba(0, 0, 0, 0.45);
+}
+
+.tg-seg {
+    padding: 0;
+    margin: 0;
+    border-width: 0;
+    border-radius: 3px;
+    background-color: rgba(0, 0, 0, 0);
+    font-size: 12px;
+    -unity-font-style: bold;
+}
+
+.tg-seg:hover {
+    background-color: var(--tg-hover);
+}
+
+.tg-value--title .tg-seg:hover {
+    background-color: rgba(255, 255, 255, 0.18);
+}
+
+.tg-seg--none {
+    -unity-font-style: italic;
+    color: var(--tg-faint);
+}
+
+.tg-pick {
+    height: 18px;
+    padding: 0 7px;
+    margin: 1px 2px;
+    border-radius: 9px;
+    border-width: 1px;
+    border-color: var(--tg-faint);
+    background-color: rgba(0, 0, 0, 0);
+    color: var(--tg-muted);
+    -unity-font-style: italic;
+    font-size: 11px;
+    flex-shrink: 0;
+}
+
+.tg-pick:hover,
+.tg-pick:focus {
+    border-color: var(--tg-accent);
+    color: var(--tg-accent);
+    background-color: var(--tg-accent-soft);
+}
+
+.tg-pick--title {
+    color: rgba(255, 255, 255, 0.85);
+    border-color: rgba(255, 255, 255, 0.5);
+    margin-left: 4px;
+}
+
+.tg-port-row--problem .tg-pick,
+.tg-value.tg-port-row--problem {
+    border-color: var(--tg-error);
+    color: var(--tg-error);
+}
+
+.tg-word.tg-op {
+    -unity-font-style: bold;
+    color: var(--tg-text);
+    border-width: 1px;
+    border-color: var(--tg-faint);
+    min-width: 22px;
+    margin-left: 3px;
+    justify-content: center;
+}
+
+/* A parameter's row, the node that declares a local and the inputs that read it are lit together */
+
+.tg-entry-row.tg-lit,
+.tg-port-row.tg-lit {
+    background-color: var(--tg-accent-soft);
 }
 
 .tg-link:focus {
@@ -717,6 +812,11 @@
     padding: 0 0 0 4px;
 }
 
+.tg-node-dot--after {
+    padding: 0;
+    margin: 0 -2px 0 1px;
+}
+
 .tg-node-head .tg-inline > .unity-base-text-field__input:focus {
     color: var(--tg-text);
 }
@@ -769,6 +869,17 @@
     height: 14px;
     flex-shrink: 0;
     margin: 0 1px;
+}
+
+/* An input with its value in it has no wire, and shows no pin until a wire is dragged: then every input shows
+   where one can end */
+
+.tg-port--quiet {
+    visibility: hidden;
+}
+
+.tg-wiring .tg-port--quiet {
+    visibility: visible;
 }
 
 .tg-pin-value {

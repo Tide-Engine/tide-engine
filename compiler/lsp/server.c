@@ -1702,11 +1702,13 @@ static void document_request(lsp_server *s, const char *method, const json *id, 
             // node's type, read first with the node written and no '.'. The next request reads the graph as it is
             // ...or what a value of a type has ("type": its name), for a pin nothing reads yet
             const int node = json_int(json_path(params, "node", NULL), 0);
-            const char *of_type = json_str(json_path(params, "type", NULL));
+            // ...or what a name itself has ("name": an enum's choices, a namespace's functions)
+            const char *of_name = json_str(json_path(params, "name", NULL));
+            const char *of_type = of_name ? of_name : json_str(json_path(params, "type", NULL));
             jbuf type = {0};
             if (of_type) {
                 jb_string(&type, of_type);
-                analysis_set_graph_type_probe(d->uri, of_type);
+                analysis_set_graph_type_probe(d->uri, of_type, of_name != NULL);
             } else {
                 analysis_set_graph_probe(d->uri, node, false);
                 s->analyzed = false;

@@ -637,7 +637,7 @@ namespace Tide.Editor
             {
                 var diagnostic = d;
                 var where = Board?.ItemOf(d.Id)?.Title;
-                var lines = d.Message.Split('\n');
+                var lines = d.Text.Split('\n');
                 options.Add(new GraphOption
                 {
                     Title = lines[0], Detail = string.Join("\n", lines.Skip(1).Concat(where != null ? new[] { "In " + where } : new string[0])), Tall = true, Help = d.Detail,

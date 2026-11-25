@@ -95,15 +95,54 @@ namespace Tide.Editor
                     result.Text = result.Lowered?.Text ?? "";
                     client.Ask("tide/graphTypes", uri, -1, (types, why2) =>
                     {
-                        finish();
                         if (types != null && types.IsObject)
                             for (var i = 0; i < types.Keys.Count; i++)
                                 if (int.TryParse(types.Keys[i], out var id) && types.Values[i].Kind == JKind.String) result.Types[id] = types.Values[i].String;
-                        Diagnostics(result, client.DiagnosticsOf(uri));
-                        done(result);
+                        // What each call's arguments are called and take, and which names are the game's own: a
+                        // language server that doesn't answer these leaves them unknown
+                        client.Ask("tide/graphCalls", uri, -1, (calls, why3) =>
+                        {
+                            Calls(result, calls);
+                            client.Ask("tide/graphNames", uri, -1, (names, why4) =>
+                            {
+                                finish();
+                                Names(result, names);
+                                Diagnostics(result, client.DiagnosticsOf(uri));
+                                done(result);
+                            });
+                        });
                     });
                 });
             });
+        }
+
+        static void Calls(GraphCheckResult result, JValue calls)
+        {
+            if (calls == null || !calls.IsObject) return;
+            for (var i = 0; i < calls.Keys.Count; i++)
+            {
+                var c = calls.Values[i];
+                if (!int.TryParse(calls.Keys[i], out var id) || !c.IsObject) continue;
+                result.Calls[id] = new GraphCall
+                {
+                    Params = (c.Arr("params")?.Items ?? new List<JValue>()).Select(p => p.String ?? "").ToArray(),
+                    Types = (c.Arr("types")?.Items ?? new List<JValue>()).Select(p => p.String ?? "").ToArray(),
+                    Args = (c.Arr("args")?.Items ?? new List<JValue>()).Select(p => p.Kind == JKind.Number ? (int)p.Number : -1).ToArray(),
+                };
+            }
+        }
+
+        static void Names(GraphCheckResult result, JValue names)
+        {
+            if (names == null || !names.IsObject || names.Get("game") == null) return;
+            Dictionary<string, string> Of(JValue o)
+            {
+                var found = new Dictionary<string, string>();
+                for (var i = 0; o != null && o.IsObject && i < o.Keys.Count; i++) found[o.Keys[i]] = o.Values[i].String ?? "";
+                return found;
+            }
+            result.Game = Of(names.Get("game"));
+            result.Packages = Of(names.Get("packages"));
         }
 
         static void Diagnostics(GraphCheckResult result, JValue list)
@@ -428,8 +467,145 @@ namespace Tide.Editor
         // Something a type has: an enum's member, a struct's field
         public sealed class Member
         {
-            public string Label, Detail;
+            public string Label, Detail = "";
             public int Kind;
+            public bool Call; // Completion would write it with brackets
+
+            public bool Callable => Kind == KindMethod || Kind == KindFunction || Call;
+            public List<string> Parameters => TideGraphLanguage.Parameters(Detail, Label);
+
+            // What calling it gives, from its signature: `float Twice(float amount)`, `Random.NextInt() -> int`
+            public string Result
+            {
+                get
+                {
+                    var first = (Detail ?? "").Split('\n')[0];
+                    var arrow = first.LastIndexOf(") -> ", StringComparison.Ordinal);
+                    if (arrow >= 0)
+                    {
+                        var result = first.Substring(arrow + 5);
+                        var versions = result.IndexOf(" (", StringComparison.Ordinal);
+                        return (versions >= 0 ? result.Substring(0, versions) : result).Trim();
+                    }
+                    var name = first.IndexOf(Label + "(", StringComparison.Ordinal);
+                    if (name <= 0) return null;
+                    var before = first.Substring(0, name).Trim();
+                    // `Math.Sin(x)`: what it gives depends on what it's given, and isn't said
+                    if (before.EndsWith(".")) return null;
+                    var space = before.IndexOf('<') < 0 ? before.LastIndexOf(' ') : -1;
+                    return space >= 0 ? before.Substring(space + 1) : before;
+                }
+            }
+
+            // The type of something that isn't called: a field's is its detail (`float`), a constant's follows
+            // its name (`Math.PI: float`)
+            public string Type
+            {
+                get
+                {
+                    var first = (Detail ?? "").Split('\n')[0].Trim();
+                    var colon = first.LastIndexOf(": ", StringComparison.Ordinal);
+                    if (colon >= 0) return first.Substring(colon + 2).Trim();
+                    return first.Length > 0 && first.IndexOf(' ') < 0 ? first : null;
+                }
+            }
+
+            public static Member Of(JValue item) => new Member
+            {
+                Label = item.Str("label"), Detail = item.Str("detail") ?? "", Kind = (int)(item.Get("kind")?.Number ?? 0), Call = (item.Str("insertText") ?? "").Contains("("),
+            };
+        }
+
+        // What completion lists where the value of one of a node's inputs would be written (the statement the node
+        // is in): the names in scope there, the game's constants and functions, the engine's namespaces. `done`
+        // gets null, and why, when it can't be asked.
+        public static void ValuesAt(TideGraphWindow window, GraphSlot slot, int node, Action<List<Member>, string> done)
+        {
+            var client = ClientOf(window);
+            if (client == null)
+            {
+                done(null, "the language server isn't checking this file");
+                return;
+            }
+            var uri = UriOf(window.Path);
+            var text = window.Doc.Text;
+            var context = new GraphSearchContext
+            {
+                Doc = window.Doc, Graph = window.Doc.GetGraph(slot), Slot = slot, Window = window,
+                Pending = node > 0 ? new GraphPort { Node = node, Input = true, Path = new WirePath("value") } : null,
+            };
+            if (context.Graph == null)
+            {
+                done(null, null);
+                return;
+            }
+            client.Operate(finish =>
+            {
+                if (window == null || !client.SetText(uri, text))
+                {
+                    finish();
+                    done(null, "the window closed");
+                    return;
+                }
+                client.Ask("tide/graphText", uri, -1, (r, why) =>
+                {
+                    var t = GraphText.Of(r);
+                    var offset = t == null ? -1 : Place(context, t);
+                    if (offset < 0)
+                    {
+                        finish();
+                        done(null, why);
+                        return;
+                    }
+                    client.Ask("tide/graphCompletion", uri, offset, (items, why2) =>
+                    {
+                        finish();
+                        done(Items(items).Where(i => !string.IsNullOrEmpty(i.Str("label"))).Select(Member.Of).ToList(), why2);
+                    });
+                });
+            });
+        }
+
+        // What a name has after its dot (Math's functions and constants, an enum's choices): asked of a node that
+        // reads the name, in a copy of the file, which is put back
+        public static void MembersOfName(TideGraphWindow window, GraphSlot slot, string name, Action<List<Member>, string> done)
+        {
+            var client = ClientOf(window);
+            if (client == null || string.IsNullOrEmpty(name))
+            {
+                done(null, "the language server isn't checking this file");
+                return;
+            }
+            var uri = UriOf(window.Path);
+            var text = window.Doc.Text;
+            var copy = GraphDocument.Parse(text);
+            var graph = copy.GetGraph(slot);
+            if (graph == null)
+            {
+                done(null, null);
+                return;
+            }
+            var read = copy.AddNode(graph, "name", 0, 0);
+            read.Set("name", JValue.Of(name), GraphSchema.NodeOrder("name"));
+            var node = read.Wire("id");
+            var probe = copy.Text;
+            client.Operate(finish =>
+            {
+                if (window == null || !client.SetText(uri, probe))
+                {
+                    finish();
+                    done(null, "the window closed");
+                    return;
+                }
+                var parameters = JValue.NewObject();
+                parameters.Set("node", JValue.Of(node));
+                client.Ask("tide/graphMembers", uri, parameters, (items, why) =>
+                {
+                    client.SetText(uri, text);
+                    finish();
+                    done(Items(items).Where(i => !string.IsNullOrEmpty(i.Str("label"))).Select(Member.Of).ToList(), why);
+                });
+            });
         }
 
         // What a type of the game has (an enum's choices, a struct's fields), by its name: asked in a copy of the
@@ -460,7 +636,7 @@ namespace Tide.Editor
                     finish();
                     var found = new List<Member>();
                     foreach (var item in Items(items))
-                        if (!string.IsNullOrEmpty(item.Str("label"))) found.Add(new Member { Label = item.Str("label"), Detail = item.Str("detail"), Kind = (int)(item.Get("kind")?.Number ?? 0) });
+                        if (!string.IsNullOrEmpty(item.Str("label"))) found.Add(Member.Of(item));
                     done(found, why);
                 });
             });

@@ -41,6 +41,7 @@ typedef struct graph_layout_node {
     graph_ids bodies; // The first statements of the code it holds
     int next;
     str kind, op;     // Its 'k' and its 'op', for what's shown in the input that reads it
+    str name;         // ...and a call's name
     int text;         // Its longest text's length, as measured
     bool folded;      // Shown in its reader's input (graph_layout_fold): it has no size and no place of its own
 } graph_layout_node;
@@ -53,8 +54,10 @@ void graph_layout_measure(graph_layout_node *n, int widest_text);
 // measures placed nodes.
 void graph_layout_fold(graph_layout_node *nodes, int count);
 // 0 for a kind of node that's always a node, 1 for one always shown in its reader's input, 2 for one that is
-// when what it's a member of is, 3 for a `-` over a number.
+// when what it's a member of is, 3 for a `-` over a number, 4 for a call that is when it's named a type made of
+// numbers (graph_schema_numbers) and its arguments are numbers.
 int graph_schema_inline(str kind);
+bool graph_schema_numbers(str name);
 // Where each node goes, from `root`: a body's first statement, or a value's node
 void graph_layout_place(graph_layout_node *nodes, int count, int root, bool body);
 // A graph's JSON ({"entry"|"root", "nodes"}) laid out: {"<id>": [x, y], ...}; false for what isn't a graph

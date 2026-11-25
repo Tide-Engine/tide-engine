@@ -1788,6 +1788,7 @@ static int probe_node;
 static int probe_offset = -1;
 static bool probe_dot; // The '.' after it: without, the node is only written where nothing reads it, for its type
 static const char *probe_type; // ...or a type's name, for what a value of it has where no node has one yet
+static bool probe_named;       // ...or what the name itself has: an enum's choices, a namespace's functions
 
 // Its Tide with a function after it that takes a value of the type and reads it with a '.', where completion goes on
 static void probe_graph_type(afile *f)
@@ -1798,7 +1799,8 @@ static void probe_graph_type(afile *f)
     }
     sb text = {0};
     sb_putn(&text, f->src.text, f->src.len);
-    sb_printf(&text, "\nvoid _graphProbe(%s _graphOf)\n{\n    _ = _graphOf.", probe_type);
+    if (probe_named) sb_printf(&text, "\nvoid _graphProbe()\n{\n    _ = %s.", probe_type);
+    else sb_printf(&text, "\nvoid _graphProbe(%s _graphOf)\n{\n    _ = _graphOf.", probe_type);
     probe_offset = (int)text.len;
     sb_put(&text, ";\n}\n");
     f->src.text = text.data;
@@ -1834,10 +1836,11 @@ void analysis_set_graph_probe(const char *uri, const int node, const bool dot)
     probe_offset = -1;
 }
 
-void analysis_set_graph_type_probe(const char *uri, const char *type)
+void analysis_set_graph_type_probe(const char *uri, const char *type, const bool named)
 {
     analysis_set_graph_probe(uri, 0, false);
     probe_type = type;
+    probe_named = named;
 }
 
 int analysis_graph_probe_offset(void)

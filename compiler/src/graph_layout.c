@@ -67,6 +67,14 @@ static bool folds(const layout *l, const graph_layout_node *n, const int *reader
     if (shown == 1) yes = n->inputs.count == 0;
     else if (shown == 2) yes = n->inputs.count == 0 || (of && graph_schema_inline(of->kind) != 3 && folds(l, of, readers, state));
     else if (shown == 3) yes = str_eq_c(n->op, "-") && of && (str_eq_c(of->kind, "int") || str_eq_c(of->kind, "float")) && folds(l, of, readers, state);
+    else if (shown == 4 && graph_schema_numbers(n->name)) { // float2(16, -14): each argument a number shown there
+        yes = n->inputs.count > 0;
+        for (int i = 0; yes && i < n->inputs.count; i++) {
+            const graph_layout_node *arg = find(l, n->inputs.items[i]);
+            const int number = arg ? graph_schema_inline(arg->kind) : 0;
+            yes = arg && (str_eq_c(arg->kind, "int") || str_eq_c(arg->kind, "float") || number == 3) && folds(l, arg, readers, state);
+        }
+    }
     state[at] = yes ? 3 : 2;
     return yes;
 }
@@ -74,6 +82,7 @@ static bool folds(const layout *l, const graph_layout_node *n, const int *reader
 // How many characters a folded value shows: a path's names and its dots
 static int folded_text(const layout *l, const graph_layout_node *n, const int depth)
 {
+    if (graph_schema_inline(n->kind) == 4) return 8 * n->inputs.count; // A box for each of its numbers
     const graph_layout_node *of = n->inputs.count == 1 && depth < 64 ? find(l, n->inputs.items[0]) : NULL;
     return n->text + (of && of->folded ? 1 + folded_text(l, of, depth + 1) : 0);
 }
@@ -244,6 +253,7 @@ bool graph_layout_json(const graph_json *g, sb *out)
         graph_exec_wires(n, &p->bodies);
         p->kind = key_text(n, "k");
         p->op = key_text(n, "op");
+        p->name = key_text(n, "name");
         const graph_json *next = graph_json_get(n, "next");
         p->next = next && next->kind == GJ_NUMBER ? (int)next->number : 0;
         int widest = 0;
@@ -318,6 +328,7 @@ static void measure_frame(board_items *items, const graph_json *owner)
         size->id = id_of(n);
         size->kind = key_str(n, "k");
         size->op = key_str(n, "op");
+        size->name = key_str(n, "name");
         graph_data_wires(n, &size->inputs);
         graph_exec_wires(n, &size->bodies);
         int widest = 0;

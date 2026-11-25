@@ -50,6 +50,8 @@ namespace Tide.Editor
         public int Priority;       // Higher ranks first among as close a match
         public Color? Dot;         // A type's colour
         public bool KeepOpen;      // Picking it changes the list, and doesn't close it
+        public bool Pinned;        // Listed whatever's typed, after what matches: a way on when nothing does
+        public bool Searched;      // Listed only once something's typed: found, not browsed
         public Action Pick;
         public object Data;
     }
@@ -223,7 +225,8 @@ namespace Tide.Editor
                     continue;
                 }
                 if (!Suits(o)) continue;
-                if (words.Length > 0)
+                if (o.Searched && words.Length == 0) continue;
+                if (words.Length > 0 && !o.Pinned)
                 {
                     var text = (o.Title + " " + o.Section + " " + o.Keywords + " " + o.Detail).ToLowerInvariant();
                     if (!words.All(text.Contains)) continue;
@@ -243,7 +246,7 @@ namespace Tide.Editor
             }
             if (ranked)
             {
-                var scores = shown.ToDictionary(o => o, o => Score(o, typed));
+                var scores = shown.ToDictionary(o => o, o => o.Pinned ? 9 : Score(o, typed));
                 shown.Sort((a, b) =>
                 {
                     var c = scores[a].CompareTo(scores[b]);
@@ -546,7 +549,11 @@ namespace Tide.Editor
                 if (taken.Add(g)) options.Add(new GraphOption { Title = g, Section = Group("own"), Detail = "generic", Dot = TideGraphTypes.ColorOf(g, light), Priority = 3, KeepOpen = true, Pick = () => Take(g) });
             foreach (var t in suits.Where(t => !t.BuiltIn && Mine(t.Name)))
                 if (taken.Add(t.Name)) options.Add(Option(t, Group("file"), 3));
-            foreach (var t in suits.Where(t => !t.BuiltIn))
+            // What the game (or a package of it) declares, as the last check said; what's offered and isn't its
+            // own is the engine's, and is listed with the rest. Until a check says, nothing is known to be the
+            // engine's.
+            var theirs = Window.Checked;
+            foreach (var t in suits.Where(t => !t.BuiltIn && theirs?.IsGames(t.Name) != false))
                 if (taken.Add(t.Name)) options.Add(Option(t, Group("game"), 2));
             if (!request.NoBuilders)
                 foreach (var b in GraphSchema.TypeBuilders)
@@ -567,6 +574,8 @@ namespace Tide.Editor
                 if (taken.Add(t.Name)) options.Add(Option(t, Group("builders"), 1));
             if (top && request.AllowVoid)
                 options.Add(new GraphOption { Title = "void", Section = Group("rest"), Detail = "nothing", Dot = TideGraphTypes.ColorOf("void", light), KeepOpen = true, Pick = () => Finish("void") });
+            foreach (var t in suits.Where(t => !t.BuiltIn))
+                if (taken.Add(t.Name)) options.Add(Option(t, Group("rest"), 0));
             foreach (var t in suits.Where(t => t.BuiltIn))
                 if (taken.Add(t.Name)) options.Add(Option(t, Group("rest"), 0));
             Status = !Asked ? "Asking what fits here…" : suits.Count == 0 ? "Nothing that fits here is declared yet." : null;

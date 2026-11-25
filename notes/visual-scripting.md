@@ -429,6 +429,18 @@ names and silhouettes, "View as Tide" and the rest in the board's "…" menu.
   which Unity lays nothing out (the pointer test is skipped there and passes on the hidden desktop).
 - Tests (2026-11-25, `-batchmode -nographics`, the three graph fixtures): 36 passed, 1 skipped (the pointer
   test), 1 failed for a stale `tide.exe` in the build tree (the schema test compares `tide graph --schema`).
+- Round two (2026-11-25): "Simple values are in the input" below, built: an input's row is its name and a
+  field, a tick, a chip, a pin or "pick…"; the value picker ("What goes in 'amount'?": a typed value, what this
+  code has, the game's, "Work it out…", "Nothing"; only what fits, with "Show what doesn't fit too"); a hole
+  said as "Pick what goes in 'what'" from `data.port`; titles with their object (`Math.Clamp`); arguments named
+  from `tide/graphCalls`; "In this game" from `tide/graphNames`; a new item revealed by panning just enough.
+  Wanted types: a call's from `graphCalls`, a Set's value from its target, a condition `bool`, a return the
+  result's, a local's and a field's their own. Its picks: Set's value row shows the operator's button where the
+  label would be; a value frame's root keeps a literal as a small node (tidec doesn't fold what a root reads);
+  removing a parameter leaves its reads (the check says where); fitting is equality and the spec's numeric
+  widenings, generics and unknown types fit. 39 tests: 37 passed, the pointer test skipped under `-nographics`,
+  and the schema test failed for a stale `tide.exe` (the CLI's target is `tide_cli`; `tide` is a phony that
+  didn't relink it). On the hidden desktop: both stories, `SimpleValuesAreInTheInput` and the pointer test pass.
 - Not there: valid attributes per kind, the namespaces that exist, what an `override` can replace (text
   prompts); which ways of taking a parameter a kind allows come from completion's keywords, so without tidels
   every way is offered.
@@ -620,6 +632,14 @@ them. A statement reads as a sentence on one node: **Set** `wobble.phase` `+=` `
   "argument 1" only until the first check answers.
 - Layout: tidec gives what's shown in an input no room (`graph_layout_fold`: the node is placed where its reader
   is, the reader is as wide as its widest row). sumo's arena went from 24,000 x 28,000 to 15,000 x 14,000.
+
+Later the same day, after the Unity window's pictures of it (a `float2(16, 14)` was still a node wired into
+"position"): **a vector or a colour made of numbers alone is in the input too**, as the type's own control
+(`inline.numbers`: a `call` named one of `numbersOf` whose arguments are all numbers shown there). And the
+words a Set's operator has are the schema's (`operators.assignInfo`: `+=` "goes up by", `=` "becomes"); a call's
+list label is "argument". `tide/graphMembers` takes `{"name": "Math"}` as well: what the name itself has after
+a `.`, an enum's choices or a namespace's functions (`{"type"}` is what a *value* of the type has, which for
+those is nothing).
 
 **`tide/graphCalls`** (2026-11-25): `{"<call's node>": {"params": ["value", "min", "max"], "types": ["float", "",
 ""], "args": [0, 1, 2]}}` for every checked call of the document: the callee's parameters' names
