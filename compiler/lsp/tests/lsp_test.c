@@ -14309,10 +14309,45 @@ TIDE_TEST(lsp_graphs)
     // ...and of node 17, which nothing reads yet, as a value just placed on the canvas
     const char *unread = request_at(uri, "tide/graphMembers", 0, 0, "\"node\":17");
     TIDE_CHECK(offers(unread, "points") && has(unread, "\"type\":\"Score\""));
+    // ...and of a type by its name, for a pin nothing reads yet: the game's own, and the engine's
+    const char *of_type = request_at(uri, "tide/graphMembers", 0, 0, "\"type\":\"Score\"");
+    TIDE_CHECK(offers(of_type, "points") && has(of_type, "\"type\":\"Score\""));
+    TIDE_CHECK(offers(request_at(uri, "tide/graphMembers", 0, 0, "\"type\":\"float3\""), "x"));
+    TIDE_CHECK(!offers(request_at(uri, "tide/graphMembers", 0, 0, "\"type\":\"Score s) { } void F(\""), "points"));
     // ...and the graph as it is again after
     TIDE_CHECK(has(request_at(uri, "tide/graphText", 0, 0, ""), "score.points += Bonus(3);"));
     // The file's JSON is no Tide to ask about by its places
     TIDE_CHECK(has(request_at(uri, "textDocument/hover", 7, 40, ""), "\"result\":null"));
+
+    // An input with no wire is said on its node with its key, and the rest is still read and checked around it:
+    // the Tide is there, the unknown call is still said, and the hole itself is said once
+    static const char holes[] =
+        "{\"tidegraph\": 1, \"nextId\": 30, \"decls\": [\n"
+        "  {\"kind\": \"scene\", \"id\": 1, \"name\": \"Main\", \"members\": []},\n"
+        "  {\"kind\": \"singleton\", \"id\": 2, \"name\": \"Score\", \"members\": [{\"kind\": \"field\", \"id\": 3, \"type\": \"int\", \"name\": \"points\"}]},\n"
+        "  {\"kind\": \"system\", \"id\": 10, \"name\": \"Add\", \"params\": [{\"id\": 11, \"mode\": \"mut\", \"type\": \"Score\", \"name\": \"score\"}],\n"
+        "   \"body\": {\"entry\": 12, \"nodes\": [\n"
+        "    {\"id\": 12, \"k\": \"assign\", \"x\": 0, \"y\": 0, \"op\": \"+=\", \"value\": 15, \"next\": 18},\n"
+        "    {\"id\": 15, \"k\": \"call\", \"x\": 0, \"y\": 0, \"name\": \"Math.Max\", \"args\": [16, 0]},\n"
+        "    {\"id\": 16, \"k\": \"int\", \"x\": 0, \"y\": 0, \"text\": \"3\"},\n"
+        "    {\"id\": 18, \"k\": \"eval\", \"x\": 0, \"y\": 0, \"value\": 19},\n"
+        "    {\"id\": 19, \"k\": \"call\", \"x\": 0, \"y\": 0, \"name\": \"Bonus\", \"args\": []},\n"
+        "    {\"id\": 17, \"k\": \"name\", \"x\": 0, \"y\": 0, \"name\": \"score\"}\n"
+        "  ]}}\n"
+        "]}\n";
+    static const char holes_uri[] = "file:///lsp_holes.tidegraph";
+    clear_sent();
+    open_uri(holes_uri, holes);
+    const char *said = NULL;
+    for (int i = 0; i < sent_count; i++) {
+        if (has(sent[i], "lsp_holes") && has(sent[i], "publishDiagnostics")) said = sent[i];
+    }
+    TIDE_CHECK(said && has(said, "node 12's 'target' isn't connected") && has(said, "\"data\":{\"node\":12,\"port\":\"target\"}"));
+    TIDE_CHECK(said && has(said, "\"data\":{\"node\":15,\"port\":\"args\",\"index\":1}"));
+    TIDE_CHECK(said && has(said, "Bonus") && has(said, "\"data\":{\"node\":19}"));
+    TIDE_CHECK(said && !has(said, "_graphHole"));
+    TIDE_CHECK(has(request_at(holes_uri, "tide/graphText", 0, 0, ""), "system Add(mut Score score)"));
+    TIDE_CHECK(offers(request_at(holes_uri, "tide/graphMembers", 0, 0, "\"node\":17"), "points"));
 
     // The schema both editors read, and a layout: the statement at 0, its values to its left
     clear_sent();

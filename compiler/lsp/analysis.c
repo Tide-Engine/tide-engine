@@ -39,6 +39,8 @@ typedef struct diagnostic {
     loc fix_at; // A "did you mean": the name written, `fix_len` bytes, which `fix` replaces
     int fix_len;
     str fix;
+    const char *port; // A graph's input with no wire: its key, and its place among the key's items or -1
+    int port_index;
 } diagnostic;
 
 // A name in the source and what it refers to.
@@ -310,7 +312,8 @@ static void collect(void *user, const diag_severity severity, const loc at, cons
         sb_printf(&d->message, "\nnote: %s", message);
         return;
     }
-    diagnostic d = {severity, at, {0}, {0}, {0, 0, 0}, 0, {NULL, 0}};
+    diagnostic d = {severity, at, {0}, {0}, {0, 0, 0}, 0, {NULL, 0}, NULL, -1};
+    d.port = graph_hole_port(&d.port_index);
     sb_put(&d.message, message);
     vec_push(A.diags, d);
 }
@@ -1784,6 +1787,23 @@ static const char *probe_uri;
 static int probe_node;
 static int probe_offset = -1;
 static bool probe_dot; // The '.' after it: without, the node is only written where nothing reads it, for its type
+static const char *probe_type; // ...or a type's name, for what a value of it has where no node has one yet
+
+// Its Tide with a function after it that takes a value of the type and reads it with a '.', where completion goes on
+static void probe_graph_type(afile *f)
+{
+    probe_offset = -1;
+    for (const char *c = probe_type; *c; c++) { // A type's text and no more code than that
+        if (!isalnum((unsigned char)*c) && !strchr("_<>,.?[] ", *c)) return;
+    }
+    sb text = {0};
+    sb_putn(&text, f->src.text, f->src.len);
+    sb_printf(&text, "\nvoid _graphProbe(%s _graphOf)\n{\n    _ = _graphOf.", probe_type);
+    probe_offset = (int)text.len;
+    sb_put(&text, ";\n}\n");
+    f->src.text = text.data;
+    f->src.len = text.len;
+}
 
 // Its Tide with a '.' just after the node's text, which completion goes on from as after `value.` in a .tide file
 static void probe_graph(afile *f)
@@ -1810,7 +1830,14 @@ void analysis_set_graph_probe(const char *uri, const int node, const bool dot)
     probe_uri = uri;
     probe_node = node;
     probe_dot = dot;
+    probe_type = NULL;
     probe_offset = -1;
+}
+
+void analysis_set_graph_type_probe(const char *uri, const char *type)
+{
+    analysis_set_graph_probe(uri, 0, false);
+    probe_type = type;
 }
 
 int analysis_graph_probe_offset(void)
@@ -1902,6 +1929,8 @@ void analysis_run(const analysis_file *given, const int given_count)
             if (!graph_lower_with(&f->src, probed ? probe_node : 0)) {
                 f->src.text = "";
                 f->src.len = 0;
+            } else if (probed && probe_type) {
+                probe_graph_type(f);
             } else if (probed && probe_dot) {
                 probe_graph(f);
             }
@@ -1909,9 +1938,9 @@ void analysis_run(const analysis_file *given, const int given_count)
         }
 
         const char *p = copy;
-        if (files[i].len >= 3 && memcmp(p, "\xEF\xBB\xBF", 3) == 0) p += 3; // The lexer counts columns after it.
+        if (f->src.len >= 3 && memcmp(p, "\xEF\xBB\xBF", 3) == 0) p += 3; // The lexer counts columns after it.
         vec_push(f->lines, p);
-        for (; p < copy + files[i].len; p++) {
+        for (; p < copy + f->src.len; p++) {
             if (*p == '\n') vec_push(f->lines, p + 1);
         }
 
@@ -2035,8 +2064,9 @@ static bool unused_access(const diagnostic *d)
 }
 
 // A graph's diagnostic: on the line of the element it's about, in the file's JSON, with that element's id
-static void write_graph_place(jbuf *out, const afile *f, const loc at, const bool with_id)
+static void write_graph_place(jbuf *out, const afile *f, const loc at, const diagnostic *d)
 {
+    const bool with_id = d != NULL;
     const graph_map *map = f->src.graph;
     const int id = !map ? 0 : map->lowered ? graph_id_at(map, at) : graph_id_at_json(map, at);
     const loc json = map && map->lowered ? graph_json_at(map, id) : at;
@@ -2047,14 +2077,22 @@ static void write_graph_place(jbuf *out, const afile *f, const loc at, const boo
     const int col = json.col > 0 && json.col - 1 <= len ? json.col - 1 : 0;
     jb_printf(out, "{\"start\":{\"line\":%d,\"character\":%d},\"end\":{\"line\":%d,\"character\":%d}}", line, col, line,
               len > col ? len : col + 1);
-    if (id && with_id) jb_printf(out, ",\"data\":{\"node\":%d}", id);
+    if (id && with_id) {
+        jb_printf(out, ",\"data\":{\"node\":%d", id);
+        if (d->port) {
+            jb_put(out, ",\"port\":");
+            jb_string(out, d->port);
+            if (d->port_index >= 0) jb_printf(out, ",\"index\":%d", d->port_index);
+        }
+        jb_put(out, "}");
+    }
 }
 
 static void write_diagnostic(jbuf *out, const diagnostic *d)
 {
     const loc at = d->at.line > 0 ? d->at : (loc){1, 1, d->at.file};
     jb_put(out, "{\"range\":");
-    if (at.file >= 0 && at.file < A.file_count && A.files[at.file].graph) write_graph_place(out, &A.files[at.file], at, true);
+    if (at.file >= 0 && at.file < A.file_count && A.files[at.file].graph) write_graph_place(out, &A.files[at.file], at, d);
     else write_token_range(out, at);
     jb_printf(out, ",\"severity\":%d,\"source\":\"tidec\",\"message\":",
               d->severity == DIAG_ERROR ? 1 : d->severity == DIAG_INFO ? 3 : 2);
@@ -2067,7 +2105,7 @@ static void write_diagnostic(jbuf *out, const diagnostic *d)
             jb_put(out, i ? ",{\"location\":{\"uri\":" : "{\"location\":{\"uri\":");
             jb_string(out, A.files[note->at.file].uri);
             jb_put(out, ",\"range\":");
-            if (A.files[note->at.file].graph) write_graph_place(out, &A.files[note->at.file], note->at, false);
+            if (A.files[note->at.file].graph) write_graph_place(out, &A.files[note->at.file], note->at, NULL);
             else write_token_range(out, note->at);
             jb_put(out, "},\"message\":");
             jb_string(out, note->message);
@@ -15054,7 +15092,7 @@ static int asset_diagnostic(const asset_site *site, const char *message)
         const diagnostic *d = &A.diags.items[i];
         if (d->at.line == at.line && d->at.col == at.col && d->at.file == at.file && d->severity == DIAG_ERROR) return i;
     }
-    diagnostic d = {DIAG_ERROR, at, {0}, {0}, {0, 0, 0}, 0, {NULL, 0}};
+    diagnostic d = {DIAG_ERROR, at, {0}, {0}, {0, 0, 0}, 0, {NULL, 0}, NULL, -1};
     sb_put(&d.message, message);
     vec_push(A.diags, d);
     return A.diags.count - 1;

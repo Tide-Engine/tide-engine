@@ -539,8 +539,8 @@ try {
         await shoot('playground-phone');
         console.log(`playground: browser compilation, state migration, diagnostics, recovery and reset passed`);
     }
-    // The graph playground: the IDEs' graph editor (tools/tide-graph) in a frame, checked by the browser tidels,
-    // its graph built by the browser compiler as game.tidegraph and run in the preview.
+    // The graph playground: the graph editor (tools/tide-graph, the board the IDEs show) in a frame, checked by the
+    // browser tidels, its graph built by the browser compiler as game.tidegraph and run in the preview.
     if (!only || only.has('graph-playground')) {
         await command('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
         await command('Page.navigate', { url: `${origin}/guide/graph-playground` });
@@ -554,21 +554,32 @@ try {
             const app = frame?.contentWindow?.TideGraph?.app;
             return doc && app?.editor ? (${expression}) : undefined;
         })()`;
-        await until(`${section}?.tideGraph && ${inGraph(`doc.querySelectorAll('.tg-node:not(.tg-pseudo)').length > 10`)}`, 'graph playground shows the starter\'s nodes');
-        await until(inGraph(`doc.querySelector('.tg-crumb').textContent.includes('Fall')`), 'graph playground opens on Fall');
-        const view = await evaluate(inGraph(`({
-            nodes: doc.querySelectorAll('.tg-node:not(.tg-pseudo)').length,
-            graphNodes: app.editor.graph.nodes.length,
-            wires: doc.querySelectorAll('.tg-wires path').length,
-            exec: doc.querySelectorAll('.tg-wires path.tg-wire-exec').length,
-            bad: [...doc.querySelectorAll('.tg-wires path')].filter(p => !/^M -?[0-9.]+ -?[0-9.]+ C /.test(p.getAttribute('d')) || p.getAttribute('d').includes('NaN')).length,
-            outline: doc.querySelectorAll('.tg-tree-row').length,
-            themed: doc.documentElement.classList.contains(document.documentElement.classList.contains('dark') ? 'tg-dark' : 'tg-light'),
-        })`));
-        assert.equal(view.nodes, view.graphNodes, 'every node of Fall is drawn');
-        assert.ok(view.wires > 10 && view.exec >= 3 && view.bad === 0, `wires are drawn: ${JSON.stringify(view)}`);
-        assert.ok(view.outline > 10 && view.themed, `outline and theme: ${JSON.stringify(view)}`);
-        await until(inGraph(`doc.querySelector('.tg-status').textContent === 'Checked by tidels' && doc.querySelector('.tg-tide').textContent.includes('system Fall(')`),
+        // The frame of the starter's system Fall on the board
+        const fall = `[...app.board.frames.values()].find(f => f.item.value.name === 'Fall')`;
+        await until(`${section}?.tideGraph && ${inGraph(`${fall}?.mode === 'near' && doc.querySelectorAll('.tg-frame .tg-node').length > 10`)}`, 'graph playground shows the starter\'s board');
+        await until(inGraph(`(() => { const r = ${fall}.el.getBoundingClientRect(); return r.left >= 0 && r.left < doc.defaultView.innerWidth / 2 && r.top >= 0 && r.top < doc.defaultView.innerHeight / 2; })()`),
+            'graph playground opens on Fall');
+        const view = await evaluate(inGraph(`(() => {
+            const f = ${fall};
+            const within = f.el;
+            return {
+                nodes: within.querySelectorAll('.tg-node:not(.tg-entry)').length,
+                graphNodes: f.graph.nodes.length - f.analysis.reads.size - f.analysis.merged.size,
+                pins: within.querySelectorAll('.tg-entry .tg-pin').length,
+                wires: within.querySelectorAll('.tg-wires path').length,
+                exec: within.querySelectorAll('.tg-wires path.tg-wire-exec').length,
+                bad: [...within.querySelectorAll('.tg-wires path')].filter(p => !/^M -?[0-9.]+ -?[0-9.]+ C /.test(p.getAttribute('d')) || p.getAttribute('d').includes('NaN')).length,
+                cards: doc.querySelectorAll('.tg-card').length,
+                frames: doc.querySelectorAll('.tg-frame').length,
+                source: doc.querySelectorAll('pre').length,
+                themed: doc.documentElement.classList.contains(document.documentElement.classList.contains('dark') ? 'tg-dark' : 'tg-light'),
+            };
+        })()`));
+        assert.equal(view.nodes, view.graphNodes, `every node of Fall is drawn, its parameters' reads as wires from their pins: ${JSON.stringify(view)}`);
+        assert.ok(view.pins >= 4 && view.wires > 10 && view.exec >= 3 && view.bad === 0, `pins and wires are drawn: ${JSON.stringify(view)}`);
+        assert.ok(view.cards >= 10 && view.frames >= 7 && view.themed, `the board's cards and frames, in the site's theme: ${JSON.stringify(view)}`);
+        assert.equal(view.source, 0, 'the Tide the graph stands for is not on screen');
+        await until(inGraph(`doc.querySelector('.tg-status').textContent === 'Checked' && app.lang.text?.includes('system Fall(')`),
             'graph playground is checked by the browser tidels', { details: inGraph(`doc.querySelector('.tg-status').textContent`) });
         await until(`${preview}?.contentWindow.__draws > 5`, 'graph playground\'s starter plays');
         const previewSrc = await evaluate(`${preview}.src`);
@@ -603,14 +614,15 @@ try {
             app.reveal(node.id);
             return node.id;
         })()`));
-        await until(inGraph(`!!doc.querySelector('.tg-node.tg-has-error[data-id="${clamp}"]') && [...doc.querySelectorAll('.tg-problem.tg-error')].some(p => p.textContent.includes('Clampp'))`),
+        await until(inGraph(`app.board.elementOf(${clamp})?.classList.contains('tg-has-error') && app.board.elementOf(${clamp}).dataset.problem.includes('Clampp')
+            && /1 problem/.test(doc.querySelector('.tg-status').textContent)`),
             'tidels marks the broken node');
         await until(`${section}.querySelector('.diagnostics.error')?.textContent.includes('game.tidegraph:@${clamp}: error')`, 'the build names the broken node', { details });
         const draws = await evaluate(`${preview}.contentWindow.__draws`);
         await until(`${preview}.contentWindow.__draws > ${draws + 5}`, 'the last good game keeps drawing after a graph error');
         await evaluate(inGraph(`(app.command('undo'), true)`));
         await until(running, 'graph playground recovers after the undo', { failure, details });
-        await until(inGraph(`!doc.querySelector('.tg-node.tg-has-error') && !doc.querySelector('.tg-problem')`), 'the error mark clears');
+        await until(inGraph(`!doc.querySelector('.tg-has-error') && doc.querySelector('.tg-status').textContent === 'Checked'`), 'the error mark clears');
 
         // Reset: the starter again, and no draft
         await evaluate(`Array.from(${section}.querySelectorAll('.actions button')).find(button => button.textContent === 'Reset graph').click()`);
@@ -620,16 +632,17 @@ try {
         await shoot('graph-playground');
         await command('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
         await until('innerWidth === 390 && document.documentElement.scrollWidth <= innerWidth', 'graph playground fits a phone without page overflow');
-        await until(inGraph(`doc.defaultView.innerWidth < 640 && doc.defaultView.getComputedStyle(doc.querySelector('.tg-main')).gridTemplateColumns.split(' ').length === 1`),
-            'the graph editor stacks its panes on a phone');
+        await until(inGraph(`doc.defaultView.innerWidth < 640 && doc.defaultView.getComputedStyle(doc.querySelector('.tg-find')).display === 'none'
+            && doc.querySelector('.tg-board').getBoundingClientRect().width === doc.defaultView.innerWidth && doc.documentElement.scrollWidth <= doc.defaultView.innerWidth`),
+            'the graph editor is its board alone on a phone');
         await until('document.querySelector(".sidebar").getBoundingClientRect().right <= 1', 'phone sidebar finishes closing');
         await evaluate(`${section}.querySelector('.editor').scrollIntoView({block:'center'})`);
         await shoot('graph-playground-phone');
         await command('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
 
-        // Show as Tide, then that Tide in the text playground
-        await evaluate(inGraph(`[...doc.querySelectorAll('.tg-toolbar .tg-button')].find(b => b.textContent === 'Show as Tide').click()`));
-        await until(`${section}.querySelector('dialog.tide')?.open && ${section}.querySelector('dialog.tide pre').textContent.includes('system Fall(')`, 'Show as Tide shows the graph\'s Tide');
+        // View as Tide, behind the board's menu, then that Tide in the text playground
+        await evaluate(inGraph(`(doc.querySelector('.tg-board-more').click(), doc.querySelector('.tg-menu-item[data-name="view-tide"]').click(), true)`));
+        await until(`${section}.querySelector('dialog.tide')?.open && ${section}.querySelector('dialog.tide pre').textContent.includes('system Fall(')`, 'View as Tide shows the graph\'s Tide');
         const tide = await evaluate(`${section}.querySelector('dialog.tide pre').textContent`);
         await shoot('graph-playground-tide');
         await evaluate(`Array.from(${section}.querySelectorAll('dialog.tide button')).find(button => button.textContent === 'Open in the text playground').click()`);
@@ -637,7 +650,7 @@ try {
         assert.equal(await evaluate(`document.querySelector('section.playground').tideEditor.value`), tide, 'the text playground has the graph\'s Tide');
         await until(`document.querySelector('section.playground .status').textContent.includes('your changes are live')`, 'the graph\'s Tide runs in the text playground',
             { timeout: 120000, details: `document.querySelector('section.playground .status').textContent + '\\n' + (document.querySelector('section.playground .diagnostics')?.textContent ?? '')` });
-        console.log('graph playground: editor, tidels, build, node diagnostics, recovery, reset, phone layout and Show as Tide passed');
+        console.log('graph playground: board, tidels, build, node diagnostics, recovery, reset, phone layout and View as Tide passed');
     }
     const built = readdirSync(join(docs, 'examples')).filter((file) => file.endsWith('.tide')).map((file) => file.slice(0, -5)).sort();
     assert.deepEqual([...visited].sort(), built, 'Every example is on a page, and every page\'s examples exist');

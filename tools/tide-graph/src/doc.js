@@ -1,5 +1,7 @@
 // A .tidegraph's contents with what an editor does to them: every element with an id found by it, graphs by the
-// element and key holding them, nodes made, wired, deleted, copied and pasted, declarations and members made.
+// element and key holding them, nodes made, wired, deleted, copied and pasted, declarations and members made, and
+// the board's view of it: which declarations are cards and which are frames, a frame's pins (its parameters), and
+// which nodes are drawn as wires from a pin (a parameter's or a local's reads).
 // Edits change the JSON in place; the editor (app.js) writes the file after each, and keeps the texts for undo.
 (function (G) {
     'use strict';
@@ -470,13 +472,17 @@
 
         // A new declaration or member of a kind, with what its kind takes: each of its keys the schema lists, made
         // the way the format writes an empty one
-        newElement(kind, member, name) {
+        newElement(kind, member, name, at) {
             const s = this.schema;
             const spec = member ? s.memberSpec(kind) : s.declSpec(kind);
             const order = spec?.keys || ['kind', 'id', 'name'];
             const e = {};
             set(e, 'kind', kind, order);
             set(e, 'id', this.newId(), order);
+            if (at && order.includes('x')) {
+                set(e, 'x', Math.round(at.x), order);
+                set(e, 'y', Math.round(at.y), order);
+            }
             for (const key of order) {
                 if (e[key] !== undefined) continue;
                 const v = this.defaultKey(kind, member, key, spec, name);
@@ -498,8 +504,8 @@
                 case 'payload': return [];
                 case 'type':
                     if (kind === 'asset') return 'Texture';
-                    if (kind === 'tweak') return 'float';
-                    return 'int';
+                    if (kind === 'const') return 'int';
+                    return 'float';
                 case 'returnType':
                     if (kind === 'function' || kind === 'method') return 'void';
                     if (kind === 'operator') return 'int';
@@ -507,7 +513,11 @@
                 case 'op': return kind === 'operator' ? '+' : undefined;
                 case 'text': return '// Tide text';
                 case 'accessors': return [this.newAccessor('get')];
-                case 'trigger': return { type: 'Event', name: 'e' };
+                case 'trigger': {
+                    // The first event the file has, to start with: the entry's picker changes it
+                    const event = [...this.index.values()].find(e => e.role === 'decl' && e.value.kind === 'event')?.value.name || 'Event';
+                    return { type: event, name: event[0].toLowerCase() + event.slice(1) };
+                }
                 case 'root': return kind === 'prefab' ? this.newPrefabNode(null) : undefined;
                 case 'value':
                     if (kind === 'const') return this.valueGraph('int', '0');
@@ -522,8 +532,11 @@
             return { id: this.newId(), word, body: { entry: null, nodes: [] } };
         }
 
-        newParam(type, name) {
-            return { id: this.newId(), mode: 'read', type, name };
+        newParam(type, name, mode = 'read') {
+            const p = { id: this.newId(), mode };
+            if (type !== undefined) p.type = type;
+            if (name !== undefined) p.name = name;
+            return p;
         }
 
         newNamed(name, valueKind, valueText) {
@@ -598,7 +611,230 @@
             return out;
         }
 
-        // A readable name of an element, for the outline and the canvas's title
+        // ---------------------------------------------------------------------------------------------------------
+        // The board (notes/visual-scripting.md, The experience: one board)
+
+        // What's on the board, in the file's order: a card for each declaration of data, a frame for each of code
+        // and for each member with code of its own (a method, an accessor...), and namespace blocks around theirs.
+        // { id, value, card | frame, spec, type (a member's or an accessor's type), property (an accessor's),
+        //   namespace (the block it's in, or null), list (the list it's in) }
+        items() {
+            const s = this.schema;
+            const out = [];
+            const visit = (decls, namespace) => {
+                if (!Array.isArray(decls)) return;
+                for (const d of decls) {
+                    if (!isObject(d)) continue;
+                    if (d.kind === 'namespace') {
+                        out.push({ id: d.id, value: d, region: true, spec: s.declSpec('namespace'), namespace, list: decls });
+                        visit(d.decls, d);
+                        continue;
+                    }
+                    const spec = s.declSpec(d.kind);
+                    if (spec?.body) {
+                        out.push({ id: d.id, value: d, frame: true, spec, namespace, list: decls });
+                        continue;
+                    }
+                    out.push({ id: d.id, value: d, card: true, spec, namespace, list: decls });
+                    for (const m of Array.isArray(d.members) ? d.members : []) {
+                        if (!isObject(m)) continue;
+                        const mspec = s.memberSpec(m.kind);
+                        if (mspec?.body) out.push({ id: m.id, value: m, frame: true, spec: mspec, member: true, type: d, namespace, list: d.members });
+                        for (const a of Array.isArray(m.accessors) ? m.accessors : []) {
+                            if (isObject(a)) out.push({ id: a.id, value: a, frame: true, accessor: true, property: m, type: d, namespace, list: m.accessors });
+                        }
+                    }
+                }
+            };
+            visit(this.root.decls, null);
+            return out;
+        }
+
+        // What a frame's code takes, each a pin on its entry that its nodes read by name: a handler's event, a
+        // command's values, parameters (a query by its own name), and `value` in a property's set.
+        // { id (the element's, 0 for one with none), name, type, element, from: 'trigger' | 'payload' | 'param' }
+        pins(routine, accessor) {
+            const out = [];
+            if (accessor) {
+                if (accessor.word === 'set') out.push({ id: 0, name: 'value', type: routine?.type, from: 'value' });
+                return out;
+            }
+            if (!routine) return out;
+            const t = routine.trigger;
+            if (isObject(t) && t.name) out.push({ id: 0, name: t.name, type: t.changed ? undefined : t.type, element: t, from: 'trigger' });
+            for (const p of Array.isArray(routine.payload) ? routine.payload : []) {
+                if (isObject(p) && p.name) out.push({ id: p.id, name: p.name, type: p.type, element: p, from: 'payload' });
+            }
+            for (const p of Array.isArray(routine.params) ? routine.params : []) {
+                if (!isObject(p) || !p.name || this.schema.modeIsFilter(p.mode)) continue;
+                out.push({ id: p.id, name: p.name, type: p.mode === 'query' ? undefined : p.type, element: p, from: 'param' });
+            }
+            return out;
+        }
+
+        // The pins of the frame a graph's slot is: none for a value's graph
+        pinsOfSlot(slot) {
+            if (!slot || slot.key !== 'body') return [];
+            const e = this.find(slot.owner);
+            if (!e) return [];
+            return e.role === 'accessor' ? this.pins(e.owner, e.value) : this.pins(e.value);
+        }
+
+        // The nodes that go with `ids` when they're copied, moved or deleted: a statement's merged call, and the
+        // reads of pins and locals that only they read
+        withHidden(g, ids, pins) {
+            const a = this.analyse(g, pins);
+            const out = new Set(ids);
+            for (const id of ids) if (a.merged.has(id)) out.add(a.merged.get(id));
+            const counts = new Map();
+            for (const id of out) {
+                const n = a.byId.get(id);
+                if (!n) continue;
+                for (const w of this.schema.dataWires(n)) if (a.reads.has(w)) counts.set(w, (counts.get(w) || 0) + 1);
+            }
+            for (const [w, c] of counts) if (c === a.readers.get(w)) out.add(w);
+            return out;
+        }
+
+        // How a graph's nodes are drawn. A `name` that reads one of the frame's pins and a `local` aren't nodes of
+        // their own while something reads them: their wire comes from the pin (`reads`: node id -> { pin: its name }
+        // or { local: the declaring node's id }). A call that one statement alone runs is drawn as that statement
+        // (`merged`: the statement's id -> the call's, `mergedInto` the other way). `readers` counts each node's
+        // readers.
+        analyse(g, pins) {
+            const s = this.schema;
+            const nodes = Doc.nodes(g);
+            const byId = new Map(nodes.map(n => [n.id, n]));
+            const readers = new Map();
+            const wiresOf = new Map();
+            for (const n of nodes) {
+                const wires = s.dataWires(n);
+                wiresOf.set(n.id, wires);
+                for (const w of wires) readers.set(w, (readers.get(w) || 0) + 1);
+            }
+            if (g.root) readers.set(g.root, (readers.get(g.root) || 0) + 1);
+            // Names a lambda's parameters hide, for the nodes its value is made of
+            const hidden = new Map(); // node id -> Set of names it can't read from a pin
+            for (const n of nodes) {
+                if (n.k !== 'lambda' || !Array.isArray(n.params) || !n.body) continue;
+                const names = n.params.map(p => p?.name).filter(Boolean);
+                const stack = [n.body], seen = new Set();
+                while (stack.length) {
+                    const id = stack.pop();
+                    if (seen.has(id)) continue;
+                    seen.add(id);
+                    if (!hidden.has(id)) hidden.set(id, new Set());
+                    for (const name of names) hidden.get(id).add(name);
+                    stack.push(...(wiresOf.get(id) || []));
+                }
+            }
+            const pinNames = new Set((pins || []).map(p => p.name));
+            const reads = new Map();
+            for (const n of nodes) {
+                if (!readers.get(n.id)) continue;
+                if (n.k === 'local' && byId.has(n.ref)) reads.set(n.id, { local: n.ref });
+                else if (n.k === 'name' && !n.local && pinNames.has(n.name) && !hidden.get(n.id)?.has(n.name)) reads.set(n.id, { pin: n.name });
+            }
+            const merged = new Map(), mergedInto = new Map();
+            for (const n of nodes) {
+                if (n.k !== 'eval' || !n.value) continue;
+                const call = byId.get(n.value);
+                if (!call || (call.k !== 'call' && call.k !== 'method') || readers.get(call.id) !== 1) continue;
+                merged.set(n.id, call.id);
+                mergedInto.set(call.id, n.id);
+            }
+            return { reads, merged, mergedInto, readers, byId };
+        }
+
+        // Renames what a frame's code takes, and every read of it in the frame's nodes
+        renamePin(g, old, name) {
+            if (!g || !old || old === name) return;
+            for (const n of Doc.nodes(g)) {
+                if (n.k === 'name' && !n.local && n.name === old) n.name = name;
+            }
+        }
+
+        // Removes the reads of pins and locals among `ids` that nothing reads any more (after their wire went)
+        dropUnread(g, ids, pins) {
+            const pinNames = new Set((pins || []).map(p => p.name));
+            const gone = [];
+            const read = new Set();
+            for (const n of Doc.nodes(g)) for (const w of this.schema.dataWires(n)) read.add(w);
+            if (g.root) read.add(g.root);
+            for (const id of ids) {
+                const n = Doc.nodeIn(g, id);
+                if (!n || read.has(id)) continue;
+                if (n.k === 'local' || (n.k === 'name' && !n.local && pinNames.has(n.name))) gone.push(id);
+            }
+            if (gone.length) this.deleteNodes(g, gone);
+            return gone;
+        }
+
+        // A declaration of a type by its name, wherever the file has it: { value, list }
+        typeDecl(name) {
+            if (!name) return undefined;
+            const last = String(name).split('.').pop();
+            for (const e of this.index.values()) {
+                if (e.role === 'decl' && e.value.name === last && (Array.isArray(e.value.members) || e.value.kind === 'alias')) return e;
+            }
+            return undefined;
+        }
+
+        // An enum the file declares: its members' names, or null
+        enumMembers(type) {
+            const e = this.typeDecl(type);
+            return e?.value.kind === 'enum' ? e.value.members.map(m => m.name).filter(Boolean) : null;
+        }
+
+        // What a type the file declares has, as the search offers a value's members before tidels answers:
+        // [{ name, type, method: its parameters' names, or undefined }]
+        membersOf(type) {
+            const e = this.typeDecl(type);
+            if (!e || e.value.kind === 'enum' || !Array.isArray(e.value.members)) return [];
+            const out = [];
+            for (const m of e.value.members) {
+                if (!isObject(m) || !m.name) continue;
+                if (m.kind === 'field' || m.kind === 'property' || m.kind === 'tweak') out.push({ name: m.name, type: m.type });
+                else if (m.kind === 'method') out.push({ name: m.name, type: m.returnType, method: (m.params || []).map(p => p.name || 'arg') });
+            }
+            return out;
+        }
+
+        // Every declaration's name with its kind, for the pickers: [{ name, kind, id }]
+        declared(kinds) {
+            const out = [];
+            for (const e of this.index.values()) {
+                if (e.role === 'decl' && e.value.name && (!kinds || kinds.includes(e.value.kind))) out.push({ name: e.value.name, kind: e.value.kind, id: e.id });
+            }
+            return out;
+        }
+
+        // A value graph of a call of literals: float3(1, 2, 3), Color(1, 0.5, 0)
+        callGraph(name, texts) {
+            const args = texts.map((t, i) => this.newNode(/^-?\d+$/.test(t) ? 'int' : 'float', -400, 88 * i, { text: t }));
+            const call = this.newNode('call', -180, 0, { name, args: args.map(a => a.id) });
+            return { root: call.id, nodes: [call, ...args] };
+        }
+
+        // A value graph of an enum's member: Stand.Left
+        memberGraph(type, member) {
+            const object = this.newNode('name', -400, 0, { name: type });
+            const m = this.newNode('member', -180, 0, { member });
+            this.schema.setWire(m, ['object'], object.id);
+            return { root: m.id, nodes: [m, object] };
+        }
+
+        // The title of a board item: a declaration's name, a member's with its type's, `Type.Name get`
+        titleOf(item) {
+            const v = item.value;
+            if (item.accessor) return `${item.type?.name ?? ''}.${item.property?.name ?? ''} ${v.word ?? ''}`;
+            const own = v.kind === 'operator' ? `operator ${v.op ?? ''}` : v.name ?? (item.spec?.title || v.kind);
+            if (item.member) return `${item.type?.name ?? ''}.${own}`;
+            if (v.kind === 'text') return firstLine(v.text) || item.spec?.title || 'text';
+            return own;
+        }
+
+        // A readable name of an element, for the lists of problems and of contents
         describe(e) {
             if (!e) return '';
             const v = e.value;

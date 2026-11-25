@@ -1,44 +1,48 @@
 ---
-description: "Edit a Tide game made with graphs in your browser: nodes and wires checked by Tide's language server as you edit, compiled and hot reloaded into the running game."
+description: "Edit a Tide game made with graphs in your browser: a board of cards and frames of nodes, checked by Tide's language server as you edit, compiled and hot reloaded into the running game."
 ---
 
 # Graph playground
 
 This game is made with graphs only: a [visual scripting](../tools/visual-scripting.md) file, `game.tidegraph`,
-with no text code. Edit its nodes and wires, and the running game picks up the change. Everything runs in your
+with no text code. Change its board, and the running game picks up the change. Everything runs in your
 browser, as in the [text playground](./playground.md): nothing is installed and your graph is not sent anywhere.
 
 <div data-tide-graph-playground></div>
 
 ## Try a change
 
-The graph opens on `Fall`, the system that moves every star down and checks whether the basket caught it.
+The board opens on `Fall`, the system that moves every star down and checks whether the basket caught it. Its
+data is in the cards on the left: drag the board, or press **Contents**, to see them.
 
-- On the left, select `FALL` and change its `90` to `200`: the stars fall faster.
-- Select `WIDTH` and change `40` to `80`: the basket is twice as wide.
+- On the card `FALL`, change `90` to `200`: the stars fall faster.
+- On `WIDTH`, change `40` to `80`: the basket is twice as wide.
+- On `GOLD`, click the colour and pick another: the stars change colour.
 - In `Fall`, the `1` wired into the `+=` after `caught` is what a catch counts: make it `10`.
-- In `Baskets`, change the `TEAL` node's name to `GOLD`.
 
 The score and the stars carry over. **Restart** starts the last successful build from the beginning, and
 **Reset graph** brings back the original graph and starts it again. Your graph is kept in this browser, so it's
 still here when you come back.
 
-**Auto reload** builds the graph a moment after each change. With it off, press **▶ Play**. If the graph has an
-error, the node it's about is marked, the Tide panel lists it, and the last successful game keeps running.
+**Auto reload** builds the graph a moment after each change. With it off, press **▶ Play**. If the graph has a
+problem, it's marked on what it's about, the chip at the top right counts it, and the last successful game keeps
+running.
 
-## The editor
+## The board
 
 This is the graph editor of the [editor extensions](../tools/editors.md), checked by the same language server:
 
-- **On the left**, the file's declarations; **in the middle**, the selected one's code as nodes; **on the right**,
-  what's selected. Space, a right click or a double click on the canvas adds a node, and a wire dropped on nothing
-  offers what can go there: a value's fields and methods first.
-- Drag from a port to a port to wire them. Delete removes, Ctrl+Z and Ctrl+Y undo and redo, and **Layout** lays the
-  graph out.
-- The **Tide** panel shows the Tide the graph stands for and what's wrong with it; click a problem to go to its node.
-  **Show as Tide** shows the whole file as text, and opens it in the text playground.
+- **Cards** are the game's data: a row for each field, with its name, its type and its value, each changed where
+  it is. **Frames** are its code: nodes joined by wires, starting from the entry on the left, which says when the
+  code runs and what it takes.
+- **+ Add**, or a right click on the board, adds a card or a frame. A right click inside a frame adds a node, and
+  a wire dragged from a pin or an arrow and dropped in the frame offers what can go there.
+- A type is picked from a list, never typed. A problem is on the row, pin or node it's about, with what to do
+  about it, and goes when it's fixed.
+- **Contents** and **Find…** go to a declaration. The board's "…" menu has **View as Tide**, which shows the
+  whole file as text and opens it in the text playground.
 
-[Visual scripting](../tools/visual-scripting.md) describes the nodes and the editor in full. Drag the divider between
+[Visual scripting](../tools/visual-scripting.md) describes the board in full. Drag the divider between
 the graph and the game to give either more room, or press **Expand** to fill the window.
 
 ## What runs here

@@ -1,10 +1,10 @@
 ---
-description: "Write a Tide game's code as graphs: nodes for statements and values, wired together, in Unity's graph editor or in VS Code and JetBrains IDEs. A graph is Tide source, built with the game's .tide files, and any .tide file can become one."
+description: "Make a Tide game without writing code: a board of cards for the game's data and frames of nodes for what it does, in Unity, VS Code and JetBrains IDEs. A graph is Tide source, built with the game's .tide files, and any .tide file can become one."
 ---
 
 # Visual scripting
 
-A game's code can be graphs instead of text. A graph is a `.tidegraph` file: its declarations (components, systems, events, functions, everything a `.tide` file has) with their code as nodes joined by wires. It is Tide, compiled as Tide is: the same networking, prediction and determinism, the same speed, on every platform. A game can be all graphs, all text, or both, and each uses what the other declares.
+A game's code can be graphs instead of text. A graph is a `.tidegraph` file, and the graph editor shows it as one board: a card for each piece of data (a component, an event, a constant) and a frame of nodes for each piece of code (a system, a function, an event handler). It is Tide, compiled as Tide is: the same networking, prediction and determinism, the same speed, on every platform. A game can be all graphs, all text, or both, and each uses what the other declares.
 
 To try it without installing anything, open the [graph playground](../guide/graph-playground.md): a small game made with graphs only, which you edit and play in your browser.
 
@@ -17,7 +17,7 @@ In Unity, with Tide's package:
 
 In VS Code and JetBrains IDEs, with Tide's extension or plugin ([Editors](editors.md)):
 
-- A new file named `something.tidegraph` opens empty in the graph editor: add a declaration with **+**.
+- A new file named `something.tidegraph` opens as an empty board.
 - **Convert to Tide Graph** on a `.tide` file, in the file tree or the editor's menu, makes a graph of it and opens it. It asks whether the `.tide` file goes.
 
 From the command line, `tide graph` does the same:
@@ -29,54 +29,84 @@ tide graph --text enemy.tidegraph  # the Tide a graph stands for
 
 Without `--replace` the game has both files, which declare the same things twice: remove one.
 
-## The editor
+## Starting
 
-- **On the left**, the file's declarations: a type's fields and methods, a system's or a function's code, an input's `Sample`, a scene's `prepare`. Add, rename, reorder and remove them there.
-- **On the right**, what's selected: a declaration's parameters and their types, its attributes and the words before it (`local`, `dev`, `async`...), a field's default value, a node's own values.
-- **In the middle**, the selected code as a graph. Space, a right click, or a wire dropped on nothing opens the search for a node to add. Drag from a port to a port to wire them, and a wire's end off its port to take it away.
-- **The Tide panel** shows the Tide the graph stands for, and what's wrong with it, on the node it's about. Click an error to go to its node.
+An empty board asks **What do you want to make?** and offers the usual first things, each with what it is for: a component, an event, a function, a system, an event handler. **More…** has the rest.
 
-The editor checks a graph as it's edited with Tide's language server, `tidels`, which comes with `tide`, together with the rest of the game's code: a graph in Assets with the game Unity builds. So it knows the game's own types and functions:
+Later, **+ Add**, or a right click anywhere on the board, opens the same choices as a menu with a search box: **Data** (what the game keeps), **Behaviour** (what the game does) and **More**. Type a few letters and press Enter to take the first match. What you add appears where you asked, with its name selected, ready to type over.
 
-- **Errors** are the compiler's own, a call of what isn't there or a value of the wrong type, on the node they're about.
-- **Ports and wires** take the colour of the type of their value, and a node's tooltip says its type and what it is.
-- **The search** offers what's there to use: the game's functions as calls, its structs and components as values of them, the names, constants and namespaces in scope (`Math`, `Draw`, `GUI`, `Random`...). A wire from a value dropped on nothing offers that value's fields and methods first, a method with an input for each of its parameters. **Pick member…** on a field or method node offers its object's.
+## Cards: the game's data
 
-Without `tidels`, the panel says so and shows the Tide unchecked.
+A component, a singleton, a struct, an event, an enum, an input, a scene, a constant, an asset and the game's settings are cards. A card is edited where it's drawn:
 
-Undo, copy and paste (between graphs too), duplicate (Ctrl+D), frame (F) and save (Ctrl+S) work as elsewhere in Unity.
+- **Its name**, at the top. Press Enter to go on to its first field.
+- **A row for each field**: its name, its type, the value it starts with. Enter in a row goes to the next one, and makes it after the last; **+ field** does the same. An enum's rows are its choices, the settings' rows the settings.
+- **Its "…" menu** has what else its kind can have, and nothing more: a method or a property on a component, an operator on a struct only, `Sample` on an input only. It also has its options in words (**Dev builds only**, **This machine only**), **Generic over…** where a kind can be generic, attributes, a note, **Duplicate** and **Delete**.
+
+A member with code of its own, a method or an input's `Sample`, is a frame on the board named for its type (`Ball.Bounce`); its row on the card goes to it.
+
+### Picking a type
+
+A type is never typed free. Click a type (or type a letter on it) to open the type picker: a list with a search box that narrows as you type, with the common types first, then the game's own, then the ways to make a type of others (**List of…** asks what it holds, with the same picker), then the rest. Enter takes the first match. The picker asks Tide which types go there, so a field isn't offered a component, and a system's needs aren't offered an enum.
+
+### Values
+
+A value is edited by its type's own control: a number, a tick box, text, a vector's numbers, a colour, an enum's choices. An empty control shows the type's default, greyed. To work a value out instead (`GRAVITY * 2`), press the small **ƒ** on its row: the value opens as a small graph beside its card, whose last node is where its value is wired in. **Done** closes it.
+
+## Frames: what the game does
+
+A system, a view, an event handler, a command, a function and a type's method are frames: a titled box that holds the code's nodes. Drag its title to move it with everything in it; it grows around its nodes.
+
+A frame's first node is its **entry**. It says when the code runs, in the kind's own words (**Every tick, for each entity with** for a system, **When this happens** for an event handler, **Takes** for a function), and has a row for each thing the code takes:
+
+- **+ needs…** adds one by picking what: a component of the game, a singleton, a filter (**only with**, **without**).
+- How it's taken is a word on its row: **reads** or **changes**. Click it to change it.
+- An event handler's first row picks its event; a command's rows are the values a player sends with it; a function's last row is its result's type.
+- Each row has a **pin** on its right, and the entry has an **arrow** at its top right.
+
+### Nodes and wires
+
+The code is nodes joined by wires:
+
+- **Drag from the entry's arrow** and let go inside the frame to add what happens first: the search offers the statements (an assignment, a call, `If`, the loops, `Return`). Each statement has an arrow of its own to drag what happens next from, and those that hold code (an `If`'s branches, a loop's body) have an arrow for each.
+- **Drag from a pin** to use what the code takes. Let go on an input to wire it there, or inside the frame to pick what to do with it: its fields and methods come first. A read of a parameter isn't a node of its own, so the wire comes straight from its pin; renaming the parameter renames every read.
+- **A local** is a node that names a value. It has a pin of its own, to drag its reads from.
+- **Right-click, or press Space, inside a frame** to add any node. Type to search; Enter adds the first.
+- **A call in the flow of statements is one node**, with arrows through it. Its result, wired on from it, is what it gave when it ran.
+- Drag the end of a wire off its input to take it away, or onto another to move it. An input takes one wire, and a statement runs from one place.
+
+A wire stays inside its frame: code in one frame reaches another's through the game's data (a component, an event) or by calling it. Dropped outside, the wire says so.
+
+Nodes that nothing runs, and values nothing reads, are left out of the game; the editor shows them faded.
+
+Where a frame is on the board says nothing of when its code runs. Systems run in the file's order, which **Contents** shows, unless a stage says otherwise; **Move earlier in the file** and **Move later in the file**, in a frame's or a card's "…" menu, change it.
+
+A node's own values (a number, a name, an operator) are edited on it. What's rare is in its "…" menu, with **Copy**, **Duplicate** and **Delete**. A right click on an input can remove it, or name an argument.
+
+### Text in a graph
+
+A **Text** node is a value written as Tide, `a * b + 1`, whose inputs are wired in by name. A **Code** node is statements written the same way, and a **Tide text** card is declarations. Use them where text is clearer, as for a long formula, or not at all: everything has a node of its own.
+
+## Problems
+
+Tide checks the board as you change it, with the rest of the game's code. The chip at the top right says **Checked**, or how many problems there are; click it for the list, and a problem to go to it.
+
+A problem is shown on what it's about: a field's row, a pin with nothing wired into it, a node. It's red there, and says the compiler's message and what to do about it when the pointer is over it. It goes as soon as its cause does.
+
+Without Tide's language server (`tidels`, which comes with `tide`), the chip says **Not checked**: editing works, and mistakes show when the game is built. Building says the same errors with the element they're about: `Assets/Enemy.tidegraph:@17: error: ...`.
+
+## Finding your way
+
+- Drag the board to move it; the wheel scrolls, and Ctrl with the wheel (or a pinch) zooms. **Fit** shows the whole file. Far away, frames are blocks under their names.
+- **Contents** lists what the file has, by group. **Find…** (Ctrl+F) jumps to a declaration by its name.
+- The Tide a file stands for isn't on screen. **View as Tide**, in the board's "…" menu, opens it. The same menu has the file's namespace, the namespaces it uses, and **Tidy up the board**: data in a column, code beside it. A frame's own menu tidies its nodes.
+- Shift and drag selects with a box. Delete removes what's selected, Ctrl+D duplicates it, and Ctrl+C and Ctrl+V copy and paste nodes into a frame, between files and between editors.
+- Undo and redo (Ctrl+Z, Ctrl+Y) go through what was done, step by step.
+
+## In Unity
+
+The graph editor is a window of Unity's own. A graph in Assets is checked with the game Unity builds, so its types and functions are offered. A double click on a graph's error in the Console opens the board on what it's about. Saving (Ctrl+S) and Undo are Unity's.
 
 ## In VS Code and JetBrains IDEs
 
-The graph editor in VS Code and in JetBrains IDEs is one editor, a page the IDE shows as the file's editor, and has what Unity's has: the declarations on the left, what's selected on the right, the code in the middle, and the Tide panel below it. The file stays the IDE's: it saves, undoes and shows changes in git as any file does, and its JSON is a tab away (VS Code: **Reopen Editor With > Text Editor**; JetBrains: the **Text** tab).
-
-- **Adding nodes**: **+ Node**, Space, a right click or a double click on the canvas, or a wire dropped on nothing opens the search. A wire from a value offers that value's fields and methods first; from a statement's exec output, statements, and a call there becomes a statement of its own (**Do**). Typing narrows it; Enter adds the first.
-- **Wiring**: drag from a port to a port. Drag the end of a wire off an input to take it away, or onto another to move it. A statement runs from one place, so wiring it somewhere else moves it there; a wire that would make a value of itself, or a statement run in a loop, isn't made, and the bottom right of the toolbar says why.
-- **Moving around**: the mouse wheel scrolls, Ctrl and the wheel (or a pinch) zooms, a right or middle drag pans, **F** frames the selection or the whole graph, and **Layout** lays the graph out as `tide graph` does.
-- **Selecting**: click, Shift or Ctrl and click to add, drag on nothing for a box. Delete removes, Ctrl+D duplicates, Ctrl+C and Ctrl+V copy and paste, between graphs, between IDEs and to and from Unity's editor.
-- **On a node**: its own values (a number, a name, an operator) edit in place; the right side has the rest, its comment among them. A right click on a field or method node has **Pick member…**. **+ Note** adds a box to write in, behind the nodes.
-- **The Tide panel** (**Tide** in the toolbar) shows the Tide the graph stands for, the selected node's part marked, and the problems above it: click one, or a place in the text, to go to its node. **Show as Tide** opens that text in a tab.
-- **Undo** (Ctrl+Z, Ctrl+Y) is the graph's own while it has the focus, step by step through what was done to it; the IDE's own Undo works as well.
-
-Without `tidels`, the toolbar says the graph isn't checked; editing works, and the search offers the kinds of node alone.
-
-## Nodes and wires
-
-A graph has two kinds of node, joined by two kinds of wire:
-
-- **Statements** run one after the other along their white exec wires: a local, an assignment, a call, `if`, the loops, `switch`, `return`. A statement that holds code (an `if`'s branches, a loop's body, a `GUILayout.Vertical()`'s block) starts it from an exec output of its own, and the code after it goes on from its `next`.
-- **Values** go in along data wires: a number, a name, a field (`member`), a call, an operator, a value of a type (`Transform { position = ... }`). A value is worked out where it's wired in, as if it were written there: wired to two inputs, it's worked out twice.
-
-A call in the flow of statements is one node, with exec wires through it. Its result, wired into nodes after it, is what it gave when it ran, once.
-
-Locals are nodes too: a `var` statement declares one, and a node that reads it names that `var`, so renaming the local renames every read of it. Reading a local before its `var` has run is an error.
-
-A statement only runs when the exec wires reach it, from the start of the code. Nodes nothing reaches, and values nothing reads, are left out of the game; the editor shows them faded.
-
-## Text in a graph
-
-A **text** node is a value written as Tide, `a * b + 1`, whose inputs are wired in by name: `a` and `b` are the values wired to it. A **code** node is statements written the same way. Use them where text is clearer, as for a long formula, or not at all: everything has a node of its own.
-
-## Errors
-
-An error in a graph is about a node, and says which: `Assets/Enemy.tidegraph:@17: error: ...`. In Unity, the graph editor marks the node, and a double click on the error in the Console opens it there. In VS Code and JetBrains IDEs, the graph editor marks the node and lists the error in its Tide panel; the IDE's problems list has it on the node's line of the JSON.
+The graph editor is the file's editor, and the file stays the IDE's: it saves, undoes and shows changes in git as any file does. Its JSON is a tab away (VS Code: **Reopen Editor With > Text Editor**; JetBrains: the **Text** tab), and the IDE's problems list has a graph's errors on their line of it. **Show as Tide** in the IDE's menus is the board's **View as Tide**. Cards and frames copy and paste too, onto any board.

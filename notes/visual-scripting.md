@@ -204,6 +204,19 @@ A graph's errors name the element they're about: `Assets/Enemy.tidegraph:@17: er
 of the innermost node or element whose text the error is in. After it tidec shows the line of the Tide it wrote,
 which is the same Tide a `.tide` file would hold. The Unity package and the language server read the id.
 
+**An input with no wire is a hole, and the rest is still read** (2026-11-25; my pick, Provisional). A graph being
+made is nearly always half wired, and until this a single unwired input stopped the whole file's lowering, so an
+editor lost its types, completion and members until everything was connected. Now `put_hole` writes
+`_graphHole` (`GRAPH_HOLE`) where the wire would be and keeps the error (`node 12's 'target' isn't connected`) to
+say once the text is written, at the hole's place in it, which is its node's span. The checker's `check_name`
+gives `_graphHole` the error type with no message of its own when the file is a graph that has holes
+(`graph_map.holes`), so a hole is said once and what's around it is checked as usual (an unknown call, a wrong
+type elsewhere in the same body). tidec still fails: a hole is an error. Holes are a single input (`input`), a
+call's argument, a text's value, a list's item and a literal's field; other wrong shapes (no kind, a wire to no
+node, a missing type or name) still stop the lowering. While a hole's error is said, `graph_hole_port` gives its
+key and its place among the key's items, which tidels puts in the diagnostic: `"data":{"node":12,"port":"target"}`,
+`{"node":15,"port":"args","index":1}`. Editors mark the pin from that, not from the message's words.
+
 ## Implementation (2026-11-24)
 
 - **Reading** (`compiler/src/graph.h`, `graph.c`): its own JSON reader (arena memory, each value's place in the
@@ -280,8 +293,17 @@ JetBrains, one web editor). What they'd otherwise each implement is tidec's, ser
   whose next is optional, and what local it `declares`). tidec's own lowering reads its nodes' wires from it
   (`graph_data_wires`, `graph_exec_wires`, `exec_kind`), so the schema and what tidec reads can't differ. It's in the
   compiler's identity sources.
-- **Layout** (`graph_layout.c`): the converter's and `tide/graphLayout`'s, one algorithm.
+- **Layout** (`graph_layout.c`): the converter's and `tide/graphLayout`'s, one algorithm. A file's board
+  (`graph_layout_board`, 2026-11-25): every card and frame is measured first (a frame as the page draws it: its
+  entry, then its nodes' extent, left of 0 too; a card by its rows, with its note, its attributes and a prefab's
+  entities), then the frames go in rows like a page's words, in the file's order, in a shape about 16:10 and no
+  narrower than the widest frame, and the cards in columns to their left, a column as tall as the frames are
+  together (1200 at least). Before, everything was one column: sumo's arena was 55,000 px tall and "Fit" was 2%.
 - **Members** of a value (`tide/graphMembers`), completion, hover, types and diagnostics, as above.
+  `tide/graphMembers` also takes `{"type": "Transform"}` (2026-11-25): what a value of a type has, for a pin
+  nothing reads yet (a wire dragged from an entry's parameter). tidels reads the graph with
+  `void _graphProbe(<type> _graphOf) { _ = _graphOf.; }` after it and completes there
+  (`analysis_set_graph_type_probe`); a type's text is letters, digits and `_<>,.?[] ` or nothing is asked.
 - **Unity's graph editor with tidels** (`unity/com.tide.unity/Editor/Graph/TideLanguageClient.cs`,
   `TideGraphLanguage.cs`; my picks, Provisional):
   - The client: one tidels for the editor, beside the tide `TideToolchain.Find` gives (or `TidelsOverride`, or
@@ -325,14 +347,19 @@ JetBrains, one web editor). What they'd otherwise each implement is tidec's, ser
 ## Tests
 
 - `tidec_graph_roundtrip`: the round trip over every `.tide` file in the repository (`graph_roundtrip.cmake`).
-- `tidec_graph_errors`: an unknown call in `graph/graph_errors.tidegraph` is said at `@15`, its node.
+- `tidec_graph_errors`: `graph/graph_errors.tidegraph` has an unknown call (said at `@15`, its node) and a
+  system with three holes (an assign's target, a call's second argument, an if's condition) and a wrong type
+  after them: five errors, each once, in that order (`-DERRORS=5`).
 - `tidec_e2e_graph_nodes`: `graph/graph_nodes.tidegraph`, a game of hand-made nodes the converter doesn't make (a
   kept statement value read twice and run once, text and code nodes with inputs, a value wired twice, else-if,
   unreached nodes), run by `graph_nodes_test.c`.
 - `tidec_e2e_graph_<name>`: 26 e2e tests built from their `.tide` made a graph at build time and run with their
   own `_test.c` (`crossplatform`'s pinned bits among them). chars, json and optional_fields aren't among them:
   their tests take hashes from definitions of their own targets.
-- `tidels_tests` `lsp_graphs`: diagnostics with the node, and the four requests.
+- `tidels_tests` `lsp_graphs`: diagnostics with the node, and the four requests; members of a type by name (the
+  game's, the engine's, and nothing for text that's more than a type); a graph with holes: each on its node with
+  its port (and index), the unknown call beside them still said, no `_graphHole` in any message, its Tide and
+  an unread node's members still answered.
 - The Sample's EditMode `GraphLanguageTests` (tidels and tidec of this checkout's build, or `TIDE_TIDELS`,
   `TIDE_TIDEC`): an unknown call's error from tidels on its node with its Tide line, the click selecting it; a
   member node's type (`int`) on it, its output and its object's input, its hover; completion after a wired
@@ -376,13 +403,43 @@ still list kind names rather than the schema's titles and groups.
 ## The IDE editor (2026-11-24, later)
 
 One page, `tools/tide-graph/` (its README says how it's laid out and run): classic scripts on
-`globalThis.TideGraph` in the order `files.json` lists, no build step and no dependencies. Outline, inspector,
-canvas, wiring rules, search (the schema's kinds, the graph's locals and parameters, tidels' completion, and
-`tide/graphMembers` for a wired value), Pick member…, undo, copy and paste (the same clipboard format as Unity's,
-so nodes paste between them), auto layout, the Tide panel, types and hovers, light and dark themes. Everything of
-the format is the schema's; a packaged copy is used until tidels answers. The host bridge is a few messages
-(top of `src/app.js`): the host sends the document and diagnostics, the page sends each edit as the whole text
-and its requests, handled in order so an edit is in the document before the next request.
+`globalThis.TideGraph` in the order `files.json` lists, no build step and no dependencies. Everything of the
+format is the schema's; a packaged copy is used until tidels answers. The host bridge is a few messages (top of
+`src/app.js`): the host sends the document and diagnostics, the page sends each edit as the whole text and its
+requests, handled in order so an edit is in the document before the next request.
+
+**Rebuilt as one board (2026-11-25)**, to "The experience: one board" below; the outline, the inspector, the
+Tide panel and the per-graph canvas are gone (`canvas.js`, `inspector.js`, `outline.js`, `search.js` removed;
+`board.js`, `cards.js`, `frames.js`, `pickers.js`, `values.js` new). What a user meets, in order:
+
+- An empty file asks "What do you want to make?" with the schema's `common` kinds and their summaries, and
+  "More…". A new card or frame has its name selected; Enter makes the first row; Tab goes to the type, where a
+  letter opens the type picker with it and Enter takes the first match; Tab goes to the value, the type's own
+  control; Enter makes the next row.
+- The type picker: the common types, the file's, the builders ("List of…" asks what it holds with the same
+  picker), then the rest; tidels is asked what's valid at that place (a field isn't offered a component). No free
+  text.
+- A card's "…" menu has its kind's `memberKinds` alone (a `once` member greyed when there), its options by
+  label, "Generic over…" only with `typeParams` in its keys, attributes, a note, earlier/later in the file.
+- "+ Add" and a right click open the grouped menu (Data, Behaviour, More) with summaries and a search box. A
+  frame's entry has the kind's sentence, a row per parameter (its mode in words, clicked to change; its type;
+  its name; a pin), filters with no pin, and "+ needs…".
+- A wire dragged from a parameter's pin offers the value's fields first; the read is no node, the wire comes
+  from the pin. A wire dropped outside its frame does nothing and says why.
+- Problems are on their row, pin or node and in the chip's list, and go with the next check. Frames off screen
+  are empty, far ones blocks under their names; Contents and Find… (Ctrl+F) jump. "View as Tide", "Tidy up
+  the board", namespace and uses are in the board's "…" menu. A value that's more than a literal opens as a
+  small graph beside its card. A phone gets the board alone.
+
+Known rough edges after this round (seen in its screenshots, mine to sort with the owner's next look):
+converted code reads like a syntax tree (a node per `.member`, "arg 1" for a call's arguments, a type's name as a
+node feeding a static call); in a big function the wires from the entry's pins cross the whole frame; settings'
+entry names are free text; an enum declared in another file gets "+ value" rather than its choices; a prefab's
+card is basic; attribute arguments, generic rules, "Replaces" and a handler's `Changed<>` path are small text
+forms. The page still has small tables of words of its own (`FLAG_WORDS`, `inputWord`, the picker's group
+titles) that the schema now has (`flagInfo`, `portInfo`, `typePicker.groups`), marks an unwired pin from the
+message's words rather than `data.port`, and falls back to the file's declarations for a pin nothing reads
+rather than `tide/graphMembers` by type.
 
 - VS Code (`tide-vscode/src/graph.js`): a CustomTextEditorProvider, so the document is VS Code's (undo, save,
   dirty, hot exit, diffs); requests go through the extension's language client, whose document selector now has
@@ -397,11 +454,14 @@ and its requests, handled in order so an edit is in the document before the next
   before each public export as `textmate/` is (notes/editors.md).
 - Tests: `tide_graph_editor` (ctest; in the root CMakeLists beside `tide_vscode_adapter`, as `tools/` is
   configured alone by `tide_cli_ide`, with no tidec):
-  model tests (byte-for-byte round trip of 364 converted graphs; every wire tidec writes is a port the schema
-  gives; ports and key orders of every kind; wiring rules; paste remapping; undo with host changes; a graph built
-  from nodes checked with tidec and compiled; real tidels' text, types, members, hover, diagnostics, layout), a
-  headless muted browser test (sumo's biggest graph rendered: nodes, ports, wires in the DOM; an edit, undo, a
-  host change, a diagnostic mark), and the VS Code bridge with fakes. tide-vscode `npm test` 38 pass; JetBrains
+  17 model tests (byte-for-byte round trip of the converted graphs with their places; every wire tidec writes
+  is a port the schema gives; ports and key orders of every kind; wiring rules; paste remapping; undo with host
+  changes; a graph built from nodes checked with tidec and compiled; every declaration's place on the board;
+  nothing offered that a kind can't have; a read of a parameter or a local a wire and no node), 5 browser tests
+  in a headless muted Chrome with real pointer and key events over DevTools (`test/browser.mjs`: the story from
+  an empty file to an error that goes; the Add menu's groups and what each card offers; a wire that can't leave
+  its frame; sumo's arena, 1,161 nodes, opened, panned until another frame is drawn, fitted, jumped in; a run
+  checked by tidels), and the VS Code bridge with fakes. tide-vscode `npm test` 38 pass; JetBrains
   `gradlew test buildPlugin` 18 pass, `-PtideTestJcef=true` both real-JCEF tests pass. The real VS Code host suite
   ran its graph part (open, tidels, an error on its node's JSON line, delete and undo through the page, VS Code's
   clipboard, save, Show as Tide, Convert) twice on a hidden desktop; the suite's old terminal step doesn't start
@@ -496,6 +556,15 @@ isn't on screen: "View as Tide" in the board's "..." menu opens it.
 
 **Finding.** A "Contents" list (closed until asked for) and a jump-to search list the file's declarations by
 group; picking one pans to it. Frames off screen aren't drawn.
+
+**More of the wording in the schema** (2026-11-25, what the web page had made up, so the Unity window says the
+same): `flagInfo` (a node's own flags: label, help, advanced), `portInfo` (what an input or an exec output is
+called on its node: `object` "of", `lhs` "a", `cond` "condition", `else` "otherwise", `body` "do"; a key with no
+entry is shown as it is), `sentence` and `addRow` on members with code, `accessorInfo` (get "When it is read",
+set "When it is set, with"), `addRow` on every kind with rows ("+ field", "+ choice", "+ setting", "+ needs…",
+"+ input…"), `valueControls` (which control edits which types' values; an enum's is a choice),
+`typePicker.groups` (the picker's group titles) and a builder's `counts` (its slots that are a number). Which
+inputs must be wired isn't in it: the check says so (a hole's `data.port`).
 
 **In the schema for it** (2026-11-24): declarations' `group` (Data, Behaviour, More; `groups` has their titles),
 `summary`, `common`, `memberKinds`, `sentence`, and keys without what a kind can't have (no `typeParams` on a

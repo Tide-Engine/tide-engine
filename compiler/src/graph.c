@@ -439,12 +439,21 @@ static bool set_has(const id_set *s, const int id)
     return false;
 }
 
+// An input with no wire: said once the text is written, at its place in it
+typedef struct hole {
+    int offset;
+    char *message;
+    const char *port;
+    int index;
+} hole;
+
 typedef struct lw {
     source *src;
     graph_map *map;
     sb out;
     int indent;
     bool failed;
+    VEC(hole) holes;
     // The graph being written: its nodes by id
     id_table nodes;
     const graph_json *graph;
@@ -469,6 +478,34 @@ static void gerror(lw *w, const graph_json *at, const char *fmt, ...)
     va_end(args);
     diag_error(at ? at->at : (loc){1, 1, w->src->file}, "%s", message);
     w->failed = true;
+}
+
+static const char *hole_port; // The hole being said: graph_hole_port
+static int hole_index;
+
+const char *graph_hole_port(int *index)
+{
+    if (index) *index = hole_index;
+    return hole_port;
+}
+
+static void put(lw *w, const char *text);
+
+// An input nothing is wired to: the node says so, and the rest of the file is still read around it. `index` is
+// its place among the key's items, or -1.
+static void put_hole(lw *w, const char *port, const int index, const char *fmt, ...)
+{
+    char message[1024];
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(message, sizeof message, fmt, args);
+    va_end(args);
+    const size_t len = strlen(message);
+    char *kept = arena_alloc(len + 1);
+    memcpy(kept, message, len + 1);
+    const hole h = {(int)w->out.len, kept, port, index};
+    vec_push(w->holes, h);
+    put(w, GRAPH_HOLE);
 }
 
 static str jstr(const graph_json *v, const char *key)
@@ -668,8 +705,7 @@ static void input(lw *w, const graph_json *n, const char *key, const int min)
 {
     const int id = jwire(n, key);
     if (!id) {
-        gerror(w, n, "node %d's '%s' isn't connected", json_id(n), key);
-        put(w, "default");
+        put_hole(w, key, -1, "node %d's '%s' isn't connected", json_id(n), key);
         return;
     }
     expr(w, id, min, n, key);
@@ -700,8 +736,7 @@ static void put_args(lw *w, const graph_json *n)
         }
         const int arg = item_wire(args->items[i]);
         if (!arg) {
-            gerror(w, n, "node %d's argument %d isn't connected", json_id(n), i + 1);
-            put(w, "default");
+            put_hole(w, "args", i, "node %d's argument %d isn't connected", json_id(n), i + 1);
             continue;
         }
         expr(w, arg, P_LAMBDA, n, "args");
@@ -934,8 +969,7 @@ static void expr_node(lw *w, const graph_json *n, const int id)
             const int v = item_wire(values->items[i]);
             if (v) expr(w, v, P_COALESCE, n, "values");
             else {
-                gerror(w, n, "node %d's value %d isn't connected", id, i + 1);
-                put(w, "default");
+                put_hole(w, "values", i, "node %d's value %d isn't connected", id, i + 1);
             }
             if (formats && i < formats->count && formats->items[i]->kind == GJ_STRING && formats->items[i]->text.len) {
                 put(w, ":");
@@ -964,8 +998,7 @@ static void expr_node(lw *w, const graph_json *n, const int id)
             const int v = item_wire(items->items[i]);
             if (v) expr(w, v, P_LAMBDA, n, "items");
             else {
-                gerror(w, n, "node %d's item %d isn't connected", id, i + 1);
-                put(w, "default");
+                put_hole(w, "items", i, "node %d's item %d isn't connected", id, i + 1);
             }
         }
         put(w, "]");
@@ -984,8 +1017,7 @@ static void expr_node(lw *w, const graph_json *n, const int id)
             put(w, " = ");
             if (jwire(init, "value")) expr(w, jwire(init, "value"), P_LAMBDA, n, "inits");
             else {
-                gerror(w, n, "node %d's field '" STR_FMT "' isn't connected", id, STR_ARG(jstr(init, "name")));
-                put(w, "default");
+                put_hole(w, "inits", i, "node %d's field '" STR_FMT "' isn't connected", id, STR_ARG(jstr(init, "name")));
             }
         }
         put(w, " }");
@@ -2078,6 +2110,17 @@ static bool lower(source *src)
     src->text = w.out.data ? w.out.data : "";
     src->len = w.out.len;
     map->lowered = true;
+    // What isn't wired, said at its place in the text, which is its node's
+    map->holes = w.holes.count;
+    for (int i = 0, at_line = 0; i < w.holes.count; i++) {
+        const hole *h = &w.holes.items[i];
+        while (at_line + 1 < map->line_starts.count && map->line_starts.items[at_line + 1] <= h->offset) at_line++;
+        hole_port = h->port;
+        hole_index = h->index;
+        diag_error((loc){at_line + 1, h->offset - map->line_starts.items[at_line] + 1, src->file}, "%s", h->message);
+    }
+    hole_port = NULL;
+    hole_index = -1;
     return true;
 }
 

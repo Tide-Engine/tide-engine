@@ -1,6 +1,7 @@
-// The editor's state without its UI: the document, the texts it has had (for undo and redo), what's selected and
-// which graph is shown. Every edit writes the whole file and sends it to the host, whose document it is; a change
-// the host makes (its own undo, a git checkout, the text editor) comes back as text.
+// The editor's state without its UI: the document, the texts it has had (for undo and redo) and what's selected:
+// nodes and notes of one frame, or cards and frames of the board. Every edit writes the whole file and sends it to
+// the host, whose document it is; a change the host makes (its own undo, a git checkout, the text editor) comes back
+// as text.
 (function (G) {
     'use strict';
     const { Doc } = G;
@@ -17,9 +18,9 @@
             this.history = [];
             this.at = -1;
             this.error = null;     // Why the text isn't a graph the editor can read, or null
-            this.slot = null;      // The graph shown: { owner, key, index }
-            this.selected = null;  // The element the inspector shows: an id
-            this.selection = new Set(); // Nodes and notes selected on the canvas
+            this.slot = null;      // The graph the selected nodes are in: { owner, key, index }
+            this.selection = new Set(); // Nodes and notes selected in it
+            this.picked = new Set();    // Cards and frames selected on the board
         }
 
         on(listener) {
@@ -58,21 +59,15 @@
             this.read(this.text);
         }
 
-        // Drops what's selected and shown that the text no longer has
+        // Drops what's selected that the text no longer has
         keepValid() {
             if (this.error) return;
             if (this.slot && !this.doc.graph(this.slot)) this.slot = null;
-            if (this.selected && !this.doc.find(this.selected)) this.selected = null;
             for (const id of [...this.selection]) if (!this.doc.find(id)) this.selection.delete(id);
-            if (!this.slot) this.slot = this.firstSlot();
+            for (const id of [...this.picked]) if (!this.doc.find(id)) this.picked.delete(id);
         }
 
-        // The first graph of the file that has code, or any
-        firstSlot() {
-            const graphs = this.doc.graphs();
-            return (graphs.find(g => g.slot.key === 'body') || graphs[0])?.slot || null;
-        }
-
+        // The graph the selection is in, or undefined
         get graph() {
             return this.error ? undefined : this.doc.graph(this.slot);
         }
@@ -137,45 +132,62 @@
             this.read(text);
         }
 
-        // Shows a graph, and selects what holds it
-        show(slot) {
-            if (!slot || !this.doc.graph(slot)) return;
+        // Selects nodes and notes of one graph (a frame's, or a value's), or adds to those selected in it
+        selectNodes(slot, ids, { add = false } = {}) {
+            const same = G.slotKey(slot) === G.slotKey(this.slot);
+            if (!add || !same) this.selection.clear();
+            this.picked.clear();
             this.slot = slot;
-            this.selection.clear();
-            this.emit('graph');
-        }
-
-        // Selects an element: its graph shown if it's a node, a note or has one
-        select(id, { open = true, add = false } = {}) {
-            const e = this.doc.find(id);
-            if (!e) {
-                this.selected = null;
-                if (!add) this.selection.clear();
-                this.emit('selection');
-                return;
-            }
-            this.selected = id;
-            if (e.role === 'node' || e.role === 'note') {
-                if (!e.slot || G.slotKey(e.slot) !== G.slotKey(this.slot)) {
-                    this.slot = e.slot;
-                    this.selection.clear();
-                    this.emit('graph');
-                }
-                if (!add) this.selection.clear();
-                this.selection.add(id);
-            } else if (open) {
-                const own = this.doc.graphs().filter(g => g.owner.id === id);
-                const slot = (own.find(g => g.slot.key === 'body') || own[0])?.slot;
-                if (slot && G.slotKey(slot) !== G.slotKey(this.slot)) {
-                    this.slot = slot;
-                    this.selection.clear();
-                    this.emit('graph');
-                }
-            }
+            for (const id of ids) this.selection.add(id);
             this.emit('selection');
         }
 
-        // The selection as nodes' and notes' ids of the shown graph
+        // Selects cards and frames
+        pick(ids, { add = false } = {}) {
+            if (!add) this.picked.clear();
+            this.selection.clear();
+            for (const id of ids) this.picked.add(id);
+            this.emit('selection');
+        }
+
+        clearSelection() {
+            if (!this.selection.size && !this.picked.size) return;
+            this.selection.clear();
+            this.picked.clear();
+            this.emit('selection');
+        }
+
+        // Selects an element wherever it is: a node or a note in its graph, a card or a frame on the board; for
+        // anything else (a field, a parameter), what it's on
+        select(id) {
+            let e = this.doc.find(id);
+            if (!e) {
+                this.clearSelection();
+                return;
+            }
+            if (e.role === 'node' || e.role === 'note') {
+                this.selectNodes(e.slot, [id]);
+                return;
+            }
+            const item = this.itemOf(id);
+            if (item) this.pick([item]);
+            else this.clearSelection();
+        }
+
+        // The card or frame an element is on (or is): its id, or 0
+        itemOf(id) {
+            const items = new Set(this.doc.items().filter(i => !i.region).map(i => i.id));
+            let e = this.doc.find(id);
+            for (let depth = 0; e && depth < 8; depth++) {
+                if (items.has(e.id)) return e.id;
+                if (e.role === 'node' || e.role === 'note') e = this.doc.find(e.slot?.owner);
+                else if (e.owner && typeof e.owner.id === 'number') e = this.doc.find(e.owner.id);
+                else break;
+            }
+            return 0;
+        }
+
+        // The selection as nodes' and notes' ids of a graph
         selectedIn(g) {
             const nodes = new Set(), notes = new Set();
             for (const id of this.selection) {
@@ -186,32 +198,50 @@
             return { nodes, notes };
         }
 
-        // Copy, cut, paste, duplicate and delete of the canvas's selection
+        // The selected nodes with what goes with them: a statement's call, the reads of pins that only they read
+        selectedWithHidden(g) {
+            const { nodes, notes } = this.selectedIn(g);
+            return { nodes: this.doc.withHidden(g, nodes, this.doc.pinsOfSlot(this.slot)), notes };
+        }
+
+        // Copy, cut, paste, duplicate and delete of the selected nodes
         copySelection() {
             const g = this.graph;
             if (!g) return null;
-            const { nodes, notes } = this.selectedIn(g);
+            const { nodes, notes } = this.selectedWithHidden(g);
             if (!nodes.size && !notes.size) return null;
             return Doc.copy(g, nodes, notes);
         }
 
         deleteSelection() {
             const g = this.graph;
-            if (!g) return;
-            const { nodes, notes } = this.selectedIn(g);
-            if (!nodes.size && !notes.size) return;
-            this.edit(doc => doc.deleteNodes(g, [...nodes, ...notes]));
+            if (!g) return false;
+            const { nodes, notes } = this.selectedWithHidden(g);
+            if (!nodes.size && !notes.size) return false;
+            const pins = this.doc.pinsOfSlot(this.slot);
+            this.edit(doc => {
+                // The reads of pins the deleted nodes were the last to read go with them
+                const sources = new Set();
+                for (const id of nodes) {
+                    const n = Doc.nodeIn(g, id);
+                    if (n) for (const w of doc.schema.dataWires(n)) sources.add(w);
+                }
+                doc.deleteNodes(g, [...nodes, ...notes]);
+                doc.dropUnread(g, [...sources].filter(id => !nodes.has(id)), pins);
+            });
             this.selection.clear();
             this.emit('selection');
+            return true;
         }
 
-        // Pastes a clip into the shown graph, `dx, dy` from where it was copied, and selects what came in
-        paste(text, dx = 40, dy = 40) {
-            const g = this.graph;
+        // Pastes a clip into a graph, `dx, dy` from where it was copied, and selects what came in
+        paste(text, dx = 40, dy = 40, slot = this.slot) {
+            const g = this.doc.graph(slot);
             if (!g || !Doc.isClip(text)) return [];
             const made = this.edit(doc => doc.paste(g, text, dx, dy));
+            this.slot = slot;
+            this.picked.clear();
             this.selection = new Set(made);
-            this.selected = made[0] ?? this.selected;
             this.emit('selection');
             return made;
         }

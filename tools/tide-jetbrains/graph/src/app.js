@@ -1,5 +1,6 @@
-// The graph editor's page: the outline, the canvas, the inspector and the Tide panel, and its one connection to
-// the host (VS Code's custom editor, JetBrains' JCEF editor, a test). The host's side is a few messages:
+// The graph editor's page: the board (a file as one canvas of cards and frames), a small toolbar over it, and its one
+// connection to the host (VS Code's custom editor, JetBrains' JCEF editor, the docs' playground, a test). The host's
+// side is a few messages:
 //
 //   page -> host  {type: 'ready'}                          the page is there: send 'load'
 //                 {type: 'edit', text}                     the document's new text (each edit, undo and redo)
@@ -12,13 +13,15 @@
 //                 {type: 'text', text}                     the document changed (by the host's undo, a checkout...)
 //                 {type: 'diagnostics', diagnostics}       tidels's for the document, as published (data.node)
 //                 {type: 'response', id, result | error}   {type: 'command', name}  {type: 'theme', ...}
+//                 {type: 'reveal', node}                   show an element of the file (a declaration, a node)
 //
 // TideGraph.start(host) makes the page, where host.post(message) sends to the host; the host calls
 // TideGraph.receive(message).
 (function (G) {
     'use strict';
-    const { el, button, menu, closeMenu, tooltip } = G.ui;
-    const { Doc, Schema, Editor, Lang, Canvas, Inspector, Outline, Search } = G;
+    const { el, button, menu, popup, closePopups, popupOpen, tooltip, toast } = G.ui;
+    const { Doc, Schema, Editor, Lang, Board } = G;
+    const { ENTRY, RESULT } = G.frames;
 
     class App {
         constructor(host, root) {
@@ -28,7 +31,7 @@
             this.nextRequest = 1;
             this.clip = null;
             this.spaceDown = false;
-            this.showPanel = true;
+            this.contentsOpen = false;
             this.lang = new Lang((method, params) => this.request(method, params));
             this.editor = null;
             this.build();
@@ -71,11 +74,8 @@
                 case 'theme': return this.theme(m);
                 case 'reveal': return this.reveal(m.node);
                 case 'server':
-                    if (!m.available) {
-                        this.lang.status = 'unavailable';
-                        this.lang.why = m.message || null;
-                        this.langChanged('status');
-                    } else this.checkSoon(0);
+                    if (!m.available) this.lang.unavailable(m.message || null);
+                    else this.checkSoon(0);
                     return;
                 default: return;
             }
@@ -90,11 +90,11 @@
             this.lang.uri = m.uri || null;
             if (!schemaJson && !this.editor) {
                 // No copy of the host's: tidels's, or nothing to edit with
-                this.banner('Asking tidels for the graph schema…');
+                this.banner('Getting ready…');
                 this.request('tide/graphSchema', null).then(s => {
                     if (s && s.nodes) this.load({ ...m, schema: s });
-                    else this.banner('There is no graph schema: tidels gave none.');
-                }, e => this.banner(`There is no graph schema: ${e.message}. Tidels, the language server that comes with tide, gives it: install tide, then open the file again.`));
+                    else this.banner("The graph editor can't start: Tide's language server gave it nothing to work with. Install tide, then open the file again.");
+                }, e => this.banner(`The graph editor can't start: ${e.message}. It needs tidels, the language server that comes with tide: install tide, then open the file again.`));
                 return;
             }
             if (schemaJson && (!this.editor || m.schema)) {
@@ -107,8 +107,9 @@
                 }
             }
             if (!this.editor) return;
+            this.board.auto.clear();
+            this.board.framed = false;
             this.editor.load(m.text ?? '', true);
-            this.fillTypes();
             // tidels's own schema, when it's there, is the one its tidec reads
             this.request('tide/graphSchema', null).then(s => {
                 if (s && s.nodes && JSON.stringify(s) !== JSON.stringify(this.editor.schema.json)) this.editor.setSchema(new Schema(s));
@@ -122,58 +123,35 @@
         build() {
             const root = this.root;
             root.classList.add('tg-root');
-            this.types = el('datalist', { id: 'tg-types' });
-            this.title = el('span.tg-crumb');
-            this.statusText = el('span.tg-status');
-            this.undoButton = button('Undo', () => this.command('undo'), 'Undo (Ctrl+Z)');
-            this.redoButton = button('Redo', () => this.command('redo'), 'Redo (Ctrl+Y)');
-            this.panelButton = button('Tide', () => { this.showPanel = !this.showPanel; this.layoutPanes(); this.renderPanel(); }, 'Show the Tide the graph stands for, and its problems');
+            this.statusChip = el('button.tg-status', { type: 'button', onclick: e => { e.stopPropagation(); this.showProblems(); }, onpointerdown: e => e.stopPropagation() });
+            this.undoButton = button('↶', () => this.command('undo'), 'Undo (Ctrl+Z)', 'tg-button.tg-tool');
+            this.redoButton = button('↷', () => this.command('redo'), 'Redo (Ctrl+Y)', 'tg-button.tg-tool');
+            this.addButton = button('+ Add', e => G.pickers.addMenu(this, 0, 0, { anchor: e.currentTarget }), 'Add something to the file (or right-click the board)', 'tg-button.tg-primary.tg-add');
+            this.contentsButton = button('Contents', () => this.toggleContents(), 'What this file has, to jump to', 'tg-button');
+            this.findButton = button('Find…', e => G.pickers.jumpTo(this, { anchor: e.currentTarget }), 'Jump to a declaration by its name (Ctrl+F)', 'tg-button.tg-find');
             const bar = el('div.tg-toolbar', null,
-                button('+ Node', ev => this.openSearch(ev.clientX, ev.clientY + 16, null), 'Add a node (Space, or a right click on the canvas)'),
-                button('+ Note', () => this.addNote(null), 'A box to write in, behind the nodes'),
-                button('Layout', () => this.autoLayout(), 'Lay out the graph shown as tidec does'),
-                button('Frame', () => this.command('frame'), 'Frame the selection, or the whole graph (F)'),
-                el('span.tg-sep'), this.undoButton, this.redoButton, el('span.tg-sep'),
-                this.panelButton,
-                button('Show as Tide', () => this.post({ type: 'showTide', text: this.lang.text }), 'Open the Tide the graph stands for'),
-                el('span.tg-sep'), this.title, el('span.tg-grow'), this.statusText);
+                this.addButton, this.contentsButton, this.findButton,
+                el('span.tg-grow'), this.statusChip, el('span.tg-sep'), this.undoButton, this.redoButton,
+                button('⋯', e => this.boardMenu(e.currentTarget), 'More: view as Tide, tidy up, this file\'s namespace', 'tg-button.tg-tool.tg-board-more'));
             this.bannerEl = el('div.tg-banner');
-            this.outline = new Outline(this);
-            this.canvas = new Canvas(this);
-            this.inspector = new Inspector(this);
-            this.search = new Search(this);
-            this.panel = el('div.tg-panel');
-            const split = (cls, onMove) => {
-                const s = el('div.' + cls);
-                s.addEventListener('pointerdown', e => {
-                    e.preventDefault();
-                    s.setPointerCapture(e.pointerId);
-                    const move = ev => onMove(ev);
-                    const up = () => { s.removeEventListener('pointermove', move); s.removeEventListener('pointerup', up); };
-                    s.addEventListener('pointermove', move);
-                    s.addEventListener('pointerup', up);
-                });
-                return s;
-            };
-            this.sizes = { left: 230, right: 290, bottom: 200 };
-            const left = split('tg-split.tg-split-v', e => { this.sizes.left = Math.max(120, Math.min(600, e.clientX)); this.layoutPanes(); });
-            const right = split('tg-split.tg-split-v', e => { this.sizes.right = Math.max(160, Math.min(700, innerWidth - e.clientX)); this.layoutPanes(); });
-            this.bottomSplit = split('tg-split.tg-split-h', e => { this.sizes.bottom = Math.max(60, Math.min(innerHeight - 160, innerHeight - e.clientY)); this.layoutPanes(); });
-            this.main = el('div.tg-main', null, this.outline.el, left, el('div.tg-center', null, this.canvas.el), right, this.inspector.el);
-            root.append(this.types, bar, this.bannerEl, this.main, this.bottomSplit, this.panel);
-            this.layoutPanes();
+            this.board = new Board(this);
+            this.contents = el('div.tg-contents');
+            this.zoomLabel = button('100%', () => { this.board.zoomAt(1 / this.board.zoom); }, 'Back to full size', 'tg-button.tg-zoom-label');
+            const zoom = el('div.tg-zoom', { onpointerdown: e => e.stopPropagation() },
+                button('−', () => this.board.zoomAt(1 / 1.25), 'Zoom out (Ctrl and the wheel)', 'tg-button'),
+                this.zoomLabel,
+                button('+', () => this.board.zoomAt(1.25), 'Zoom in', 'tg-button'),
+                button('Fit', () => this.board.fit(false), 'See the whole file (F)', 'tg-button'));
+            this.main = el('div.tg-main', null, this.contents, el('div.tg-center', null, this.board.el, zoom));
+            G.ui.put(root, bar, this.bannerEl, this.main);
             this.keys();
-            addEventListener('resize', () => this.canvas.applyTransform());
+            addEventListener('resize', () => { if (this.editor) this.board.scheduleCull(); });
             this.banner(null);
+            this.renderStatus();
         }
 
-        layoutPanes() {
-            this.root.style.setProperty('--tg-left', this.sizes.left + 'px');
-            this.root.style.setProperty('--tg-right', this.sizes.right + 'px');
-            this.root.style.setProperty('--tg-bottom', (this.showPanel ? this.sizes.bottom : 0) + 'px');
-            this.panel.style.display = this.showPanel ? '' : 'none';
-            this.bottomSplit.style.display = this.showPanel ? '' : 'none';
-            this.panelButton.classList.toggle('tg-on', this.showPanel);
+        zoomChanged() {
+            if (this.zoomLabel) this.zoomLabel.textContent = Math.round(this.board.zoom * 100) + '%';
         }
 
         banner(text) {
@@ -181,132 +159,184 @@
             this.bannerEl.style.display = text ? 'block' : 'none';
         }
 
-        fillTypes() {
-            const types = new Set([...this.editor.schema.types, ...this.editor.doc.declaredTypes()]);
-            this.types.replaceChildren(...[...types].map(t => el('option', { value: t })));
-        }
-
         // The editor's changes: what to draw again
         changed(what) {
             const ed = this.editor;
             if (what === 'document') {
-                this.banner(ed.error ? `This file isn't a graph the editor can read (${ed.error}). Fix it in the text editor; the graph comes back when it reads again.` : null);
-                this.fillTypes();
-                this.renderAll();
-            } else if (what === 'graph') {
-                this.canvas.render();
-                this.inspector.render();
-                this.outline.render();
-                this.renderTitle();
-                this.renderPanel();
+                this.banner(ed.error ? `This file isn't a graph the editor can read (${ed.error}). Fix it as text; the board comes back when it reads again.` : null);
+                this.problemCounts = null;
+                this.board.render();
+                this.renderContents();
+                this.renderStatus();
             } else if (what === 'selection') {
-                this.canvas.showSelection();
-                this.inspector.render();
-                this.outline.render();
-                this.renderPanel();
+                this.board.showSelection();
             }
             this.undoButton.disabled = !ed.canUndo;
             this.redoButton.disabled = !ed.canRedo;
         }
 
-        renderAll() {
-            this.outline.render();
-            this.canvas.render();
-            this.inspector.render();
-            this.renderTitle();
-            this.renderPanel();
-            this.renderStatus();
-        }
-
-        renderTitle() {
-            const ed = this.editor;
-            const where = ed.slot ? ed.doc.find(ed.slot.owner) : null;
-            this.title.textContent = where ? `${ed.doc.describe(where)} › ${ed.slot.key === 'body' ? 'code' : ed.slot.key}${ed.slot.index >= 0 ? ' ' + (ed.slot.index + 1) : ''}` : '';
-        }
-
         langChanged(what) {
             if (!this.editor) return;
+            this.problemCounts = null;
+            if (what === 'check') {
+                // The types tidels found: the colours of pins and wires
+                for (const f of this.board.frames.values()) if (f.mode === 'near') f.drawWires();
+                if (this.board.valueFrame) this.board.valueFrame.drawWires();
+            }
             if (what === 'check' || what === 'diagnostics') {
-                this.canvas.render();
-                this.outline.render();
-                if (this.editor.selected && this.editor.doc.find(this.editor.selected)?.role === 'node') this.inspector.render();
-                this.renderPanel();
+                this.board.markProblems();
+                this.renderContents();
             }
             this.renderStatus();
         }
 
+        // The problems of the last check that are about something the file still has (or about the file)
+        problems() {
+            const ed = this.editor;
+            if (!ed || ed.error) return [];
+            return this.lang.diagnostics.filter(d => !d.node || ed.doc.find(d.node));
+        }
+
+        // How many problems a card or a frame has in it
+        problemsIn(item) {
+            if (!this.problemCounts) {
+                this.problemCounts = new Map();
+                for (const d of this.problems()) {
+                    const id = d.node ? this.editor.itemOf(d.node) : 0;
+                    if (id) this.problemCounts.set(id, (this.problemCounts.get(id) || 0) + 1);
+                }
+            }
+            return this.problemCounts.get(item) || 0;
+        }
+
+        // The chip that says whether the board is checked, and how many problems it has
         renderStatus() {
             const l = this.lang;
-            const errors = l.diagnostics.filter(d => d.severity === 1).length;
-            const warnings = l.diagnostics.length - errors;
-            const said = errors || warnings ? ` · ${errors} error${errors === 1 ? '' : 's'}${warnings ? `, ${warnings} warning${warnings === 1 ? '' : 's'}` : ''}` : '';
-            const text = l.status === 'checked' ? 'Checked by tidels' + said
-                : l.status === 'checking' ? 'Checking…' + said
-                : l.status === 'unavailable' ? 'Not checked: ' + (l.why || 'no tidels')
-                : '';
-            this.statusText.textContent = text;
-            this.statusText.className = 'tg-status' + (errors ? ' tg-status-error' : l.status === 'unavailable' ? ' tg-status-off' : '');
+            const chip = this.statusChip;
+            const list = this.problems();
+            const errors = list.filter(d => d.severity === 1).length;
+            const warnings = list.length - errors;
+            let text, cls, title;
+            if (!this.editor) { text = ''; cls = 'tg-status-quiet'; title = ''; }
+            else if (l.status === 'unavailable') { text = 'Not checked'; cls = 'tg-status-off'; title = 'Nothing checks this file: click to see why'; }
+            else if (errors) { text = `${errors} ${errors === 1 ? 'problem' : 'problems'}`; cls = 'tg-status-error'; title = 'Click to see them'; }
+            else if (warnings) { text = `${warnings} ${warnings === 1 ? 'warning' : 'warnings'}`; cls = 'tg-status-warning'; title = 'Click to see them'; }
+            else if (l.status === 'checked') { text = 'Checked'; cls = 'tg-status-ok'; title = 'Tide checked this file and found nothing wrong'; }
+            else { text = 'Checking…'; cls = 'tg-status-quiet'; title = ''; }
+            chip.replaceChildren(el('span.tg-status-mark'), text);
+            chip.className = 'tg-status ' + cls;
+            chip.title = title;
+            chip.style.display = text ? '' : 'none';
         }
 
-        // The Tide the graph stands for, the selected element's part marked, and the problems on top
-        renderPanel() {
-            if (!this.showPanel) return;
-            const l = this.lang;
+        // The list of problems: each with the compiler's words, what it's on, and a click to go there
+        showProblems() {
             const ed = this.editor;
-            const list = el('div.tg-problems');
-            for (const d of l.diagnostics) {
-                const n = d.node ? ed?.doc.find(d.node) : null;
-                list.append(el('div.tg-problem' + (d.severity === 1 ? '.tg-error' : '.tg-warning'), {
-                    onclick: () => d.node && this.reveal(d.node),
-                    title: d.node ? 'Go to the node' : '',
-                }, el('span.tg-problem-mark', { text: d.severity === 1 ? '●' : '▲' }), el('span', { text: d.message }),
-                n ? el('span.tg-problem-where', { text: ed.doc.describe(n) }) : null));
+            if (!ed) return;
+            const l = this.lang;
+            const list = this.problems();
+            const body = el('div.tg-problems');
+            if (l.status === 'unavailable') {
+                G.ui.put(body, el('div.tg-problems-none', null, el('strong', { text: 'This file isn\'t being checked.' }),
+                    el('div', { text: `Tide's language server (tidels, which comes with tide) checks a graph as you edit it. ${l.why ? 'It says: ' + l.why + '.' : 'It isn\'t running.'} You can still edit; mistakes show when the game is built.` })));
+            } else if (!list.length) {
+                G.ui.put(body, el('div.tg-problems-none', { text: l.status === 'checked' ? 'Nothing wrong: Tide checked this file.' : 'Checking…' }));
             }
-            const pre = el('pre.tg-tide');
-            if (l.text !== null) {
-                const mark = ed?.selected ? l.span(ed.selected) : null;
-                const text = l.text;
-                const errorSpans = l.diagnostics.filter(d => d.node).map(d => l.span(d.node)).filter(Boolean);
-                const cuts = new Set([0, text.length]);
-                if (mark) { cuts.add(mark[0]); cuts.add(mark[1]); }
-                for (let i = text.indexOf('\n'); i >= 0; i = text.indexOf('\n', i + 1)) cuts.add(i + 1);
-                const sorted = [...cuts].sort((a, b) => a - b);
-                for (let i = 0; i < sorted.length - 1; i++) {
-                    const a = sorted[i], b = sorted[i + 1];
-                    if (a === b) continue;
-                    const marked = mark && a >= mark[0] && b <= mark[1];
-                    const wrong = errorSpans.some(s => a >= s[0] && b <= s[1]);
-                    pre.append(el('span' + (marked ? '.tg-mark' : '') + (wrong ? '.tg-wrong' : ''), { dataset: { at: a }, text: text.slice(a, b) }));
-                }
-                pre.addEventListener('click', () => {
-                    const sel = getSelection();
-                    const node = sel?.focusNode;
-                    const part = node?.nodeType === 3 ? node.parentElement : node;
-                    if (!part?.dataset?.at) return;
-                    const id = l.idAt(Number(part.dataset.at) + (sel.focusOffset || 0));
-                    if (id) this.reveal(id);
-                });
-                requestAnimationFrame(() => pre.querySelector('.tg-mark')?.scrollIntoView?.({ block: 'nearest' }));
-            } else {
-                pre.append(el('span.tg-muted', { text: l.status === 'checking' ? 'Asking tidels…' : `The Tide isn't shown: ${l.why || 'tidels has not answered'}.` }));
+            for (const d of list) {
+                const e = d.node ? ed.doc.find(d.node) : null;
+                const item = d.node ? ed.doc.items().find(i => i.id === ed.itemOf(d.node)) : null;
+                G.ui.put(body, el('div.tg-problem' + (d.severity === 1 ? '.tg-error' : '.tg-warning'), {
+                    onclick: () => { closePopups(); if (d.node) this.reveal(d.node); },
+                    title: d.node ? 'Go to it' : '',
+                },
+                el('span.tg-problem-mark', { text: d.severity === 1 ? '●' : '▲' }),
+                el('span.tg-problem-text', null, el('span.tg-problem-message', { text: d.message }), d.note ? el('span.tg-problem-note', { text: d.note }) : null),
+                item ? el('span.tg-problem-where', { text: `${ed.doc.titleOf(item)}${e && e.id !== item.id && e.role !== 'node' ? ' · ' + ed.doc.describe(e) : ''}` }) : null));
             }
-            this.panel.replaceChildren(list, pre);
+            popup({ anchor: this.statusChip, className: 'tg-popup tg-problems-popup', content: body });
         }
 
-        // Selects an element and shows it: a node in the middle of its graph
+        // Contents: the file's declarations by group, closed until asked for
+        toggleContents(open = !this.contentsOpen) {
+            this.contentsOpen = open;
+            this.root.classList.toggle('tg-contents-open', open);
+            this.contentsButton.classList.toggle('tg-on', open);
+            this.renderContents();
+            requestAnimationFrame(() => this.board.scheduleCull());
+        }
+
+        renderContents() {
+            const box = this.contents;
+            if (!this.contentsOpen || !this.editor || this.editor.error) {
+                box.replaceChildren();
+                return;
+            }
+            const entries = G.pickers.contents(this);
+            const typed = this.contentsFilter?.value ?? '';
+            const filter = el('input.tg-input.tg-contents-filter', { type: 'text', placeholder: 'Filter…', spellcheck: 'false', value: typed });
+            const list = el('div.tg-contents-list');
+            const fill = () => {
+                const text = filter.value.trim().toLowerCase();
+                list.replaceChildren();
+                let group = null;
+                for (const e of entries) {
+                    if (text && !e.title.toLowerCase().includes(text)) continue;
+                    if (e.group !== group) {
+                        group = e.group;
+                        G.ui.put(list, el('div.tg-contents-group', { text: group }));
+                    }
+                    G.ui.put(list, el('div.tg-contents-item', { dataset: { id: e.id }, onclick: () => { this.reveal(e.id); if (innerWidth < 640) this.toggleContents(false); }, title: e.detail },
+                        el('span.tg-contents-name', { text: e.title }), el('span.tg-contents-kind', { text: e.detail }),
+                        e.problems ? el('span.tg-badge.tg-badge-error', { text: String(e.problems) }) : null));
+                }
+                if (!list.childNodes.length) G.ui.put(list, el('div.tg-contents-none', { text: entries.length ? 'Nothing by that name' : 'Nothing here yet: + Add makes the first thing' }));
+            };
+            filter.addEventListener('input', fill);
+            filter.addEventListener('keydown', e => e.stopPropagation());
+            const focused = document.activeElement === this.contentsFilter;
+            this.contentsFilter = filter;
+            fill();
+            box.replaceChildren(el('div.tg-contents-head', null, el('span', { text: 'Contents' }), button('×', () => this.toggleContents(false), 'Close', 'tg-icon')), filter, list);
+            if (focused) filter.focus();
+        }
+
+        // The board's own menu: what isn't on it
+        boardMenu(anchor) {
+            const ed = this.editor;
+            if (!ed || ed.error) return;
+            const root = ed.doc.root;
+            const order = ed.schema.root;
+            const r = anchor.getBoundingClientRect();
+            const at = { x: r.left - 200, y: r.bottom + 4 };
+            menu(0, 0, [
+                { label: 'View as Tide', summary: 'The Tide code this file stands for', name: 'view-tide', run: () => this.post({ type: 'showTide', text: this.lang.text ?? undefined }) },
+                { label: 'Tidy up the board', summary: 'Data in a column, code beside it', name: 'tidy', run: () => this.layoutBoard() },
+                { label: 'See the whole file', hint: 'F', name: 'fit', run: () => this.board.fit(false) },
+                { separator: true },
+                { label: 'Namespace…', summary: root.namespace ? root.namespace : 'None: what it declares is seen everywhere', name: 'namespace',
+                    run: () => G.cards.promptText({ ...at, title: 'This file\'s namespace', help: 'A name its declarations go under, like Game.Combat. Empty for none.', value: root.namespace, placeholder: 'Game.Combat',
+                        check: v => (v === '' || /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/.test(v) ? null : 'Names joined by dots, like Game.Combat'),
+                        onDone: text => this.edit(() => G.json.set(root, 'namespace', text || undefined, order)) }) },
+                { label: 'Uses…', summary: (root.using || []).join(', ') || 'The namespaces whose names it uses without writing them', name: 'using',
+                    run: () => G.cards.promptRows({ ...at, title: 'Namespaces this file uses', help: 'Their names are used here without the namespace before them.', rows: (root.using || []).map(name => ({ name })),
+                        columns: [{ key: 'name', placeholder: 'Physics', check: v => (/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/.test(v) ? null : 'A namespace, like Physics') }],
+                        addLabel: 'namespace', blank: () => ({ name: '' }),
+                        onDone: rows => this.edit(() => G.json.set(root, 'using', rows.filter(x => x.name).length ? rows.filter(x => x.name).map(x => x.name) : undefined, order)) }) },
+            ], { anchor });
+        }
+
+        // Selects an element and shows it: its card or frame brought to where it can be read
         reveal(id) {
             const ed = this.editor;
-            if (!ed?.doc.find(id)) return;
+            if (!ed || ed.error || !ed.doc.find(id)) return;
+            const e = ed.doc.find(id);
+            // A node of a value's graph: the value opens
+            if ((e.role === 'node' || e.role === 'note') && e.slot && e.slot.key !== 'body') {
+                const owner = ed.doc.find(e.slot.owner);
+                if (owner) this.openValue(e.slot, owner.value, e.slot.key === 'components' ? null : e.slot.key, ed.doc.orderOf(owner), owner.value.type);
+            }
             ed.select(id);
-            requestAnimationFrame(() => this.canvas.reveal(id));
-        }
-
-        say(message) {
-            if (!message) return;
-            this.statusText.textContent = message;
-            this.statusText.className = 'tg-status tg-status-said';
-            clearTimeout(this.sayTimer);
-            this.sayTimer = setTimeout(() => this.renderStatus(), 4000);
+            this.board.reveal(id);
         }
 
         // ---------------------------------------------------------------------------------------------------------
@@ -321,44 +351,229 @@
 
         checkSoon(delay = 300) {
             clearTimeout(this.checkTimer);
-            this.checkTimer = setTimeout(() => this.lang.check(), delay);
+            if (this.lang.status === 'checked') { this.lang.status = 'checking'; this.renderStatus(); }
+            this.checkTimer = setTimeout(() => { this.checkTimer = 0; this.checking = this.lang.check(); }, delay);
         }
 
-        openSearch(clientX, clientY, context) {
-            if (!this.editor?.graph) {
-                this.say('Show a graph first: select a declaration with code, or give one code in the inspector');
+        // Resolves once tidels has checked the document as it is now: a check that's waiting its turn runs at once.
+        // What's asked of tidels after it is about what's on the board.
+        checked() {
+            if (this.checkTimer) {
+                clearTimeout(this.checkTimer);
+                this.checkTimer = 0;
+                this.checking = this.lang.check();
+            }
+            return (this.checking || Promise.resolve()).catch(() => {});
+        }
+
+        // A new declaration of a kind: a card or a frame where the pointer asked (or where there's room), its name
+        // selected to type over
+        addDecl(kind, { namespace = null, at = null } = {}) {
+            const ed = this.editor;
+            if (!ed || ed.error) return null;
+            const spec = ed.schema.declSpec(kind);
+            const place = this.board.freePlace(!!spec?.body, at);
+            let made;
+            this.edit(doc => {
+                this.board.persistPlaces(doc);
+                const list = namespace ? (namespace.decls ||= []) : doc.decls;
+                const names = doc.declared().map(d => ({ name: d.name }));
+                const has = key => spec?.keys.includes(key);
+                const base = !has('name') ? undefined : kind === 'scene' ? 'Main' : kind === 'namespace' ? 'Game' : (spec?.title || kind).replace(/[^A-Za-z0-9]/g, '');
+                made = doc.newElement(kind, false, base ? doc.uniqueName(names, base) : undefined, place);
+                list.push(made);
+            });
+            if (!made) return null;
+            ed.pick([made.id]);
+            this.board.ensureVisible(made.id);
+            const fk = spec?.keys.includes('name') ? `${made.id}:name` : spec?.keys.includes('text') ? `${made.id}:text` : null;
+            if (fk) this.board.focusSoon(fk, true);
+            return made;
+        }
+
+        // A new member of a kind on a card: a row for a field, a frame for a member with code
+        addMember(item, kind) {
+            const v = item.value;
+            const s = this.editor.schema;
+            const spec = s.memberSpec(kind);
+            let made;
+            this.edit(doc => {
+                if (!Array.isArray(v.members)) G.json.set(v, 'members', [], item.spec?.keys);
+                const base = !spec?.keys.includes('name') ? undefined : kind === 'field' ? 'value' : kind === 'tweak' ? 'tweak' : kind === 'sample' ? 'Sample' : (spec.title || kind).replace(/[^A-Za-z0-9]/g, '');
+                const place = spec?.body ? this.board.freePlace(true, null) : null;
+                if (spec?.body || kind === 'property') this.board.persistPlaces(doc);
+                made = doc.newElement(kind, true, base && kind !== 'sample' ? doc.uniqueName(v.members, base) : base, place);
+                v.members.push(made);
+            });
+            if (!made) return;
+            if (spec?.body) {
+                this.editor.pick([made.id]);
+                this.board.ensureVisible(made.id);
+            }
+            if (kind === 'text') return;
+            this.board.focusSoon(`${made.id}:name`, true);
+        }
+
+        duplicateItem(item) {
+            if (item.accessor || !Array.isArray(item.list)) return;
+            let copy;
+            this.edit(doc => {
+                this.board.persistPlaces(doc);
+                copy = doc.duplicate(item.value);
+                if (copy.name) copy.name = doc.uniqueName(item.member ? item.list : doc.declared().map(d => ({ name: d.name })), copy.name);
+                if (typeof copy.x === 'number') { copy.x += 40; copy.y += 40; }
+                item.list.splice(item.list.indexOf(item.value) + 1, 0, copy);
+            });
+            if (copy) {
+                this.editor.pick([copy.id]);
+                this.board.focusSoon(`${copy.id}:name`, true);
+            }
+        }
+
+        // Deletes cards and frames, with a way back said for a moment
+        deleteItems(ids) {
+            const ed = this.editor;
+            const items = ed.doc.items().filter(i => ids.includes(i.id) && !i.region);
+            if (!items.length) return;
+            const names = items.map(i => ed.doc.titleOf(i));
+            this.edit(() => {
+                for (const item of items) {
+                    const at = item.list.indexOf(item.value);
+                    if (at >= 0) item.list.splice(at, 1);
+                }
+            });
+            ed.clearSelection();
+            toast(`Deleted ${names.length === 1 ? names[0] : names.length + ' things'}`, { action: 'Undo', run: () => this.command('undo') });
+        }
+
+        // Lays a frame's nodes out as tidec does
+        async layoutFrame(id) {
+            const f = this.board.frames.get(id);
+            const g = f?.graph;
+            if (!g) return;
+            let places;
+            try {
+                places = await this.request('tide/graphLayout', { graph: g });
+            } catch (e) {
+                toast(`It can't be tidied now: ${e.message}`);
                 return;
             }
-            this.search.show(clientX, clientY, context);
+            if (!places || typeof places !== 'object') {
+                toast("It can't be tidied now: Tide's language server didn't answer");
+                return;
+            }
+            this.edit(() => {
+                for (const n of Doc.nodes(g)) {
+                    const p = places[n.id] ?? places[String(n.id)];
+                    if (Array.isArray(p)) { n.x = p[0]; n.y = p[1]; }
+                }
+            });
         }
 
-        // Adds what the search picked at a place, wired to where the search came from
-        addFromSearch(entry, at, context) {
+        // Lays the whole board out: data in a column on the left, code to its right
+        async layoutBoard() {
+            const ed = this.editor;
+            if (!ed || ed.error) return;
+            let places;
+            try {
+                places = await this.request('tide/graphLayout', { file: ed.doc.root });
+            } catch (e) {
+                toast(`The board can't be tidied now: ${e.message}`);
+                return;
+            }
+            if (!places || typeof places !== 'object') {
+                toast("The board can't be tidied now: Tide's language server didn't answer");
+                return;
+            }
+            this.board.auto.clear();
+            this.edit(doc => {
+                for (const item of doc.items()) {
+                    const p = places[item.id] ?? places[String(item.id)];
+                    if (Array.isArray(p) && !item.region) this.board.setPlace(doc, item, p[0], p[1]);
+                }
+            });
+            this.board.home();
+            this.board.scheduleCull();
+        }
+
+        addNote(id) {
+            const f = this.board.frames.get(id);
+            const g = f?.graph;
+            if (!g) return;
+            let made;
+            this.edit(doc => {
+                const order = doc.schema.element('body');
+                if (!Array.isArray(g.notes)) G.json.set(g, 'notes', [], order);
+                made = doc.newId();
+                const nodes = Doc.nodes(g);
+                const y = nodes.length ? Math.max(...nodes.map(n => Number(n.y) || 0)) + 140 : 120;
+                g.notes.push({ id: made, x: 0, y, w: 260, h: 120, text: 'A note: double-click to write' });
+            });
+            if (made) this.editor.selectNodes(f.slot, [made]);
+        }
+
+        // Opens a value as a small graph beside what it's the value of
+        openValue(slot, holder, key, order, type) {
+            const ed = this.editor;
+            const e = ed.doc.find(slot.owner);
+            if (!e) return;
+            const v = e.value;
+            const parent = e.owner && typeof e.owner.id === 'number' ? e.owner : null;
+            let title = v.name ?? '';
+            if (e.role === 'member' || e.role === 'enumMember') title = `${parent?.name ?? ''}.${v.name ?? ''}`;
+            else if (e.role === 'prefabNode') {
+                const root = Doc.nodeIn(ed.doc.graph(slot), ed.doc.graph(slot)?.root);
+                title = `${v.name ?? parent?.name ?? ''} · ${root?.type ?? ''}`;
+            }
+            const required = e.role === 'decl' || e.role === 'entry' || v.kind === 'tweak' || slot.key === 'components';
+            const anchor = document.querySelector(`[data-value="${slot.owner}:${slot.key}"]`) || this.board.elementOf(slot.owner);
+            this.board.openValue({ slot, title, holder, key, order, type, required }, anchor);
+        }
+
+        closeValue() {
+            this.board.closeValue(true);
+        }
+
+        // Adds what the node search picked at a place of a frame, wired to where the search came from
+        addFromSearch(frame, entry, at, context) {
             const ed = this.editor;
             const s = ed.schema;
-            const g = ed.graph;
             const from = context?.from;
-            const { ENTRY, RESULT } = Canvas;
             let made = null;
+            const whys = [];
+            const say = why => { if (why) whys.push(why); };
             this.edit(doc => {
+                const g = doc.ensureGraph(frame.slot);
+                if (!g) return;
                 const node = doc.newNode(entry.node.k, at.x, at.y, entry.node.fields);
                 Doc.nodes(g).push(node);
                 let statement = s.isExec(node.k) ? node : null;
-                // A call where a statement goes: the statement that does it
+                // A call where a statement goes: the statement that does it, drawn as one node with it
                 if (!statement && (from?.exec || (entry.statement && !from))) {
-                    statement = doc.newNode('eval', at.x + 240, at.y);
+                    statement = doc.newNode('eval', at.x, at.y);
                     Doc.nodes(g).push(statement);
-                    node.y = at.y + 100;
+                    node.x = at.x - 200;
+                    doc.reindex();
                     doc.connect(g, statement.id, ['value'], node.id);
                 }
                 doc.reindex();
                 if (from && !from.exec && !from.input) {
                     // A value dragged out: into the new node's first input
                     const input = s.ports(node).find(p => p.input && !p.exec);
-                    if (input) say(doc.connect(g, node.id, input.path, from.node));
+                    if (input) {
+                        const source = frame.sourceNode(doc, from, { x: at.x, y: at.y });
+                        doc.reindex();
+                        say(doc.connect(g, node.id, input.path, source));
+                    }
                 } else if (from && !from.exec && from.input) {
-                    if (from.node === RESULT) say(doc.setRoot(g, node.id));
-                    else if (s.hasValue(node.k)) say(doc.connect(g, from.node, from.path, node.id));
+                    if (!s.hasValue(node.k)) say(`${s.title(node.k)} has no value to give`);
+                    else if (from.node === RESULT) say(doc.setRoot(g, node.id));
+                    else {
+                        const target = Doc.nodeIn(g, from.node);
+                        const old = target ? s.wire(target, from.path) : 0;
+                        say(doc.connect(g, from.node, from.path, node.id));
+                        if (old) { doc.reindex(); doc.dropUnread(g, [old], frame.pins); }
+                    }
                 } else if (from?.exec && statement) {
                     if (!from.input) {
                         // After an exec output: in between it and what it went to
@@ -377,25 +592,24 @@
                 } else if (!from && !Doc.isBody(g) && !g.root && s.hasValue(node.k)) {
                     doc.setRoot(g, node.id);
                 }
-                made = node;
+                made = statement && statement !== node ? statement : node;
             });
-            const that = this;
-            function say(why) { if (why) that.say(why); }
-            if (made) ed.select(made.id);
-        }
-
-        // Pick member…: the node becomes a member or method of its object's, by what tidels offers
-        pickMember(n, clientX, clientY) {
-            if (!n.object) {
-                this.say('It has no object whose members to offer: wire one into it');
-                return;
+            if (whys.length) toast(`That wire can't be: ${whys[0]}.`);
+            if (!made) return;
+            ed.selectNodes(frame.slot, [made.id]);
+            // A node that starts with a name to give has it selected to type over
+            const named = ed.doc.get(made.id);
+            const own = named?.k === 'eval' ? ed.doc.get(named.value) : named;
+            if (own && !entry.detail && !entry.hidden) {
+                const key = ['name', 'member', 'text'].find(k => typeof own[k] === 'string');
+                if (key && !entry.node.fields?.[key]) this.board.focusSoon(`${own.id}:${key}`, true);
             }
-            this.search.show(clientX, clientY, { member: n });
         }
 
-        retarget(n, entry) {
+        // Pick another member…: the node becomes a member or method of its value's, by what tidels offers
+        retarget(frame, n, entry) {
             const s = this.editor.schema;
-            const g = this.editor.graph;
+            const g = frame.graph;
             this.edit(() => {
                 const k = entry.node.k === 'method' ? 'method' : 'member';
                 const order = s.nodeOrder(k);
@@ -415,101 +629,59 @@
             });
         }
 
-        addNote(at) {
-            const g = this.editor?.graph;
-            if (!g) return;
-            const r = this.canvas.el.getBoundingClientRect();
-            const place = at || this.canvas.toWorld(r.left + r.width / 2 - 120, r.top + r.height / 2 - 70);
-            let id;
-            this.edit(doc => {
-                const order = Doc.isBody(g) ? doc.schema.element('body') : doc.schema.element('value');
-                if (!Array.isArray(g.notes)) G.json.set(g, 'notes', [], order);
-                id = doc.newId();
-                g.notes.push({ id, x: Math.round(place.x), y: Math.round(place.y), w: 240, h: 140, text: 'Note' });
-            });
-            this.editor.select(id);
-        }
-
-        addMember(e, kind) {
-            let made;
-            this.edit(doc => {
-                const v = e.value;
-                if (!Array.isArray(v.members)) v.members = [];
-                const base = { field: 'value', property: 'Value', method: 'Method', tweak: 'tweak', operator: '', sample: 'Sample' }[kind] ?? 'member';
-                made = doc.newElement(kind, true, doc.uniqueName(v.members, base));
-                v.members.push(made);
-            });
-            if (made) this.editor.select(made.id);
-        }
-
-        // The menu of declarations to add, grouped as the schema groups them; into a namespace when one is given
-        declMenu(x, y, namespace) {
-            const s = this.editor?.schema;
-            if (!s) return;
-            const items = s.declarations.map(d => ({ label: d.title, group: d.group, run: () => this.addDecl(d.kind, namespace) }));
-            menu(x, y, items);
-        }
-
-        addDecl(kind, namespace) {
-            let made;
-            this.edit(doc => {
-                const list = namespace ? (namespace.decls ||= []) : doc.decls;
-                const spec = doc.schema.declSpec(kind);
-                const base = kind === 'scene' ? 'Main' : kind === 'settings' || kind === 'text' ? undefined : (spec?.title || kind).replace(/[^A-Za-z0-9]/g, '');
-                made = doc.newElement(kind, false, base ? doc.uniqueName(list, base) : undefined);
-                list.push(made);
-            });
-            if (made) this.editor.select(made.id);
-        }
-
-        async autoLayout() {
-            const g = this.editor?.graph;
-            if (!g) return;
-            let places;
-            try {
-                places = await this.request('tide/graphLayout', { graph: g });
-            } catch (e) {
-                this.say(`No layout: ${e.message}`);
-                return;
-            }
-            if (!places || typeof places !== 'object') {
-                this.say('No layout: tidels gave none');
-                return;
-            }
-            this.edit(() => {
-                for (const n of Doc.nodes(g)) {
-                    const p = places[n.id] ?? places[String(n.id)];
-                    if (Array.isArray(p)) { n.x = p[0]; n.y = p[1]; }
-                }
-            });
-            this.canvas.frame(false);
-        }
-
         // ---------------------------------------------------------------------------------------------------------
         // Commands: from the keyboard, the toolbar, menus, and the host (its own Undo, Copy...)
 
+        // The frame commands on nodes are about: the selection's, else the one under the pointer, else the file's
+        // only one
+        activeFrame() {
+            const ed = this.editor;
+            const b = this.board;
+            if (ed.selection.size && b.frameOf(ed.slot)) return b.frameOf(ed.slot);
+            if (b.valueFrame) return b.valueFrame;
+            const under = b.frameAt(document.elementFromPoint(b.lastPointer.x, b.lastPointer.y));
+            if (under && under.mode === 'near') return under;
+            return b.frames.size === 1 && !ed.picked.size ? [...b.frames.values()][0] : null;
+        }
+
         async command(name, m) {
             const ed = this.editor;
-            if (!ed) return;
+            if (!ed || ed.error) return;
+            const b = this.board;
             switch (name) {
                 case 'undo': ed.undo(); this.checkSoon(); break;
                 case 'redo': ed.redo(); this.checkSoon(); break;
-                case 'delete': ed.deleteSelection(); this.checkSoon(); break;
-                case 'duplicate': ed.duplicateSelection(); this.checkSoon(); break;
+                case 'delete':
+                    if (ed.selection.size) { ed.deleteSelection(); this.checkSoon(); }
+                    else if (ed.picked.size) this.deleteItems([...ed.picked]);
+                    break;
+                case 'duplicate':
+                    if (ed.selection.size) { ed.duplicateSelection(); this.checkSoon(); }
+                    else for (const item of ed.doc.items().filter(i => ed.picked.has(i.id))) this.duplicateItem(item);
+                    break;
                 case 'selectAll': {
-                    const g = ed.graph;
-                    if (!g) break;
-                    ed.selection = new Set([...Doc.nodes(g).map(n => n.id), ...(g.notes || []).map(n => n.id)]);
-                    ed.emit('selection');
+                    const f = this.activeFrame();
+                    const g = f?.graph;
+                    if (g) {
+                        const ids = [...Doc.nodes(g).filter(n => !f.analysis.reads.has(n.id) && !f.analysis.mergedInto.has(n.id)).map(n => n.id), ...(g.notes || []).map(n => n.id)];
+                        ed.selectNodes(f.slot, ids);
+                    } else {
+                        ed.pick(ed.doc.items().filter(i => !i.region).map(i => i.id));
+                    }
                     break;
                 }
                 case 'copy':
                 case 'cut': {
-                    const text = ed.copySelection();
+                    let text = ed.selection.size ? ed.copySelection() : null;
+                    if (!text && ed.picked.size) {
+                        // Cards and frames: as declarations, which paste on a board
+                        const decls = ed.doc.items().filter(i => ed.picked.has(i.id) && !i.member && !i.accessor && !i.region).map(i => G.json.clone(i.value));
+                        if (decls.length) text = G.json.write({ tidegraphClip: 1, nodes: [], decls });
+                    }
                     if (!text) break;
                     this.clip = text;
                     this.post({ type: 'clipboardWrite', text });
-                    if (name === 'cut') { ed.deleteSelection(); this.checkSoon(); }
+                    if (name === 'cut') this.command('delete');
                     break;
                 }
                 case 'paste': {
@@ -518,43 +690,76 @@
                         try { text = await this.request('host/clipboardRead', null); } catch { text = null; }
                     }
                     if (!Doc.isClip(text)) text = this.clip;
-                    if (!Doc.isClip(text)) { this.say('Nothing to paste: copy nodes first'); break; }
+                    if (!Doc.isClip(text)) { toast('Nothing to paste: copy nodes, a card or a frame first'); break; }
                     this.pasteAt(text);
                     break;
                 }
-                case 'frame': this.canvas.frame(ed.selection.size > 0); break;
-                case 'layout': this.autoLayout(); break;
-                case 'search': {
-                    const p = this.canvas.lastPointer;
-                    const r = this.canvas.el.getBoundingClientRect();
-                    const inside = p.x >= r.left && p.x <= r.right && p.y >= r.top && p.y <= r.bottom;
-                    this.openSearch(inside ? p.x : r.left + r.width / 2, inside ? p.y : r.top + r.height / 3, null);
+                case 'frame': b.fit(ed.selection.size > 0 || ed.picked.size > 0); break;
+                case 'layout': {
+                    const f = ed.selection.size ? b.frameOf(ed.slot) : ed.picked.size === 1 ? b.frames.get([...ed.picked][0]) : null;
+                    if (f && !f.isValue) this.layoutFrame(f.item.id); else this.layoutBoard();
                     break;
                 }
+                case 'search': {
+                    const p = b.lastPointer;
+                    const r = b.el.getBoundingClientRect();
+                    const inside = p.x >= r.left && p.x <= r.right && p.y >= r.top && p.y <= r.bottom;
+                    const x = inside ? p.x : r.left + r.width / 2, y = inside ? p.y : r.top + r.height / 3;
+                    b.openAdd(x, y, document.elementFromPoint(x, y));
+                    break;
+                }
+                case 'find': G.pickers.jumpTo(this, { anchor: this.findButton }); break;
                 default: break;
             }
         }
 
-        // Pastes nodes where the pointer is (or beside where they were)
+        // Pastes nodes into a frame where the pointer is (or beside where they were), declarations onto the board
         pasteAt(text) {
+            const ed = this.editor;
+            const b = this.board;
+            let clip;
+            try { clip = JSON.parse(text); } catch { return; }
+            const p = b.lastPointer;
+            if (Array.isArray(clip.decls) && clip.decls.length && !(clip.nodes || []).length) {
+                const r = b.el.getBoundingClientRect();
+                const inside = p.x >= r.left && p.x <= r.right && p.y >= r.top && p.y <= r.bottom;
+                const at = inside ? b.toWorld(p.x, p.y) : null;
+                const made = [];
+                this.edit(doc => {
+                    b.persistPlaces(doc);
+                    const x0 = Math.min(...clip.decls.map(d => Number(d.x) || 0)), y0 = Math.min(...clip.decls.map(d => Number(d.y) || 0));
+                    for (const d of clip.decls) {
+                        const copy = doc.duplicate(d);
+                        if (copy.name) copy.name = doc.uniqueName([...doc.declared(), ...made].map(x => ({ name: x.name })), copy.name);
+                        if (typeof copy.x === 'number') {
+                            copy.x = Math.round(at ? at.x + (copy.x - x0) : copy.x + 40);
+                            copy.y = Math.round(at ? at.y + (copy.y - y0) : copy.y + 40);
+                        }
+                        doc.decls.push(copy);
+                        made.push(copy);
+                    }
+                });
+                ed.pick(made.map(d => d.id));
+                return;
+            }
+            const f = this.activeFrame();
+            if (!f?.graph) {
+                toast('Nodes paste into a frame: put the pointer over the one they go in');
+                return;
+            }
             let dx = 40, dy = 40;
-            try {
-                const clip = JSON.parse(text);
-                const xs = [...clip.nodes, ...(clip.notes || [])];
-                const p = this.canvas.lastPointer;
-                const r = this.canvas.el.getBoundingClientRect();
-                if (xs.length && p.x >= r.left && p.x <= r.right && p.y >= r.top && p.y <= r.bottom) {
-                    const at = this.canvas.toWorld(p.x, p.y);
-                    dx = at.x - Math.min(...xs.map(n => Number(n.x) || 0));
-                    dy = at.y - Math.min(...xs.map(n => Number(n.y) || 0));
-                }
-            } catch {}
-            this.editor.paste(text, dx, dy);
+            const xs = [...(clip.nodes || []), ...(clip.notes || [])];
+            const r = f.body.getBoundingClientRect();
+            if (xs.length && p.x >= r.left && p.x <= r.right && p.y >= r.top && p.y <= r.bottom) {
+                const at = f.toLocal(p.x, p.y);
+                dx = at.x - Math.min(...xs.map(n => Number(n.x) || 0));
+                dy = at.y - Math.min(...xs.map(n => Number(n.y) || 0));
+            }
+            const made = ed.paste(text, dx, dy, f.slot);
+            // What's selected is what's drawn: not the reads of pins that came with it
+            f.refresh();
+            ed.selectNodes(f.slot, made.filter(id => !f.analysis.reads.has(id) && !f.analysis.mergedInto.has(id)));
             this.checkSoon();
-        }
-
-        focusInspector(key) {
-            requestAnimationFrame(() => this.inspector.focus(key));
         }
 
         keys() {
@@ -562,11 +767,12 @@
                 if (!this.editor) return;
                 const t = e.target;
                 const typing = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
+                const onButton = t && t.tagName === 'BUTTON';
                 const mod = e.ctrlKey || e.metaKey;
                 const key = e.key.toLowerCase();
                 let handled = true;
                 if (mod && key === 's') this.post({ type: 'save' });
-                else if (typing) handled = false;
+                else if (typing || popupOpen()) handled = false;
                 else if (mod && key === 'z' && !e.shiftKey) this.command('undo');
                 else if (mod && (key === 'y' || (key === 'z' && e.shiftKey))) this.command('redo');
                 else if (mod && key === 'c') this.command('copy');
@@ -574,12 +780,19 @@
                 else if (mod && key === 'v') this.command('paste');
                 else if (mod && key === 'd') this.command('duplicate');
                 else if (mod && key === 'a') this.command('selectAll');
+                else if (mod && key === 'f') this.command('find');
                 else if (!mod && (key === 'delete' || key === 'backspace')) this.command('delete');
                 else if (!mod && !e.altKey && key === 'f') this.command('frame');
-                else if (!mod && key === ' ') this.command('search');
-                else if (key === 'escape') { closeMenu(); tooltip(0, 0, null); this.editor.selection.clear(); this.editor.emit('selection'); }
-                else if (!mod && (key === '+' || key === '=')) this.canvas.zoomBy(1.2);
-                else if (!mod && key === '-') this.canvas.zoomBy(1 / 1.2);
+                else if (!mod && key === '/') this.command('find');
+                else if (!mod && key === ' ' && !onButton) this.command('search');
+                else if (key === 'escape') {
+                    tooltip(0, 0, null);
+                    if (this.board.drag) this.board.cancel();
+                    else if (this.editor.selection.size || this.editor.picked.size) this.editor.clearSelection();
+                    else if (this.board.valueFrame) this.closeValue();
+                }
+                else if (!mod && (key === '+' || key === '=')) this.board.zoomAt(1.2);
+                else if (!mod && key === '-') this.board.zoomAt(1 / 1.2);
                 else handled = false;
                 if (handled) {
                     // Not the host's too: VS Code's webview would undo, copy or save the document again
@@ -597,7 +810,7 @@
             for (const [k, v] of Object.entries(m.colors || {})) r.style.setProperty('--tg-' + k, v);
             if (m.font) r.style.setProperty('--tg-font', m.font);
             if (m.fontSize) r.style.setProperty('--tg-font-size', m.fontSize + 'px');
-            if (this.editor) this.renderAll();
+            if (this.editor) this.board.render();
         }
     }
 

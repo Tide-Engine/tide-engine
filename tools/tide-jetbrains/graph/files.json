@@ -1,5 +1,5 @@
 {
   "about": "The editor's files, in the order a page loads them: hosts read this list (tide-vscode's graph.js, tide-jetbrains' TideGraphEditor)",
   "styles": ["style.css"],
-  "scripts": ["src/json.js", "src/schema.js", "src/doc.js", "src/editor.js", "src/lang.js", "src/ui.js", "src/canvas.js", "src/inspector.js", "src/outline.js", "src/search.js", "src/app.js"]
+  "scripts": ["src/json.js", "src/schema.js", "src/doc.js", "src/editor.js", "src/lang.js", "src/ui.js", "src/values.js", "src/pickers.js", "src/cards.js", "src/frames.js", "src/board.js", "src/app.js"]
 }

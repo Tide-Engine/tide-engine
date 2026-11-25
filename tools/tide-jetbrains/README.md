@@ -36,8 +36,9 @@ takes precedence.
 
 ## Graphs
 
-`.tidegraph` files, Tide written as graphs of nodes, open in Tide's graph
-editor (the **Graph** tab, with the JSON in the **Text** tab), checked by
+`.tidegraph` files, Tide made as a board of cards (data) and frames of nodes
+(code), open in Tide's graph editor (the **Graph** tab, with the JSON in the
+**Text** tab), checked by
 `tidels` as they're edited. Edits are commands on the IDE's document, so undo,
 local history and saving work as on any file. **Convert to Tide Graph** on a
 `.tide` file makes a graph of it with `tide graph`; **Show as Tide** opens the

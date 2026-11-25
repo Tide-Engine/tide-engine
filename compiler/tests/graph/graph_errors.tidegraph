@@ -16,6 +16,22 @@
         {"id": 15, "k": "call", "x": -200, "y": 160, "name": "Bonus", "args": [16]},
         {"id": 16, "k": "int", "x": -400, "y": 160, "text": "3"}
       ]}
+    },
+    {
+      "kind": "system",
+      "id": 20,
+      "name": "Half",
+      "params": [{"id": 21, "mode": "mut", "type": "Score", "name": "score"}],
+      "body": {"entry": 22, "nodes": [
+        {"id": 22, "k": "assign", "x": 0, "y": 0, "op": "+=", "value": 23, "next": 26},
+        {"id": 23, "k": "call", "x": -200, "y": 160, "name": "Math.Max", "args": [24, 0]},
+        {"id": 24, "k": "int", "x": -400, "y": 160, "text": "3"},
+        {"id": 26, "k": "if", "x": 200, "y": 0, "then": 27},
+        {"id": 27, "k": "assign", "x": 400, "y": 0, "op": "=", "target": 28, "value": 29},
+        {"id": 28, "k": "member", "x": 200, "y": 80, "object": 25, "member": "points"},
+        {"id": 25, "k": "name", "x": 0, "y": 80, "name": "score"},
+        {"id": 29, "k": "bool", "x": 200, "y": 160, "value": true}
+      ]}
     }
   ]
 }

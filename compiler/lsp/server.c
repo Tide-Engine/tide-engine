@@ -1696,13 +1696,20 @@ static void document_request(lsp_server *s, const char *method, const json *id, 
         } else if (strcmp(method, "tide/graphMembers") == 0) {
             // What a node's value has: the game read again with a '.' after the node, and completion there; and the
             // node's type, read first with the node written and no '.'. The next request reads the graph as it is
+            // ...or what a value of a type has ("type": its name), for a pin nothing reads yet
             const int node = json_int(json_path(params, "node", NULL), 0);
+            const char *of_type = json_str(json_path(params, "type", NULL));
             jbuf type = {0};
-            analysis_set_graph_probe(d->uri, node, false);
-            s->analyzed = false;
-            analyze(s, d->uri);
-            analysis_graph_node_type(node, &type);
-            analysis_set_graph_probe(d->uri, node, true);
+            if (of_type) {
+                jb_string(&type, of_type);
+                analysis_set_graph_type_probe(d->uri, of_type);
+            } else {
+                analysis_set_graph_probe(d->uri, node, false);
+                s->analyzed = false;
+                analyze(s, d->uri);
+                analysis_graph_node_type(node, &type);
+                analysis_set_graph_probe(d->uri, node, true);
+            }
             s->analyzed = false;
             analyze(s, d->uri);
             const int offset = analysis_graph_probe_offset();

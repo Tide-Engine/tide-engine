@@ -1,5 +1,6 @@
 // The graph editor's model, without its UI: the file read and written as tidec writes it, ports from the schema,
-// the wiring rules, copy and paste, undo, and a graph built from nodes that tidec reads as the Tide it should be.
+// the wiring rules, copy and paste, undo, a graph built from nodes that tidec reads as the Tide it should be, and
+// the board's view of a file: cards and frames with their places, pins, and the reads drawn as wires from them.
 //
 //   node --test tools/tide-graph/test/model.test.mjs
 //
@@ -243,6 +244,8 @@ test('undo and redo, and changes made by the host', () => {
     const { doc } = fileWithFunction();
     const editor = new Editor(schema, m => posted.push(m));
     editor.load(doc.text, true);
+    // The graph its edits are in: the function's code
+    editor.slot = { owner: editor.doc.decls[0].id, key: 'body' };
     const start = editor.text;
     editor.edit(d => d.addNode(editor.graph, 'int', 0, 0));
     const one = editor.text;
@@ -347,6 +350,198 @@ test('new declarations and members of every kind are Tide tidec reads', () => {
     assert.match(text, /system System\(\)/);
 });
 
+test('every declaration tidec converts has its place on the board, and comes back byte for byte when moved and undone', () => {
+    let cards = 0, frames = 0;
+    for (const { file, text } of all()) {
+        const doc = Doc.parse(text, schema);
+        for (const item of doc.items()) {
+            if (item.region) continue;
+            assert.equal(typeof item.value.x, 'number', `${file}: ${doc.titleOf(item)} has x`);
+            assert.equal(typeof item.value.y, 'number', `${file}: ${doc.titleOf(item)} has y`);
+            // A card is data, a frame is code: by the schema's kinds
+            const spec = item.accessor ? null : item.member ? schema.memberSpec(item.value.kind) : schema.declSpec(item.value.kind);
+            assert.equal(!!item.frame, item.accessor ? true : !!spec?.body, `${file}: ${item.value.kind}`);
+            if (item.frame) frames++; else cards++;
+        }
+    }
+    assert.ok(cards > 500 && frames > 1000, `${cards} cards, ${frames} frames`);
+    // A move is an edit of x and y in place; undone, the text is what tidec wrote
+    const { text } = all().find(g => g.file.endsWith('arena.tide'));
+    const editor = new Editor(schema, () => {});
+    editor.load(text, true);
+    editor.edit(doc => {
+        for (const item of doc.items()) { item.value.x += 40; item.value.y += 10; }
+    });
+    assert.notEqual(editor.text, text);
+    assert.match(editor.text, /"kind": "function",\n {6}"id": \d+,\n {6}"x": 420,/);
+    editor.undo();
+    assert.equal(editor.text, text);
+});
+
+test('a new card or frame is written with its place where the schema puts it', () => {
+    const doc = Doc.empty(schema);
+    for (const spec of schemaJson.declarations) {
+        const d = doc.newElement(spec.kind, false, spec.keys.includes('name') ? 'Name' + spec.kind : undefined, { x: 12.4, y: 99.6 });
+        doc.decls.push(d);
+        const keys = Object.keys(d);
+        assert.deepEqual(keys, [...keys].sort((a, b) => spec.keys.indexOf(a) - spec.keys.indexOf(b)), spec.kind + ': key order');
+        if (spec.keys.includes('x')) {
+            assert.deepEqual(keys.slice(0, 4), ['kind', 'id', 'x', 'y'], spec.kind);
+            assert.deepEqual([d.x, d.y], [12, 100], 'whole numbers, as tidec writes them');
+        } else {
+            assert.ok(!('x' in d), spec.kind + ' has no place of its own');
+        }
+    }
+    doc.reindex();
+    const items = doc.items();
+    for (const spec of schemaJson.declarations) {
+        const item = items.find(i => i.value.kind === spec.kind && !i.member);
+        assert.ok(item, spec.kind);
+        assert.equal(item.frame ? 'frame' : item.region ? 'region' : 'card', spec.body ? 'frame' : spec.kind === 'namespace' ? 'region' : 'card', spec.kind);
+    }
+    // A type's members with code are frames of their own, titled with their type's name
+    const struct = doc.decls.find(d => d.kind === 'struct');
+    const method = doc.newElement('method', true, 'Area', { x: 400, y: 0 });
+    const property = doc.newElement('property', true, 'Size');
+    struct.members.push(doc.newElement('field', true, 'w'), method, property);
+    doc.reindex();
+    const mine = doc.items().filter(i => i.type === struct);
+    assert.deepEqual(mine.map(i => doc.titleOf(i)), ['Namestruct.Area', 'Namestruct.Size get']);
+    assert.ok(mine.every(i => i.frame));
+    assert.deepEqual([method.x, method.y], [400, 0]);
+});
+
+test('nothing is offered that a kind cannot have', () => {
+    const kinds = kind => schema.memberKinds(kind).map(m => m.kind);
+    assert.ok(!kinds('component').includes('sample'), 'no Sample on a component');
+    assert.ok(!kinds('component').includes('operator'));
+    assert.ok(kinds('input').includes('sample') && kinds('input').includes('sanitize') && kinds('input').includes('predict'));
+    assert.ok(kinds('struct').includes('operator'));
+    assert.ok(kinds('scene').includes('prepare') && !kinds('struct').includes('prepare'));
+    assert.deepEqual(kinds('event'), ['field', 'text']);
+    assert.deepEqual(kinds('enum'), [], 'an enum has choices, not members of a kind');
+    for (const kind of ['sample', 'sanitize', 'predict', 'prepare']) assert.ok(schema.memberSpec(kind).once, kind + ' goes once');
+    assert.ok(!schema.declHas('component', 'typeParams') && schema.declHas('struct', 'typeParams'), 'only what can be generic');
+    assert.ok(!schema.declHas('system', 'returnType') && schema.declHas('function', 'returnType'));
+    assert.ok(!schema.modifiers('component').includes('local') && schema.modifiers('singleton').includes('local'));
+    // Every kind is in a group the Add menu shows, with words for what it is
+    const groups = schemaJson.groups.map(g => g.name);
+    for (const d of schemaJson.declarations) {
+        assert.ok(groups.includes(d.group), `${d.kind} is in a group`);
+        assert.ok(d.title && d.summary, `${d.kind} says what it is`);
+    }
+    assert.deepEqual(schema.declsOf('Data').map(d => d.kind), ['component', 'singleton', 'struct', 'event', 'enum']);
+    assert.equal(schema.keyLabel('typeParams'), 'Generic over');
+    assert.equal(schema.modifierLabel('dev'), 'Dev builds only');
+    assert.equal(schema.modeLabel('mut'), 'changes');
+});
+
+test("a read of a parameter or a local is a wire from its pin, not a node", () => {
+    const { doc, f, g } = fileWithFunction();
+    const pins = doc.pins(f);
+    assert.deepEqual(pins.map(p => [p.name, p.type]), [['a', 'int']]);
+    const read = doc.addNode(g, 'name', 0, 0, { name: 'a' });
+    const loose = doc.addNode(g, 'name', 0, 100, { name: 'a' });
+    const other = doc.addNode(g, 'name', 0, 200, { name: 'MAX' });
+    const sum = doc.addNode(g, 'binary', 200, 0);
+    doc.connect(g, sum.id, ['lhs'], read.id);
+    doc.connect(g, sum.id, ['rhs'], other.id);
+    const v = doc.addNode(g, 'var', 400, 0, { name: 'x' });
+    doc.connect(g, v.id, ['value'], sum.id);
+    doc.setEntry(g, v.id);
+    const local = doc.addNode(g, 'local', 400, 100, { ref: v.id });
+    const ret = doc.addNode(g, 'return', 600, 0);
+    doc.connect(g, ret.id, ['value'], local.id);
+    doc.connect(g, v.id, ['next'], ret.id);
+    // A lambda's own parameter hides the pin of the same name
+    const inner = doc.addNode(g, 'name', 0, 300, { name: 'a' });
+    const lambda = doc.addNode(g, 'lambda', 200, 300, { params: [{ name: 'a' }] });
+    doc.connect(g, lambda.id, ['body'], inner.id);
+    const call = doc.addNode(g, 'call', 400, 300, { name: 'Each', args: [lambda.id] });
+    const run = doc.addNode(g, 'eval', 600, 300);
+    doc.connect(g, run.id, ['value'], call.id);
+
+    let a = doc.analyse(g, pins);
+    assert.deepEqual(a.reads.get(read.id), { pin: 'a' });
+    assert.deepEqual(a.reads.get(local.id), { local: v.id });
+    assert.ok(!a.reads.has(loose.id), 'a name nothing reads stays a node, to be seen and deleted');
+    assert.ok(!a.reads.has(other.id), 'a name of anything else is a node');
+    assert.ok(!a.reads.has(inner.id), "a lambda's parameter isn't the frame's");
+    assert.equal(a.merged.get(run.id), call.id, 'a call one statement runs is drawn as the statement');
+    assert.equal(a.mergedInto.get(call.id), run.id);
+    // Copied, moved or deleted, a node takes the reads that are only its own with it
+    assert.deepEqual([...doc.withHidden(g, new Set([sum.id]), pins)].sort(), [read.id, sum.id].sort());
+    assert.deepEqual([...doc.withHidden(g, new Set([run.id]), pins)].sort(), [call.id, run.id].sort());
+    // Renaming the parameter renames its reads (the lambda's own too, as text would: it's the same name)
+    f.params[0].name = 'count';
+    doc.renamePin(g, 'a', 'count');
+    assert.equal(read.name, 'count');
+    assert.equal(other.name, 'MAX');
+    a = doc.analyse(g, doc.pins(f));
+    assert.deepEqual(a.reads.get(read.id), { pin: 'count' });
+    // A wire taken away takes the read with it; a name of something else stays
+    doc.disconnect(g, sum.id, ['lhs']);
+    doc.disconnect(g, sum.id, ['rhs']);
+    assert.deepEqual(doc.dropUnread(g, [read.id, other.id], doc.pins(f)), [read.id]);
+    assert.ok(!Doc.nodeIn(g, read.id) && Doc.nodeIn(g, other.id));
+    // What a handler, a command and a setter take
+    assert.deepEqual(doc.pins({ trigger: { type: 'Hit', name: 'hit' }, params: [{ id: 9, mode: 'mut', type: 'Score', name: 'score' }, { id: 10, mode: 'with', type: 'Tag' }] }).map(p => p.name), ['hit', 'score']);
+    assert.deepEqual(doc.pins({ payload: [{ id: 3, type: 'int', name: 'card' }], params: [{ id: 4, mode: 'read', type: 'PlayerID', name: 'sender' }] }).map(p => p.from), ['payload', 'param']);
+    assert.deepEqual(doc.pins({ type: 'float' }, { word: 'set' }).map(p => p.name), ['value']);
+    assert.deepEqual(doc.pins({ type: 'float' }, { word: 'get' }), []);
+});
+
+test("a value that is one literal is edited by its type's control", () => {
+    const { classify, typeKind, numberGraph } = G.values;
+    const doc = Doc.empty(schema);
+    assert.deepEqual(classify(undefined), { kind: 'none' });
+    assert.deepEqual(classify(doc.valueGraph('int', '90')), { kind: 'number', text: '90' });
+    assert.deepEqual(classify(doc.valueGraph('bool', 'true')), { kind: 'bool', value: true });
+    assert.deepEqual(classify(doc.valueGraph('string', 'Star catch')), { kind: 'string', text: 'Star catch' });
+    assert.deepEqual(classify(doc.callGraph('Color', ['0.98', '0.75', '0.2'])), { kind: 'call', name: 'Color', texts: ['0.98', '0.75', '0.2'] });
+    assert.deepEqual(classify(doc.memberGraph('Mode', 'Run')), { kind: 'member', type: 'Mode', member: 'Run' });
+    // A negative number is a minus over the literal, as tidec writes it
+    const minus = numberGraph(doc, '-9.81');
+    assert.deepEqual(minus.nodes.map(n => n.k), ['unary', 'float']);
+    assert.deepEqual(classify(minus), { kind: 'number', text: '-9.81' });
+    assert.equal(numberGraph(doc, '12').nodes[0].k, 'int');
+    assert.equal(numberGraph(doc, '90deg').nodes[0].k, 'float');
+    for (const good of ['12', '0xFF', '1.5', '.5', '1e3', '2.5d', '90deg', '-4']) assert.ok(G.values.NUMBER.test(good), good);
+    for (const bad of ['', 'abc', '1..2', '12px', '--1']) assert.ok(!G.values.NUMBER.test(bad), bad);
+    // Anything more than a literal is a graph of its own
+    const more = doc.callGraph('float3', ['1', '2', '3']);
+    more.nodes[1] = doc.newNode('name', -400, 0, { name: 'SPEED' });
+    more.nodes[0].args[0] = more.nodes[1].id;
+    assert.deepEqual(classify(more), { kind: 'graph' });
+    // The control is the type's
+    const e = doc.newElement('enum', false, 'Mode');
+    e.members.push({ id: doc.newId(), name: 'Idle' }, { id: doc.newId(), name: 'Run' });
+    doc.decls.push(e);
+    doc.reindex();
+    assert.deepEqual(typeKind('Mode', doc), { kind: 'enum', members: ['Idle', 'Run'], name: 'Mode' });
+    assert.equal(typeKind('float3', doc).size, 3);
+    assert.equal(typeKind('Color', doc).kind, 'color');
+    assert.equal(typeKind('int', doc).whole, true);
+    assert.equal(typeKind('Transform', doc).kind, 'other');
+    // The graphs it makes are Tide tidec reads
+    const c = doc.newElement('const', false, 'GOLD');
+    c.type = 'Color';
+    c.value = doc.callGraph('Color', ['0.98', '0.75', '0.2']);
+    const s = doc.newElement('component', false, 'Ball');
+    const field = doc.newElement('field', true, 'mode');
+    field.type = 'Mode';
+    field.default = doc.memberGraph('Mode', 'Run');
+    const fall = doc.newElement('field', true, 'fall');
+    fall.default = numberGraph(doc, '-9.81');
+    s.members.push(field, fall);
+    doc.decls.push(c, s);
+    doc.reindex();
+    const text = graphText(doc, 'values');
+    assert.match(text, /const Color GOLD = Color\(0\.98, 0\.75, 0\.2\);/);
+    assert.match(text, /Mode mode = Mode\.Run;/);
+    assert.match(text, /float fall = -9\.81;/);
+});
+
 test('completion items become the nodes the search adds', () => {
     const { entryOf, paramNames } = G.lang;
     assert.deepEqual(paramNames({ detail: 'void Bounce(float by, List<int> xs = [])' }), ['by', 'xs']);
@@ -408,6 +603,22 @@ test("tidels: a graph's text, types, members and diagnostics on its nodes", { sk
         assert.ok(lang.diagnosticsOf(speed.id).length);
         const layout = await server.request('tide/graphLayout', { graph: g });
         assert.deepEqual(Object.keys(layout).map(Number).sort(), g.nodes.map(n => n.id).sort());
+        // The board's layout: a place for every card and frame of the file
+        const card = doc.newElement('component', false, 'Shell');
+        card.members.push(doc.newElement('field', true, 'size'));
+        doc.decls.push(card);
+        doc.reindex();
+        const board = await server.request('tide/graphLayout', { file: doc.root });
+        assert.deepEqual(board[card.id], [0, 0], 'data in a column on the left');
+        assert.deepEqual(board[s.id], [380, 0], 'code beside it');
+        // What tidels offers where a parameter's type is written is what a system can take; at a field's, its types
+        speed.member = 'speed';
+        server.notify('textDocument/didChange', { textDocument: { uri, version: 3 }, contentChanges: [{ text: doc.text }] });
+        await lang.check();
+        const takes = (await lang.completionAt(s.params[0].id)).map(i => i.label);
+        assert.ok(takes.includes('Ball') && takes.includes('Shell'), JSON.stringify(takes));
+        const types = (await lang.completionAt(card.members[0].id)).map(i => i.label);
+        assert.ok(types.includes('float') && !types.includes('Ball'), 'a component is no type for a field');
     } finally {
         await server.stop();
     }

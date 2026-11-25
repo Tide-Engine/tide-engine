@@ -10,7 +10,7 @@ export const repo = path.resolve(root, '../..');
 const require = createRequire(import.meta.url);
 
 // The model's scripts (no UI): what Node can run
-export function load(names = ['src/json.js', 'src/schema.js', 'src/doc.js', 'src/editor.js', 'src/lang.js']) {
+export function load(names = ['src/json.js', 'src/schema.js', 'src/doc.js', 'src/editor.js', 'src/lang.js', 'src/values.js']) {
     for (const name of names) require(path.join(root, name));
     return globalThis.TideGraph;
 }

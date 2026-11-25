@@ -1401,10 +1401,13 @@ target_include_directories(tidec_e2e_managed_store_shards PRIVATE "${PROJECT_SOU
 add_test(NAME tidec_graph_roundtrip
     COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}" "-DROOT=${PROJECT_SOURCE_DIR}"
         "-DLIST=${CMAKE_CURRENT_BINARY_DIR}/graph_roundtrip.txt" -P "${CMAKE_CURRENT_SOURCE_DIR}/graph_roundtrip.cmake")
-# A graph's errors name its nodes: a call of what nothing declares, at the call's node
+# A graph's errors name its nodes: inputs with no wire at their nodes, and around them the rest is still checked: a
+# call of what nothing declares at the call's node, a wrong type after a hole. A hole itself is said once.
 add_test(NAME tidec_graph_errors
     COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}" "-DGRAPH=${CMAKE_CURRENT_SOURCE_DIR}/graph/graph_errors.tidegraph"
-        "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/graph-errors" "-DEXPECT=graph_errors[.]tidegraph:@15: error: [^:]*Bonus"
+        "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/graph-errors"
+        "-DEXPECT=graph_errors[.]tidegraph:@22: error: node 22's 'target' isn't connected.*:@23: error: node 23's argument 2 isn't connected.*:@26: error: node 26's 'cond' isn't connected.*:@15: error: unknown function 'Bonus'.*:@29: error: can't assign bool to int"
+        -DERRORS=5
         -P "${CMAKE_CURRENT_SOURCE_DIR}/graph/graph_errors.cmake")
 # A game written as a graph, with what converted files don't have
 tide_add_game(tidec_e2e_graph_nodes SOURCES graph/graph_nodes.tidegraph NAME game

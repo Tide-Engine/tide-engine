@@ -6450,6 +6450,8 @@ Implemented, awaiting approval (`notes/visual-scripting.md` has the file format)
 - A text node's text is Tide with its inputs wired in: each input's name, where it stands as a name, is the value wired to it. A text statement's locals are its own.
 - `tide graph` turns a `.tide` file into a graph, which holds the same Tide: the same declarations, statements and expressions, with its comments.
 - An error in a graph names the node it's in.
+- An input with no wire is an error at its node, and the rest of the file is still checked around it, so a graph that's half made still has its types and its other errors.
+- A graph's editor is one board per file: data as cards edited in place, each piece of code a frame whose first node says when it runs and what it takes. It offers only what's valid where it's offered, in plain words, types are picked rather than typed, and the Tide a graph stands for is shown when asked for (`docs/tools/visual-scripting.md`).
 
 ### Open
 

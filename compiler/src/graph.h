@@ -76,7 +76,14 @@ typedef struct graph_map {
     VEC(graph_place) places; // Every element with an id, by id
     VEC(int) line_starts;    // Offsets of the written text's lines, from line 1
     bool lowered;            // The source's text is the Tide it stands for (else still the file's JSON)
+    int holes;               // Inputs with no wire, each said and written as GRAPH_HOLE, which the checker says no more of
 } graph_map;
+
+// What's written where an input has no wire: the rest of the file is still read and checked around it.
+#define GRAPH_HOLE "_graphHole"
+// While a hole is being said (a diagnostic's sink is called): the input's key, and its place among the key's
+// items from 0 or -1 for a key that's one wire. NULL otherwise.
+const char *graph_hole_port(int *index);
 
 // Whether a path is a graph's, by its name: ends with .tidegraph.
 bool graph_is_path(const char *path);

@@ -32,8 +32,8 @@ file in it and its subfolders is one game.
 
 ## Graphs
 
-`.tidegraph` files, Tide written as graphs of nodes, open in Tide's graph
-editor, checked by `tidels` as they're edited. The file stays VS Code's text:
+`.tidegraph` files, Tide made as a board of cards (data) and frames of nodes
+(code), open in Tide's graph editor, checked by `tidels` as they're edited. The file stays VS Code's text:
 saving, undo, hot exit and git's diffs are of its JSON (**Reopen Editor With >
 Text Editor** shows it). **Tide: Convert to Tide Graph** makes a graph of a
 `.tide` file with `tide graph`; **Tide: Show as Tide** opens the Tide a graph

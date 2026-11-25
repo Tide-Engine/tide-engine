@@ -84,6 +84,31 @@ function nodes(value, found = []) {
     return found;
 }
 
+test('the types valid at a field, and what a system can take, are what tidels offers there', async () => {
+    const p = page();
+    p.host.receive({ type: 'ready' });
+    const file = JSON.parse(starter);
+    const { text, spans } = await p.ask('tide/graphText', { textDocument: { uri: GRAPH_URI } });
+    // Where an element's type is written: in its stretch of the Tide (after its note, if it has one)
+    const span = id => spans.filter(s => s[2] === id).sort((a, b) => (b[1] - b[0]) - (a[1] - a[0]))[0];
+    const start = (id, type) => span(id)[0] + text.slice(...span(id)).indexOf(type);
+    const labels = async offset => {
+        const c = await p.ask('tide/graphCompletion', { textDocument: { uri: GRAPH_URI }, offset });
+        return (Array.isArray(c) ? c : c.items).map(item => item.label);
+    };
+    // The type picker asks at a field's own start, where its type is written
+    const star = file.decls.find(d => d.kind === 'component' && d.name === 'Star');
+    const field = star.members.find(m => m.kind === 'field');
+    assert.ok(text.slice(...span(field.id)).includes(`${field.type} ${field.name}`), text.slice(...span(field.id)));
+    const types = await labels(start(field.id, field.type));
+    assert.ok(types.includes('float') && types.includes('float2') && types.includes('Color'), JSON.stringify(types.slice(0, 30)));
+    assert.ok(!types.includes('Star') && !types.includes('Basket'), 'a component is no type for a field');
+    // "+ needs…" asks at a parameter of the system
+    const fall = file.decls.find(d => d.kind === 'system' && d.name === 'Fall');
+    const needs = await labels(start(fall.params[0].id, fall.params[0].type));
+    assert.ok(needs.includes('Star') && needs.includes('Basket') && needs.includes('Score') && needs.includes('Time'), JSON.stringify(needs));
+});
+
 test('the starter graph opens checked, with its Tide and where each node is in it', async () => {
     const p = page();
     p.host.receive({ type: 'ready' });
@@ -147,12 +172,19 @@ test('a value\'s members and a hover come from tidels', async () => {
     assert.ok(offered.includes('Math') && offered.includes('star'), JSON.stringify(offered.slice(0, 40)));
 });
 
-test('auto layout places every node of a body', async () => {
+test('auto layout places every node of a body, and every card and frame of the board', async () => {
     const p = page();
     p.host.receive({ type: 'ready' });
-    const fall = JSON.parse(starter).decls.find(d => d.kind === 'system' && d.name === 'Fall');
+    const file = JSON.parse(starter);
+    const fall = file.decls.find(d => d.kind === 'system' && d.name === 'Fall');
     const places = await p.ask('tide/graphLayout', { graph: fall.body });
     for (const n of fall.body.nodes) assert.ok(Array.isArray(places[n.id]) && places[n.id].length === 2, `node ${n.id}`);
+    // The starter's own places are the board tidels lays out: data in a column on the left, code beside it
+    const board = await p.ask('tide/graphLayout', { file });
+    for (const d of file.decls) {
+        assert.deepEqual(board[d.id], [d.x, d.y], `${d.kind} ${d.name ?? ''}`);
+        assert.equal(d.x, d.body ? 380 : 0, `${d.kind} ${d.name ?? ''} is in its column`);
+    }
 });
 
 test('the visitor\'s draft is kept, opened again, and Reset takes it away', async () => {

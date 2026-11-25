@@ -1,8 +1,9 @@
 <script lang="ts">
-    // The graph playground: the IDEs' graph editor (tools/tide-graph, its own
-    // files) in a frame, with this page as its host (playground/graph-host.mjs):
-    // the browser tidels checks the graph, the browser compiler builds it as
-    // game.tidegraph, and the preview runs it as the text playground's does.
+    // The graph playground: the graph editor (tools/tide-graph, its own files:
+    // the board VS Code and JetBrains show) in a frame, with this page as its
+    // host (playground/graph-host.mjs): the browser tidels checks the graph,
+    // the browser compiler builds it as game.tidegraph, and the preview runs
+    // it as the text playground's does.
     import { goto } from '$app/navigation';
     import { onMount } from 'svelte';
     import { GraphHost, GRAPH_URI } from '../../../playground/graph-host.mjs';
@@ -24,7 +25,7 @@
     let editorReady = $state(false);
     let expanded = $state(false);
     let split = $state(70); // The graph's share of the width, in percent
-    let tide = $state<string | null>(null); // Show as Tide's text, while it's shown
+    let tide = $state<string | null>(null); // View as Tide's text, while it's shown
     let editorPage = $state<string | undefined>();
     let previewUrl = $state<string | undefined>();
     let section: HTMLElement;
@@ -106,55 +107,19 @@
         };
         const [styles, scripts] = await Promise.all([Promise.all(files.styles.map(read)), Promise.all(files.scripts.map(read))]);
         const inline = (text: string) => text.replace(/<\/(script|style)/gi, '<\\/$1');
+        // The page is the board, whatever the frame's size: its own styles make a narrow one (a phone's) the
+        // board alone, with its lists opening over it
         const glue = `(function () {
     var origin = ${JSON.stringify(location.origin)};
-    var app = TideGraph.start({ post: function (m) { parent.postMessage({ tideGraph: m }, origin); } });
+    TideGraph.start({ post: function (m) { parent.postMessage({ tideGraph: m }, origin); } });
     addEventListener('message', function (e) {
         if (e.source !== parent || e.origin !== origin || !e.data) return;
         if (e.data.tideGraph) TideGraph.receive(e.data.tideGraph);
-        if (e.data.tideGraphStart) requestAnimationFrame(start);
     });
-    // The first view: the start of the graph shown, at a size to read
-    function start() {
-        var g = app.editor && app.editor.graph;
-        var nodes = g && g.nodes;
-        if (!nodes || !nodes.length) return;
-        var x0 = Math.min.apply(null, nodes.map(function (n) { return Number(n.x) || 0; }));
-        var y0 = Math.min.apply(null, nodes.map(function (n) { return Number(n.y) || 0; }));
-        var c = app.canvas;
-        c.zoom = 0.75;
-        c.pan = { x: 24 - x0 * c.zoom, y: 24 - y0 * c.zoom };
-        c.applyTransform();
-    }
-    // The panes' sizes for the frame's size (the editor's are a whole window's)
-    var narrow = null;
-    function fit() {
-        var now = innerWidth < 640;
-        if (now === narrow) return;
-        narrow = now;
-        app.sizes.left = now ? 0 : Math.max(140, Math.min(220, Math.round(innerWidth * 0.18)));
-        app.sizes.right = now ? 0 : Math.max(200, Math.min(290, Math.round(innerWidth * 0.24)));
-        app.sizes.bottom = now ? 140 : Math.max(110, Math.min(200, Math.round(innerHeight * 0.24)));
-        // A phone's frame is the graph's: the Tide panel waits for its button
-        app.showPanel = !now;
-        app.layoutPanes();
-        if (app.editor) app.renderPanel();
-    }
-    fit();
-    addEventListener('resize', fit);
 })();`;
-        // Phones: the declarations above the graph, what's selected below it.
-        const narrow = `@media (max-width: 639px) {
-    .tg-main { grid-template-columns: 1fr; grid-template-rows: 84px minmax(0, 1fr) 120px; }
-    .tg-main > .tg-split { display: none; }
-    .tg-outline { border-bottom: 1px solid var(--tg-border); }
-    .tg-inspector { border-top: 1px solid var(--tg-border); }
-    .tg-toolbar { flex-wrap: wrap; }
-    .tg-search { width: calc(100vw - 16px); }
-}`;
         return `<!doctype html><html lang="en" class="${theme.dark ? 'tg-dark' : 'tg-light'}"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>Tide graph</title>
-${styles.map(s => `<style>${inline(s)}</style>`).join('\n')}<style>${narrow}</style></head><body>
+${styles.map(s => `<style>${inline(s)}</style>`).join('\n')}</head><body>
 ${scripts.map(s => `<script>${inline(s)}<\/script>`).join('\n')}
 <script>${glue}<\/script></body></html>`;
     }
@@ -173,13 +138,11 @@ ${scripts.map(s => `<script>${inline(s)}<\/script>`).join('\n')}
         host.receive(message);
     }
 
-    // The starter's most telling code on first sight
+    // The starter's most telling code on first sight: the board brings its frame to where it reads
     function reveal() {
         try {
             const fall = JSON.parse(host!.text).decls?.find((d: { kind: string; name: string }) => d.kind === 'system' && d.name === 'Fall');
-            if (!fall) return;
-            toEditor({ type: 'reveal', node: fall.id });
-            editorFrame?.contentWindow?.postMessage({ tideGraphStart: true }, location.origin);
+            if (fall) toEditor({ type: 'reveal', node: fall.id });
         } catch {}
     }
 
@@ -388,7 +351,7 @@ ${scripts.map(s => `<script>${inline(s)}<\/script>`).join('\n')}
     </div>
     <div class="panels" bind:this={panels} style:--split="{split}%">
         <div class="source">
-            <div class="panel-title"><span class="file">game.tidegraph</span><span>Space or a right click adds a node · Show as Tide for its text</span></div>
+            <div class="panel-title"><span class="file">game.tidegraph</span><span>Right-click to add · drag from a pin to wire · ⋯ has View as Tide</span></div>
             <div class="editor">
                 {#if editorPage}
                     <iframe class="graph" bind:this={editorFrame} srcdoc={editorPage} title="Tide graph editor"></iframe>

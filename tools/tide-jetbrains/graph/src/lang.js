@@ -45,16 +45,26 @@
             this.status = 'checking';
             this.emit('status');
             try {
-                const [text, types] = await Promise.all([
+                // An answer that doesn't come (a server that stopped) isn't waited for for ever
+                let timer;
+                const late = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("Tide's language server didn't answer")), 30000); });
+                const [text, types] = await Promise.race([Promise.all([
                     this.request('tide/graphText', this.params()),
                     this.request('tide/graphTypes', this.params()),
-                ]);
+                ]), late]).finally(() => clearTimeout(timer));
                 if (generation !== this.generation) return;
-                this.text = text?.text ?? null;
-                this.spans = Array.isArray(text?.spans) ? text.spans : [];
-                this.types = types && typeof types === 'object' ? types : {};
-                this.status = this.text === null ? 'unavailable' : 'checked';
-                this.why = this.text === null ? 'tidels has no Tide for this graph' : null;
+                if (typeof text?.text === 'string') {
+                    this.text = text.text;
+                    this.spans = Array.isArray(text.spans) ? text.spans : [];
+                    this.types = types && typeof types === 'object' ? types : {};
+                    this.stale = false;
+                } else {
+                    // A graph with something missing (an input nothing is wired to) stands for no Tide yet: tidels
+                    // says what's missing, and what it knew of the graph before is kept to complete with meanwhile
+                    this.stale = true;
+                }
+                this.status = 'checked';
+                this.why = null;
             } catch (e) {
                 if (generation !== this.generation) return;
                 this.status = 'unavailable';
@@ -62,20 +72,60 @@
                 this.text = null;
                 this.spans = [];
                 this.types = {};
+                this.diagnostics = [];
             }
             this.emit('check');
         }
 
         // The diagnostics tidels published for the document, as LSP has them
         setDiagnostics(list) {
-            this.diagnostics = (list || []).map(d => ({
-                severity: d.severity ?? 1,
-                message: d.message ?? '',
-                node: typeof d.data?.node === 'number' ? d.data.node : (typeof d.node === 'number' ? d.node : 0),
-                range: d.range,
-                detail: d.detail,
-            }));
+            // What's shown is the last check's, never kept: each list replaces the one before
+            this.diagnostics = (list || []).map(d => {
+                // The compiler's message, and its note (what to do about it) after it
+                const text = String(d.message ?? '');
+                const at = text.indexOf('\nnote: ');
+                // It's shown on its element, which "node 12's" only names again
+                const said = (at < 0 ? text : text.slice(0, at)).replace(/^node \d+'s /, 'Its ');
+                return {
+                    severity: d.severity ?? 1,
+                    message: said,
+                    note: at < 0 ? '' : text.slice(at + 7).trim(),
+                    node: typeof d.data?.node === 'number' ? d.data.node : (typeof d.node === 'number' ? d.node : 0),
+                    range: d.range,
+                };
+            });
             this.emit('diagnostics');
+        }
+
+        // Without tidels nothing is checked, and nothing it said before stands
+        unavailable(why) {
+            this.generation++;
+            this.status = 'unavailable';
+            this.why = why || null;
+            this.text = null;
+            this.spans = [];
+            this.types = {};
+            this.diagnostics = [];
+            this.emit('check');
+        }
+
+        // What tidels offers where an element's own text starts, which is where its type is written (a field's, a
+        // parameter's, a constant's): the types valid there
+        async completionAt(id) {
+            const s = this.span(id);
+            return s ? this.completion(s[0]) : [];
+        }
+
+        // ...and where a routine's next parameter would go: just inside the parentheses after its name
+        async completionInParams(routine) {
+            const s = this.span(routine.id);
+            if (!s || this.text === null) return [];
+            const first = (routine.params || []).map(p => this.span(p.id)).find(Boolean);
+            if (first) return this.completion(first[0]);
+            const text = this.text.slice(s[0], s[1]);
+            const name = routine.name ? text.indexOf(routine.name + '(') : -1;
+            const open = name >= 0 ? name + routine.name.length : text.indexOf('(');
+            return open < 0 ? [] : this.completion(s[0] + open + 1);
         }
 
         diagnosticsOf(id) {

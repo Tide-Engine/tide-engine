@@ -1,6 +1,7 @@
 // What a .tidegraph holds, from the schema tidels serves (tide/graphSchema, compiler/src/graph_schema.json): every
-// kind of declaration, member and node, their keys in tidec's order, and each node's ports. The editor's add
-// menus, inspector, ports and save order all come from it.
+// kind of declaration, member and node, their keys in tidec's order, each node's ports, and the page's wording: what
+// each kind is called and is for, what it can have, the labels of keys, modifiers and parameter modes, the types to
+// offer first. The Add menu, the cards, the frames, the ports and the save order all come from it.
 (function (G) {
     'use strict';
     const { set } = G.json;
@@ -40,7 +41,38 @@
             for (const n of json.nodes) {
                 this.nodeOrders.set(n.k, [...json.elements.node, ...n.keys, ...json.elements.nodeEnd]);
             }
+            // The wording and the rules of the experience (notes/visual-scripting.md, The experience: one board)
+            this.groups = json.groups || [];
+            this.keyInfo = json.keyInfo || {};
+            this.modifierInfo = json.modifierInfo || {};
+            this.paramModeInfo = json.paramModeInfo || {};
+            this.typePicker = json.typePicker || { common: [], builders: [] };
         }
+
+        // What the page calls a key, a modifier and a way of taking a parameter, and what it says of each
+        keyLabel(key) { return this.keyInfo[key]?.label || key; }
+        keyHelp(key) { return this.keyInfo[key]?.help || ''; }
+        keyAdvanced(key) { return !!this.keyInfo[key]?.advanced; }
+        modifierLabel(m) { return this.modifierInfo[m]?.label || m; }
+        modifierHelp(m) { return this.modifierInfo[m]?.help || ''; }
+        modeLabel(mode) { return this.paramModeInfo[mode]?.label || mode; }
+        modeHelp(mode) { return this.paramModeInfo[mode]?.help || ''; }
+        modeAdvanced(mode) { return !!this.paramModeInfo[mode]?.advanced; }
+        // A parameter taken this way is a filter: it has no value to wire (only with, without)
+        modeIsFilter(mode) { return mode === 'with' || mode === 'without'; }
+
+        // Whether a kind of declaration (or member) is code: a frame on the board, where the rest are cards
+        isCode(kind, member) { return !!(member ? this.memberByKind.get(kind) : this.declByKind.get(kind))?.body; }
+        // The kinds of member a kind of declaration can have, as their specs
+        memberKinds(kind) {
+            return (this.declByKind.get(kind)?.memberKinds || []).map(k => this.memberByKind.get(k)).filter(Boolean);
+        }
+        // The declarations of a group, in the schema's order
+        declsOf(group) { return this.declarations.filter(d => d.group === group); }
+        // Whether a kind's keys have one: nothing is offered that its kind can't have
+        declHas(kind, key) { return !!this.declByKind.get(kind)?.keys.includes(key); }
+        memberHas(kind, key) { return !!this.memberByKind.get(kind)?.keys.includes(key); }
+        help(k) { return this.byK.get(k)?.help || ''; }
 
         node(k) { return this.byK.get(k); }
         isExec(k) { return !!this.byK.get(k)?.exec; }

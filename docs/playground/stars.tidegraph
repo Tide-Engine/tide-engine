@@ -5,6 +5,8 @@
     {
       "kind": "settings",
       "id": 1,
+      "x": 0,
+      "y": 0,
       "comment": "Catch the falling stars with the basket: move the pointer, drag a finger, or press A and D.",
       "entries": [
         {
@@ -22,6 +24,8 @@
     {
       "kind": "const",
       "id": 4,
+      "x": 0,
+      "y": 166,
       "comment": "How fast the first stars fall; each catch adds a little",
       "name": "FALL",
       "type": "float",
@@ -35,6 +39,8 @@
     {
       "kind": "const",
       "id": 6,
+      "x": 0,
+      "y": 306,
       "comment": "Half the basket's width",
       "name": "WIDTH",
       "type": "float",
@@ -48,6 +54,8 @@
     {
       "kind": "const",
       "id": 8,
+      "x": 0,
+      "y": 446,
       "name": "GOLD",
       "type": "Color",
       "value": {
@@ -63,6 +71,8 @@
     {
       "kind": "const",
       "id": 13,
+      "x": 0,
+      "y": 586,
       "name": "TEAL",
       "type": "Color",
       "value": {
@@ -75,10 +85,12 @@
         ]
       }
     },
-    {"kind": "scene", "id": 18, "name": "Main", "members": []},
+    {"kind": "scene", "id": 18, "x": 0, "y": 726, "name": "Main", "members": []},
     {
       "kind": "component",
       "id": 19,
+      "x": 0,
+      "y": 866,
       "name": "Basket",
       "members": [
         {
@@ -104,6 +116,8 @@
     {
       "kind": "component",
       "id": 26,
+      "x": 0,
+      "y": 1032,
       "name": "Star",
       "members": [
         {
@@ -121,6 +135,8 @@
     {
       "kind": "singleton",
       "id": 30,
+      "x": 0,
+      "y": 1224,
       "name": "Score",
       "members": [
         {"kind": "field", "id": 31, "type": "int", "name": "caught"},
@@ -131,6 +147,8 @@
     {
       "kind": "singleton",
       "id": 34,
+      "x": 0,
+      "y": 1442,
       "comment": "Where this machine's pointer is in the field, which its input sends",
       "name": "Aim",
       "modifiers": ["local"],
@@ -142,6 +160,8 @@
     {
       "kind": "input",
       "id": 37,
+      "x": 0,
+      "y": 1634,
       "name": "Controls",
       "members": [
         {
@@ -166,6 +186,8 @@
         {
           "kind": "sample",
           "id": 43,
+          "x": 380,
+          "y": 0,
           "name": "Sample",
           "params": [
             {"id": 44, "type": "Devices", "name": "devices"},
@@ -215,6 +237,8 @@
     {
       "kind": "handler",
       "id": 79,
+      "x": 380,
+      "y": 1250,
       "name": "Arrive",
       "trigger": {"type": "PlayerJoined", "name": "joined"},
       "params": [],
@@ -233,6 +257,8 @@
     {
       "kind": "system",
       "id": 86,
+      "x": 380,
+      "y": 1714,
       "name": "Steer",
       "params": [
         {"id": 87, "mode": "read", "type": "Controls", "name": "controls"},
@@ -275,6 +301,8 @@
     {
       "kind": "system",
       "id": 117,
+      "x": 380,
+      "y": 2626,
       "comment": "A new star at the top every so often",
       "name": "Drop",
       "params": [
@@ -321,6 +349,8 @@
     {
       "kind": "system",
       "id": 151,
+      "x": 380,
+      "y": 4068,
       "name": "Fall",
       "params": [
         {"id": 152, "mode": "mut", "type": "Star", "name": "star"},
@@ -395,6 +425,8 @@
     {
       "kind": "view",
       "id": 215,
+      "x": 380,
+      "y": 5688,
       "name": "Field",
       "params": [
         {"id": 216, "mode": "read", "type": "Devices", "name": "devices"},
@@ -498,6 +530,8 @@
     {
       "kind": "view",
       "id": 307,
+      "x": 380,
+      "y": 9338,
       "name": "Stars",
       "params": [
         {"id": 308, "mode": "read", "type": "Star", "name": "star"}
@@ -532,6 +566,8 @@
     {
       "kind": "view",
       "id": 330,
+      "x": 380,
+      "y": 10314,
       "name": "Baskets",
       "params": [
         {"id": 331, "mode": "read", "type": "Basket", "name": "basket"}

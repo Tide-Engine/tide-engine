@@ -186,12 +186,14 @@ bool graph_layout_json(const graph_json *g, sb *out)
 // The board: a file's declarations, each a card (data) or a frame (code)
 
 enum { CARD_W = 300, CARD_ROW = 26, CARD_HEAD = 48, ENTRY_W = 320, FRAME_HEAD = 48, FRAME_PAD = 40, LANE_GAP = 80, CARD_GAP = 40,
-       FRAME_GAP = 80 };
+       FRAME_GAP = 80, CARD_ROWS_MOST = 24, LANE_SHORTEST = 1200 };
 
-typedef struct board {
-    graph_board *out;
-    int data_y, code_y;
-} board;
+// A card or a frame of the file, in the file's order, and its size
+typedef struct board_item {
+    int id, w, h;
+    bool frame;
+} board_item;
+typedef VEC(board_item) board_items;
 
 static str key_str(const graph_json *v, const char *key)
 {
@@ -220,9 +222,9 @@ static bool one_of(const str kind, const char *const *kinds)
 }
 
 // A frame: its entry (what the code takes) on the left, its nodes as they're placed to the right of it
-static void place_frame(board *b, const graph_json *owner)
+static void measure_frame(board_items *items, const graph_json *owner)
 {
-    int right = 0, bottom = 0;
+    int left = 0, top = 0, right = 0, bottom = 0; // Values are placed to the left of what reads them: below 0 too
     const graph_json *body = graph_json_get(owner, "body");
     const graph_json *nodes = body ? graph_json_get(body, "nodes") : NULL;
     for (int i = 0; nodes && nodes->kind == GJ_ARRAY && i < nodes->count; i++) {
@@ -237,18 +239,30 @@ static void place_frame(board *b, const graph_json *owner)
         graph_layout_measure(&size, widest);
         const graph_json *x = graph_json_get(n, "x"), *y = graph_json_get(n, "y");
         const int nx = x && x->kind == GJ_NUMBER ? (int)x->number : 0, ny = y && y->kind == GJ_NUMBER ? (int)y->number : 0;
+        if (nx < left) left = nx;
+        if (ny < top) top = ny;
         if (nx + size.w > right) right = nx + size.w;
         if (ny + size.h > bottom) bottom = ny + size.h;
     }
+    right -= left;
+    bottom -= top;
     const int entry_h = 60 + CARD_ROW * (count_of(owner, "params") + count_of(owner, "payload") + 1);
-    const int h = FRAME_HEAD + (bottom > entry_h ? bottom : entry_h) + FRAME_PAD;
-    const graph_board_place p = {id_of(owner), CARD_W + LANE_GAP, b->code_y};
-    if (p.id) vec_push(*b->out, p);
-    (void)right;
-    b->code_y += h + FRAME_GAP;
+    const board_item item = {id_of(owner), FRAME_PAD + ENTRY_W + LANE_GAP + right + FRAME_PAD,
+                             FRAME_HEAD + (bottom > entry_h ? bottom : entry_h) + FRAME_PAD, true};
+    if (item.id) vec_push(*items, item);
 }
 
-static void place_decls(board *b, const graph_json *decls)
+// A prefab's rows: each entity, and each component of it
+static int prefab_rows(const graph_json *entity)
+{
+    if (!entity || entity->kind != GJ_OBJECT) return 0;
+    int rows = 1 + count_of(entity, "components");
+    const graph_json *children = graph_json_get(entity, "children");
+    for (int i = 0; children && children->kind == GJ_ARRAY && i < children->count; i++) rows += prefab_rows(children->items[i]);
+    return rows;
+}
+
+static void measure_decls(board_items *items, const graph_json *decls)
 {
     static const char *const code[] = {"function", "audio", "system", "view", "handler", "command", "frag", "vert", "compute", NULL};
     static const char *const member_code[] = {"method", "operator", "sample", "sanitize", "predict", "prepare", NULL};
@@ -256,39 +270,92 @@ static void place_decls(board *b, const graph_json *decls)
         const graph_json *d = decls->items[i];
         const str kind = key_str(d, "kind");
         if (str_eq_c(kind, "namespace")) {
-            place_decls(b, graph_json_get(d, "decls"));
+            measure_decls(items, graph_json_get(d, "decls"));
             continue;
         }
         if (one_of(kind, code)) {
-            place_frame(b, d);
+            measure_frame(items, d);
             continue;
         }
-        // A card: a row for each field, member, entry or line of text
-        int rows = count_of(d, "members") + count_of(d, "entries");
+        // A card: a row for each field, member, entry, entity or line of text, and for its note and its attributes
+        int rows = count_of(d, "members") + count_of(d, "entries") + prefab_rows(graph_json_get(d, "root"));
         const str text = key_str(d, "text");
         for (int k = 0; k < text.len; k++) rows += text.ptr[k] == '\n';
-        if (rows > 24) rows = 24;
-        const graph_board_place p = {id_of(d), 0, b->data_y};
-        if (p.id) vec_push(*b->out, p);
-        b->data_y += CARD_HEAD + CARD_ROW * (rows + 2) + CARD_GAP;
+        if (rows > CARD_ROWS_MOST) rows = CARD_ROWS_MOST;
+        rows += (key_str(d, "comment").len > 0) + (count_of(d, "attributes") > 0);
+        const board_item card = {id_of(d), CARD_W, CARD_HEAD + CARD_ROW * (rows + 2), false};
+        if (card.id) vec_push(*items, card);
         // ...and a frame for each member with code of its own
         const graph_json *members = graph_json_get(d, "members");
         for (int m = 0; members && members->kind == GJ_ARRAY && m < members->count; m++) {
             const graph_json *member = members->items[m];
             const str mk = key_str(member, "kind");
-            if (one_of(mk, member_code)) place_frame(b, member);
+            if (one_of(mk, member_code)) measure_frame(items, member);
             const graph_json *accessors = graph_json_get(member, "accessors");
-            for (int a = 0; accessors && accessors->kind == GJ_ARRAY && a < accessors->count; a++) place_frame(b, accessors->items[a]);
+            for (int a = 0; accessors && accessors->kind == GJ_ARRAY && a < accessors->count; a++) measure_frame(items, accessors->items[a]);
         }
     }
 }
 
+// Frames in rows like a page's words, in the file's order, in a shape about as wide as a screen; the cards in
+// columns to their left, as tall as the frames are together. Returns the frames' rows' height, placing them from
+// `left` (not at all for `out` NULL).
+static int place_frames(const board_items *items, const int wide, const int left, graph_board *out)
+{
+    int x = 0, y = 0, row = 0;
+    for (int i = 0; i < items->count; i++) {
+        const board_item *f = &items->items[i];
+        if (!f->frame) continue;
+        if (x > 0 && x + f->w > wide) {
+            x = 0;
+            y += row + FRAME_GAP;
+            row = 0;
+        }
+        const graph_board_place p = {f->id, left + x, y};
+        if (out) vec_push(*out, p);
+        x += f->w + FRAME_GAP;
+        if (f->h > row) row = f->h;
+    }
+    return y + row;
+}
+
 void graph_layout_board(const graph_json *file, graph_board *out)
 {
-    board b = {out, 0, 0};
+    board_items items = {0};
     graph_schema_hold(true);
-    place_decls(&b, graph_json_get(file, "decls"));
+    measure_decls(&items, graph_json_get(file, "decls"));
     graph_schema_hold(false);
+    // The frames' rows are as wide as makes the whole about 16:10, and no narrower than the widest frame
+    double area = 0;
+    int widest = 0, cards_h = 0;
+    for (int i = 0; i < items.count; i++) {
+        const board_item *item = &items.items[i];
+        if (!item->frame) {
+            cards_h += item->h + CARD_GAP;
+            continue;
+        }
+        area += (double)(item->w + FRAME_GAP) * (item->h + FRAME_GAP);
+        if (item->w > widest) widest = item->w;
+    }
+    int wide = widest;
+    while ((double)wide * wide < area * 1.6) wide += 400;
+    const int frames_h = place_frames(&items, wide, 0, NULL);
+    const int lane_h = frames_h > LANE_SHORTEST ? frames_h : LANE_SHORTEST;
+    int columns = 0;
+    for (int i = 0, y = 0; i < items.count; i++) {
+        const board_item *card = &items.items[i];
+        if (card->frame) continue;
+        if (!columns) columns = 1;
+        if (y > 0 && y + card->h > lane_h) {
+            columns++;
+            y = 0;
+        }
+        const graph_board_place p = {card->id, (columns - 1) * (CARD_W + CARD_GAP), y};
+        vec_push(*out, p);
+        y += card->h + CARD_GAP;
+    }
+    (void)cards_h;
+    place_frames(&items, wide, columns ? columns * (CARD_W + CARD_GAP) - CARD_GAP + LANE_GAP : 0, out);
 }
 
 bool graph_layout_board_json(const graph_json *file, sb *out)

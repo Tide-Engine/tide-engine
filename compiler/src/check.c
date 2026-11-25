@@ -7,6 +7,7 @@
 #include "asset_files.h"
 #include "lexer.h" // What defined(NAME) and define(NAME, default) read of the build's symbols
 #include "build_report.h"
+#include "graph.h"
 #include "humanoid_assets.h"
 #include "assets.h"
 #include "model_metadata.h"
@@ -13372,6 +13373,10 @@ static bool check_devices_use(checker *c, const loc at)
 
 static type check_name(checker *c, expr *e)
 {
+    if (str_eq_c(e->name, GRAPH_HOLE)) { // A graph's input with no wire, which its lowering said (graph.h)
+        const source *src = diag_source(e->at.file);
+        if (src && src->graph && src->graph->holes) return T_ERR;
+    }
     stmt *local = find_local(c, e->name);
     if (local) {
         e->bind = BIND_LOCAL;

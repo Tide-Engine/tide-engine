@@ -129,3 +129,6 @@ void analysis_set_graph_probe(const char *uri, int node, bool dot);
 int analysis_graph_probe_offset(void);
 // The type of node `node`'s value, as a JSON string, or null.
 void analysis_graph_node_type(int node, jbuf *out);
+// ...or of a type by its name, as the document's code would write it: what a value of it has, for a pin nothing
+// reads yet. The same offset and the same reset after.
+void analysis_set_graph_type_probe(const char *uri, const char *type);
