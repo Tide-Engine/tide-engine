@@ -166,6 +166,7 @@
     // Shows `content` at a screen point, or under `anchor`. Returns { el, close }.
     function popup({ x = 0, y = 0, anchor = null, className = 'tg-popup', content, onClose, keep = false }) {
         if (!keep) closePopups();
+        tooltip(0, 0, null);
         const box = el('div.' + className.split(' ').join('.'), { onpointerdown: e => e.stopPropagation(), oncontextmenu: e => { e.preventDefault(); e.stopPropagation(); } }, content);
         document.body.append(box);
         const entry = {
@@ -269,15 +270,20 @@
 
     // A list to pick from with a search box that narrows it as it's typed: the Add menu, the node search, the type
     // picker, jump-to. Entries are { title, detail, summary, group, color, tag, keywords, disabled, why }; `more` adds
-    // entries later (what tidels answers), under `status` meanwhile. Enter takes the first match.
+    // entries later (what tidels answers), under `status` meanwhile. Enter takes the first match. An entry with
+    // `drill` opens to more (a value's fields): its arrow, the right arrow key or a typed '.' calls `onDrill(entry)`,
+    // and Backspace in an empty box `onBack()`; `reset({ entries, more, title, placeholder })` shows another list in
+    // the same popup. An entry with `typed` is shown only once something is typed, one with `untyped` only before.
     function picker({ x = 0, y = 0, anchor = null, placeholder = 'Search…', title = null, entries = [], more = null, status = null, onPick, onClose,
-        empty = 'Nothing by that name', typed = '', keep = false, width = null, className = '', footer = null, free = null }) {
+        empty = 'Nothing by that name', typed = '', keep = false, width = null, className = '', footer = null, free = null, onDrill = null, onBack = null }) {
         const input = el('input.tg-input.tg-picker-input', { type: 'text', placeholder, spellcheck: 'false', autocomplete: 'off' });
         input.value = typed;
         const list = el('div.tg-picker-list', { role: 'listbox' });
         const statusEl = el('div.tg-picker-status');
-        const box = el('div.tg-picker-box', null,
-            title ? el('div.tg-picker-title', { text: title }) : null, input, statusEl, list, footer ? el('div.tg-picker-footer', null, footer) : null);
+        const titleEl = el('div.tg-picker-title', { text: title || '' });
+        titleEl.style.display = title ? '' : 'none';
+        const box = el('div.tg-picker-box', null, titleEl, input, statusEl, list, footer ? el('div.tg-picker-footer', null, footer) : null);
+        let asked = 0; // Which list's later entries are awaited
         let all = entries.slice();
         let shown = [];
         let chosen = 0;
@@ -291,12 +297,15 @@
         };
         const fill = () => {
             const text = input.value.trim();
-            let scored = all.map((e, i) => ({ e, i, r: Math.max(rank(e.title, text), text && e.keywords ? Math.min(2, rank(e.keywords, text)) : 0) || (text && e.group && rank(e.group, text) >= 4 ? 0.5 : 0) }))
+            let scored = all.filter(e => (text ? !e.untyped : !e.typed))
+                .map((e, i) => ({ e, i, r: Math.max(rank(e.title, text), text && e.keywords ? Math.min(2, rank(e.keywords, text)) : 0) || (text && e.group && rank(e.group, text) >= 4 ? 0.5 : 0) }))
                 .filter(s => s.r > 0);
             if (text) scored.sort((a, b) => b.r - a.r || a.i - b.i);
             shown = scored.map(s => s.e).slice(0, 300);
-            const made = free ? free(text) : null;
-            if (made) shown.unshift(made);
+            // What's typed as a value of its own (a number, text): first, or after the names it is the start of
+            const made = free ? free(text, shown) : null;
+            if (made && made.last) shown.push(made);
+            else if (made) shown.unshift(made);
             chosen = Math.min(chosen, Math.max(0, shown.length - 1));
             statusEl.textContent = asking ? (status || 'Asking tidels…') : '';
             statusEl.style.display = statusEl.textContent ? 'block' : 'none';
@@ -323,16 +332,29 @@
                 el('span.tg-picker-text', null,
                     el('span.tg-picker-line', null, el('span.tg-picker-name', { text: e.title }), e.detail ? el('span.tg-picker-detail', { text: e.detail }) : null),
                     e.summary ? el('span.tg-picker-summary', { text: e.summary }) : null),
-                e.tag ? el('span.tg-picker-tag', { text: e.tag }) : null);
+                e.tag ? el('span.tg-picker-tag', { text: e.tag }) : null,
+                e.note ? el('span.tg-picker-note', { text: e.note }) : null,
+                e.drill && onDrill ? el('span.tg-picker-drill', { text: '›', title: 'What it has', onclick: ev => { ev.stopPropagation(); onDrill(e); } }) : null);
                 list.append(row);
             });
             if (!shown.length && !asking) list.append(el('div.tg-picker-none', { text: typeof empty === 'function' ? empty(text) : empty }));
             list.querySelector('.tg-chosen')?.scrollIntoView?.({ block: 'nearest' });
         };
-        input.addEventListener('input', () => { chosen = 0; fill(); });
+        input.addEventListener('input', () => {
+            // A '.' after a name goes into what it has, as it's written: wobble.
+            if (onDrill && input.value.endsWith('.') && input.value.length > 1) {
+                const name = input.value.slice(0, -1).trim().toLowerCase();
+                const into = shown.find(e => e.drill && String(e.title).toLowerCase() === name) || (shown[chosen]?.drill ? shown[chosen] : null);
+                if (into) { onDrill(into); return; }
+            }
+            chosen = 0;
+            fill();
+        });
         input.addEventListener('keydown', e => {
             e.stopPropagation();
-            if (e.key === 'ArrowDown') { e.preventDefault(); chosen = Math.min(shown.length - 1, chosen + 1); fill(); }
+            if (e.key === 'ArrowRight' && onDrill && shown[chosen]?.drill && input.selectionStart === input.value.length) { e.preventDefault(); onDrill(shown[chosen]); }
+            else if (e.key === 'Backspace' && onBack && input.value === '') { e.preventDefault(); onBack(); }
+            else if (e.key === 'ArrowDown') { e.preventDefault(); chosen = Math.min(shown.length - 1, chosen + 1); fill(); }
             else if (e.key === 'ArrowUp') { e.preventDefault(); chosen = Math.max(0, chosen - 1); fill(); }
             else if (e.key === 'Enter') { e.preventDefault(); pick(shown[chosen]); }
             else if (e.key === 'Escape') { e.preventDefault(); p.close(); }
@@ -345,19 +367,36 @@
         input.focus({ preventScroll: true });
         // What was typed to open it stays, to be typed on from
         if (typed) input.setSelectionRange(typed.length, typed.length); else input.select();
-        if (more) {
-            Promise.resolve(more).then(extra => {
+        const later = promise => {
+            const mine = ++asked;
+            asking = !!promise;
+            if (!promise) return;
+            Promise.resolve(promise).then(extra => {
+                if (mine !== asked || !popups.includes(p)) return;
                 asking = false;
-                if (!popups.includes(p)) return;
                 const known = new Set(all.map(e => e.key ?? e.title));
                 const add = (extra || []).filter(e => e && !known.has(e.key ?? e.title));
                 // What tidels knows goes where its entries ask to: before the rest, or after
                 all = [...add.filter(e => e.first), ...all, ...add.filter(e => !e.first)];
                 fill();
-            }, () => { asking = false; if (popups.includes(p)) fill(); });
-        }
+            }, () => { if (mine === asked && popups.includes(p)) { asking = false; fill(); } });
+        };
+        later(more);
         p.input = input;
         p.refill = next => { if (next) all = next; fill(); };
+        // Another list in the same popup: what an entry opened to, or the list before it
+        p.reset = ({ entries: next = [], more: nextMore = null, title: nextTitle = null, placeholder: nextHint }) => {
+            all = next.slice();
+            chosen = 0;
+            input.value = '';
+            if (nextHint !== undefined) input.placeholder = nextHint;
+            titleEl.textContent = nextTitle || '';
+            titleEl.style.display = nextTitle ? '' : 'none';
+            later(nextMore);
+            fill();
+            p.replace();
+            input.focus({ preventScroll: true });
+        };
         return p;
     }
 

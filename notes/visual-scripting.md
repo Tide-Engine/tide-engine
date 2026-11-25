@@ -476,15 +476,28 @@ Tide panel and the per-graph canvas are gone (`canvas.js`, `inspector.js`, `outl
   the board", namespace and uses are in the board's "…" menu. A value that's more than a literal opens as a
   small graph beside its card. A phone gets the board alone.
 
-Known rough edges after this round (seen in its screenshots, mine to sort with the owner's next look):
-converted code reads like a syntax tree (a node per `.member`, "arg 1" for a call's arguments, a type's name as a
-node feeding a static call); in a big function the wires from the entry's pins cross the whole frame; settings'
-entry names are free text; an enum declared in another file gets "+ value" rather than its choices; a prefab's
-card is basic; attribute arguments, generic rules, "Replaces" and a handler's `Changed<>` path are small text
-forms. The page still has small tables of words of its own (`FLAG_WORDS`, `inputWord`, the picker's group
-titles) that the schema now has (`flagInfo`, `portInfo`, `typePicker.groups`), marks an unwired pin from the
-message's words rather than `data.port`, and falls back to the file's declarations for a pin nothing reads
-rather than `tide/graphMembers` by type.
+**Round two (2026-11-25)**: "Simple values are in the input" below, built as in the Unity window, so the two
+read alike. The story is one node ("Set what wobble.phase += wobble.frequency", no wires). An input's row holds
+a typed number, tick or text, a chip (a name or path in its type's colour, each part clickable), a vector's
+boxes, a colour's swatch, a pin, or "pick…"; pins of inputs show while a wire is dragged. The value picker is
+titled "What goes in 'value'? A float." and lists a value to type, what this code has (each opening to its
+fields by arrow or a typed `.`), the game's constants and functions, "Work it out…" (which wraps what was in
+the input as the new node's first input), then the engine's namespaces; what doesn't fit is left out, with
+"Show what doesn't fit too"; "Nothing" empties the input. Nodes have no caps kind labels; a method is titled
+with its object; arguments are named from `tide/graphCalls`, and the "+" for another carries the next
+parameter's name and goes when all are given. Holes are on their row from `data.port`/`data.index` as "Pick what
+goes in 'what'". "In this game" is `tide/graphNames`'; an enum of another file gets its choices
+(`tide/graphMembers {"name"}`). The page's own word tables are gone for the schema's. Its fold is checked
+against tidec's layout over every converted file by a model test (it fails when `graph_layout_fold` changes
+without the page). `docs/playground/stars.tidegraph` is laid out again and lowers to the same Tide.
+
+Not there, or the page's own guess: an engine enum (`Anchor`, `Filter`) has no choice control on a card (it
+isn't in `graphNames`); Esc closes the picker where Unity's goes back; "what fits" is the page's approximation
+(`valueControls` families and `graphNames`; a function's result is read out of completion's detail text; a
+binary operator's other side is only a hint); Return's empty value row is hidden when the frame has no result
+type; settings' entry names are free text; a prefab's card is basic; attribute arguments, generic rules,
+"Replaces" and a handler's `Changed<>` path are small text forms. Wanted of tidels for these: what a function
+gives as a field of its completion item, and whether a type fits a place.
 
 - VS Code (`tide-vscode/src/graph.js`): a CustomTextEditorProvider, so the document is VS Code's (undo, save,
   dirty, hot exit, diffs); requests go through the extension's language client, whose document selector now has
@@ -499,7 +512,7 @@ rather than `tide/graphMembers` by type.
   before each public export as `textmate/` is (notes/editors.md).
 - Tests: `tide_graph_editor` (ctest; in the root CMakeLists beside `tide_vscode_adapter`, as `tools/` is
   configured alone by `tide_cli_ide`, with no tidec):
-  17 model tests (byte-for-byte round trip of the converted graphs with their places; every wire tidec writes
+  19 model tests (the fold as tidec's over every converted file; byte-for-byte round trip of the converted graphs with their places; every wire tidec writes
   is a port the schema gives; ports and key orders of every kind; wiring rules; paste remapping; undo with host
   changes; a graph built from nodes checked with tidec and compiled; every declaration's place on the board;
   nothing offered that a kind can't have; a read of a parameter or a local a wire and no node), 5 browser tests
@@ -636,7 +649,7 @@ them. A statement reads as a sentence on one node: **Set** `wobble.phase` `+=` `
 Later the same day, after the Unity window's pictures of it (a `float2(16, 14)` was still a node wired into
 "position"): **a vector or a colour made of numbers alone is in the input too**, as the type's own control
 (`inline.numbers`: a `call` named one of `numbersOf` whose arguments are all numbers shown there). And the
-words a Set's operator has are the schema's (`operators.assignInfo`: `+=` "goes up by", `=` "becomes"); a call's
+words a Set's operator has are the schema's (`operators.assignInfo`: `+=` "goes up by", `=` "becomes"; `alone` on `++` and `--`, which take no value); a call's
 list label is "argument". `tide/graphMembers` takes `{"name": "Math"}` as well: what the name itself has after
 a `.`, an enum's choices or a namespace's functions (`{"type"}` is what a *value* of the type has, which for
 those is nothing).

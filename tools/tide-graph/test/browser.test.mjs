@@ -1,7 +1,8 @@
 // The editor in a headless, muted Chrome or Edge, driven with real pointer and key events: the story of a first
-// file (an empty board, a component with its fields, a system over it, a wire from its parameter's pin, an error on
-// its element that goes when it's fixed), the Add menu, what a card offers, a wire that can't leave its frame, and
-// a thousand-node file that opens and pans.
+// file (an empty board, a component with its fields, a system over it, one node whose inputs are picked: Set
+// wobble.phase += wobble.frequency, a path changed from one of its parts, something worked out as a node wired in,
+// an input with nothing in it said on its row, an error on its element that goes when it's fixed), the Add menu,
+// what a card offers, a wire that can't leave its frame, and a thousand-node file that opens and pans.
 //
 //   node --test tools/tide-graph/test/browser.test.mjs
 //
@@ -30,6 +31,23 @@ const dot = (p, expression) => p.evaluate(`(() => { const e = ${expression}; con
 const focused = (p, suffix) => p.until(`document.activeElement?.dataset?.fk?.endsWith(${JSON.stringify(suffix)})`, `the focus on a ${suffix}`);
 const entries = p => p.evaluate(`[...document.querySelectorAll('.tg-popup:last-of-type .tg-picker-item')].map(i => ({ title: i.querySelector('.tg-picker-name').textContent, name: i.dataset.name || '' }))`);
 const groups = p => p.evaluate(`[...document.querySelectorAll('.tg-popup:last-of-type .tg-picker-group span:first-child')].map(g => g.textContent)`);
+// The open picker's entries by the group each is under: { title: group }
+const grouped = p => p.evaluate(`(() => { const out = {}; let group = ''; for (const e of document.querySelector('.tg-popup:last-of-type .tg-picker-list').children) { if (e.classList.contains('tg-picker-group')) group = e.firstChild.textContent; else if (e.classList.contains('tg-picker-item')) out[e.querySelector('.tg-picker-name').textContent] = group; } return out; })()`);
+// An input's row of the frame's nodes by what it's called, and what the frame draws
+const row = label => `[...document.querySelectorAll('.tg-frame .tg-node:not(.tg-entry) .tg-port.tg-in')].find(x => x.querySelector('.tg-port-label')?.textContent === ${JSON.stringify(label)})`;
+const drawn = p => p.evaluate(`({ nodes: document.querySelectorAll('.tg-frame .tg-node:not(.tg-entry)').length, wires: document.querySelectorAll('.tg-frame .tg-wires path.tg-wire-data').length })`);
+const picker = (p, label) => p.until(`!!document.querySelector('.tg-value-picker')`, label || 'the value picker');
+const picked = (p, label) => p.until(`!document.querySelector('.tg-value-picker')`, label || 'the value picker closed');
+// From the frame's arrow, a Set node
+async function addSet(p) {
+    const arrow = await p.center('.tg-entry-start .tg-dot');
+    await p.drag(arrow, { x: arrow.x + 300, y: arrow.y + 6 });
+    await p.until(`!!document.querySelector('.tg-node-search')`, 'the node search for the arrow');
+    await p.type('Set');
+    await p.until(`document.querySelector('.tg-node-search .tg-chosen .tg-picker-name')?.textContent === 'Set'`, 'Set offered');
+    await p.key('Enter');
+    await p.until(`document.querySelectorAll('.tg-frame .tg-node.tg-exec').length === 1`, 'a Set node');
+}
 
 // A component with two fields made through its card: its name typed over, Enter for the first field, its type
 // picked, its value typed, Enter for the next
@@ -91,7 +109,7 @@ describe('the graph editor in a browser', { skip }, () => {
         for (const f of [...files.scripts, ...files.styles]) assert.ok(fs.existsSync(path.join(root, f)), f);
     });
 
-    test('an empty file: a component with fields through its card, a system through its entry, a wire from a pin, an error that goes', async () => {
+    test('an empty file: a component with fields through its card, a system through its entry, one node with its inputs picked, an error that goes', async () => {
         // A host whose tidels checks and finds nothing, until the test says what it found
         const quiet = { notify() {}, request: async method => (method === 'tide/graphText' ? { text: '', spans: [] } : method === 'tide/graphTypes' ? {} : null) };
         const p = await openEditor(b, { text: EMPTY, schema, scratch, server: quiet });
@@ -117,7 +135,8 @@ describe('the graph editor in a browser', { skip }, () => {
         await p.clickOn('.tg-card .tg-row:nth-child(2) .tg-type');
         await p.until(`!!document.querySelector('.tg-type-picker')`, 'the type picker');
         // The common types first, then how to make one of others, then the rest (a component is no field's type)
-        assert.deepEqual(await groups(p), ['Common', 'In this file', 'Made of others', 'More']);
+        const titles = schema.typePicker.groups;
+        assert.deepEqual(await groups(p), [titles.common, titles.file, titles.builders, titles.rest], "the schema's group titles");
         const offered = (await entries(p)).map(e => e.title);
         for (const t of schema.typePicker.common) assert.ok(offered.includes(t), `${t} is offered first`);
         assert.deepEqual(offered.slice(0, schema.typePicker.common.length), schema.typePicker.common);
@@ -156,23 +175,115 @@ describe('the graph editor in a browser', { skip }, () => {
         await p.evaluate(`[...document.querySelectorAll('.tg-menu-item')].find(i => i.textContent.startsWith('changes')).click()`);
         await p.until(`app.editor.doc.root.decls[1].params[0].mode === 'mut'`, 'it changes it');
 
-        // A wire dragged from the parameter's pin and dropped in the frame: the component's fields are offered
+        // What happens: from the arrow, one node. Its inputs say "pick…"; nothing is wired
+        await addSet(p);
+        assert.equal(await text(p, '.tg-frame .tg-node.tg-exec .tg-node-title'), schema.nodes.find(n => n.k === 'assign').title, "the node says what it does in the schema's words, not a kind in capitals");
+        assert.equal(await p.evaluate(`document.querySelectorAll('.tg-node-kind').length`), 0);
+        assert.deepEqual(await p.evaluate(`[...document.querySelectorAll('.tg-frame .tg-node.tg-exec .tg-port.tg-in:not(.tg-port-exec)')].map(r => [r.querySelector('.tg-port-label')?.textContent ?? '', r.querySelector('.tg-pick')?.textContent ?? ''])`),
+            [[schema.portInfo.target.label, 'pick…'], ['', 'pick…']], 'what it changes by its schema word; its value after how it changes it');
+        // what: wobble > phase, picked from what this code has
+        await p.evaluate(`${row('what')}.querySelector('.tg-pick').click()`);
+        await picker(p);
+        assert.deepEqual(await grouped(p), { wobble: 'What this code has' }, 'what Set changes is something this code has: nothing typed, nothing worked out');
+        await p.type('wob');
+        await p.key('ArrowRight');
+        await p.until(`document.querySelector('.tg-value-picker .tg-picker-title')?.textContent === 'wobble: which of it?'`, "wobble's fields");
+        await p.until(`document.querySelectorAll('.tg-value-picker .tg-picker-item').length === 4`, 'the list, once what it has was asked');
+        assert.deepEqual((await entries(p)).map(e => e.title), ['frequency', 'phase', 'wobble', '‹ Back'], 'its fields first, then all of it, then the way back');
+        await p.type('pha');
+        await p.key('Enter');
+        await picked(p);
+        d = await doc(p);
+        let nodes = d.decls[1].body.nodes;
+        const set = nodes.find(n => n.k === 'assign');
+        let target = nodes.find(n => n.id === set.target);
+        assert.deepEqual([target.k, target.member, nodes.find(n => n.id === target.object).name], ['member', 'phase', 'wobble']);
+        assert.deepEqual(await drawn(p), { nodes: 1, wires: 0 }, 'the value is in the input: no node, no wire');
+        assert.equal(await p.evaluate(`${row('what')}.querySelector('.tg-path').textContent`), 'wobble.phase');
+        // value: the parameter's pin dragged onto the input fills it with the parameter
         const pin = await p.center('.tg-entry-row .tg-pin .tg-dot');
-        await p.drag(pin, { x: pin.x + 160, y: pin.y + 80 });
-        await p.until(`!!document.querySelector('.tg-node-search')`, 'the node search');
-        assert.deepEqual((await entries(p)).slice(0, 2).map(e => e.title), ['frequency', 'phase'], "the value's own fields first");
+        await p.drag(pin, await dot(p, `document.querySelector('.tg-frame .tg-node.tg-exec .tg-pick')`));
+        await p.until(`app.editor.doc.root.decls[1].body.nodes.length === 4`, 'the read of the parameter');
+        assert.deepEqual(await drawn(p), { nodes: 1, wires: 0 });
+        const valueRow = `document.querySelector('.tg-frame .tg-node.tg-exec .tg-port.tg-in:has(.tg-op)')`;
+        assert.equal(await p.evaluate(`${valueRow}.querySelector('.tg-path').textContent`), 'wobble');
+        // ...and its field from there: the name clicked, "wobble." typed, the field picked
+        await p.evaluate(`${valueRow}.querySelector('.tg-path-part').click()`);
+        await picker(p);
+        await p.type('wobble.');
+        await p.until(`document.querySelector('.tg-value-picker .tg-picker-title')?.textContent === 'wobble: which of it?'`, 'a typed dot goes into what it has');
         await p.type('freq');
         await p.key('Enter');
-        await p.until(`app.editor.doc.root.decls[1].body.nodes.length === 2`, 'the field, and the read of the parameter');
+        await picked(p);
+        await p.until(`${valueRow}.querySelector('.tg-path').textContent === 'wobble.frequency'`, 'wobble.frequency in the input');
+        assert.equal((await doc(p)).decls[1].body.nodes.length, 5, 'Set wobble.phase = wobble.frequency: five nodes in the file');
+        assert.deepEqual(await drawn(p), { nodes: 1, wires: 0 }, 'one on the board');
+        // How Set changes it: its sign, said in words, and picked from a menu of what each does
+        const info = schema.operators.assignInfo;
+        assert.deepEqual(await p.evaluate(`(() => { const b = document.querySelector('.tg-frame .tg-node.tg-exec .tg-op'); return [b.textContent, b.title]; })()`), ['=', `It ${info['='].label}: pick another way`]);
+        await p.clickOn('.tg-frame .tg-node.tg-exec .tg-op');
+        await p.until(`!!document.querySelector('.tg-menu-item[data-name="op:+="]')`, 'the ways to change it');
+        assert.deepEqual(await p.evaluate(`[...document.querySelectorAll('.tg-menu .tg-menu-label')].map(l => l.textContent)`), schema.operators.assign.map(o => info[o].label));
+        await p.evaluate(`document.querySelector('.tg-menu-item[data-name="op:+="]').click()`);
+        await p.until(`document.querySelector('.tg-frame .tg-node.tg-exec .tg-op')?.textContent === '+='`, 'Set wobble.phase += wobble.frequency');
+        assert.equal(await p.evaluate(`[...document.querySelectorAll('.tg-frame .tg-node.tg-exec :is(.tg-node-title, .tg-port-label, .tg-path, .tg-op)')].map(e => e.textContent).join(' ')`),
+            'Set what wobble.phase += wobble.frequency', 'the node reads as what it does');
+        // Over a name in an input, the entry's row it comes from lights, and its other reads
+        const chip = await dot(p, `${valueRow}.querySelector('.tg-path-dot')`);
+        await p.move(chip.x, chip.y);
+        await p.until(`document.querySelectorAll('.tg-path.tg-lit').length === 2 && !!document.querySelector('.tg-entry-row.tg-lit')`, 'the reads of wobble lit with its row');
+        // A part of the path is clicked to change it from there
+        await p.evaluate(`[...${valueRow}.querySelectorAll('.tg-path-part')].find(b => b.textContent === 'frequency').click()`);
+        await picker(p);
+        assert.equal(await text(p, '.tg-value-picker .tg-picker-title'), 'wobble: which of it?');
+        await p.type('pha');
+        await p.key('Enter');
+        await picked(p);
+        await p.until(`${valueRow}.querySelector('.tg-path').textContent === 'wobble.phase'`, 'the path changed');
+        assert.equal((await doc(p)).decls[1].body.nodes.length, 5, "the old path's nodes went");
+        // A number typed in the picker is the value; then it's edited where it is
+        await p.evaluate(`${valueRow}.querySelector('.tg-path-part').click()`);
+        await picker(p);
+        await p.type('3');
+        assert.deepEqual((await entries(p))[0], { title: '3', name: '' });
+        await p.key('Enter');
+        await picked(p);
+        await p.until(`${valueRow}.querySelector('.tg-inline-number')?.value === '3'`, 'the number in its input');
+        await p.clickOn('.tg-frame .tg-node.tg-exec .tg-inline-number', { count: 2 });
+        await p.type('-0.5');
+        await p.key('Enter');
+        await p.until(`app.editor.doc.root.decls[1].body.nodes.some(n => n.k === 'unary')`, 'a negative number: a minus over it');
+        assert.deepEqual((await doc(p)).decls[1].body.nodes.map(n => n.k).sort(), ['assign', 'float', 'member', 'name', 'unary']);
+        assert.deepEqual(await drawn(p), { nodes: 1, wires: 0 });
+        // Work it out: Multiply is a node wired in, with what was there as its first input and its second to pick
+        await p.evaluate(`${valueRow}.querySelector('.tg-row-pick').click()`);
+        await picker(p);
+        assert.equal((await grouped(p))['Work it out…'], 'Work it out');
+        await p.type('Multiply');
+        await p.key('Enter');
+        await p.until(`document.querySelectorAll('.tg-frame .tg-node.tg-data').length === 1`, 'a Multiply node');
+        assert.deepEqual(await drawn(p), { nodes: 2, wires: 1 });
         d = await doc(p);
-        const nodes = d.decls[1].body.nodes;
-        const member = nodes.find(n => n.k === 'member');
-        const read = nodes.find(n => n.k === 'name');
-        assert.deepEqual([member.member, member.object, read.name], ['frequency', read.id, 'wobble']);
-        // The read is the wire from the pin: one node drawn, one wire
-        assert.equal(await p.evaluate(`document.querySelectorAll('.tg-frame .tg-node:not(.tg-entry)').length`), 1);
-        assert.equal(await p.evaluate(`document.querySelectorAll('.tg-frame .tg-wires path.tg-wire-data').length`), 1);
-        assert.equal(await p.evaluate(`JSON.parse(document.querySelector('.tg-frame .tg-wires path.tg-wire-data').dataset.wire).node`), member.id);
+        nodes = d.decls[1].body.nodes;
+        const times = nodes.find(n => n.k === 'binary');
+        assert.deepEqual([times.op, nodes.find(n => n.id === times.lhs).k, times.rhs ?? null, nodes.find(n => n.k === 'assign').value], ['*', 'unary', null, times.id]);
+        // An input's pin shows only while a wire is dragged, as somewhere to drop it
+        assert.equal(await p.evaluate(`getComputedStyle(${row('what')}.querySelector('.tg-dot')).visibility`), 'hidden');
+        assert.equal(await p.evaluate(`document.querySelector('.tg-frame .tg-node.tg-data .tg-op-title').selectedOptions[0].textContent`), 'Multiply  *', 'an operator is titled by what it is called');
+        assert.deepEqual(await p.evaluate(`[...document.querySelectorAll('.tg-frame .tg-node.tg-data .tg-port-label')].map(l => l.textContent)`), [schema.portInfo.lhs.label, schema.portInfo.rhs.label]);
+
+        // An input with nothing in it: the compiler says which by its key, the page says it on that row in its words
+        await p.until(`document.querySelector('.tg-status').textContent === 'Checked'`, 'the check before');
+        const hole = { severity: 1, message: `node ${times.id}'s 'rhs' isn't connected`, data: { node: times.id, port: 'rhs' }, range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } } };
+        await p.evaluate(`TideGraph.receive(${JSON.stringify({ type: 'diagnostics', diagnostics: [hole] })})`);
+        await p.until(`!!${row('b')}?.classList.contains('tg-has-error')`, 'the hole on its input');
+        assert.equal(await p.evaluate(`${row('b')}.dataset.problem`), "EPick what goes in 'b'");
+        assert.equal(await p.evaluate(`document.querySelectorAll('.tg-node.tg-has-error').length`), 0, 'on the input, not the whole node');
+        await p.clickOn('.tg-status');
+        await p.until(`document.querySelectorAll('.tg-problems-popup .tg-problem').length === 1`, 'the list of problems');
+        assert.equal(await text(p, '.tg-problems-popup .tg-problem-message'), "Pick what goes in 'b'");
+        await p.key('Escape');
+        await p.evaluate(`TideGraph.receive({ type: 'diagnostics', diagnostics: [] })`);
 
         // A wire can't leave its frame, and says why
         const before = p.text;
@@ -189,24 +300,26 @@ describe('the graph editor in a browser', { skip }, () => {
         await p.key('Enter');
         await p.until(`app.editor.doc.root.decls[1].params[0].name === 'w'`, 'the parameter renamed');
         assert.equal((await doc(p)).decls[1].body.nodes.find(n => n.k === 'name').name, 'w');
+        assert.equal(await p.evaluate(`${row('what')}.querySelector('.tg-path').textContent`), 'w.phase');
 
-        // A problem is on its element, with the compiler's words and its note, and goes with the next check
-        const problem = { severity: 1, message: "Wobble has no field 'frequency'\nnote: did you mean 'phase'?", data: { node: member.id }, range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } } };
+        // A problem is on its element, with the compiler's words and its note, and goes with the next check: one
+        // about a value shown in an input is on that input
+        target = (await doc(p)).decls[1].body.nodes.find(n => n.k === 'member');
+        const problem = { severity: 1, message: "Wobble has no field 'phase'\nnote: did you mean 'frequency'?", data: { node: target.id }, range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } } };
         const onField = { severity: 1, message: "unknown type 'Nope'", data: { node: wobble.members[1].id }, range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } } };
-        await p.until(`document.querySelector('.tg-status').textContent === 'Checked'`, 'the check before');
         await p.evaluate(`TideGraph.receive(${JSON.stringify({ type: 'diagnostics', diagnostics: [problem, onField] })})`);
-        await p.until(`!!document.querySelector('.tg-node.tg-has-error[data-id="${member.id}"]')`, 'the error on its node');
+        await p.until(`!!${row('what')}?.classList.contains('tg-has-error')`, 'the error on the input that shows it');
         assert.ok(await p.evaluate(`!!document.querySelector('.tg-row.tg-has-error[data-id="${wobble.members[1].id}"]')`), 'the error on its row: ' + await p.evaluate(`JSON.stringify([...document.querySelectorAll('.tg-has-error')].map(e => e.className + ' ' + e.dataset.id))`));
         assert.match(await text(p, '.tg-status'), /2 problems/);
         assert.equal(await text(p, `.tg-frame [data-badge="${spin.id}"]`), '1');
-        assert.equal(await p.evaluate(`document.querySelector('.tg-node.tg-has-error').dataset.problem`), "EWobble has no field 'frequency'\ndid you mean 'phase'?");
+        assert.equal(await p.evaluate(`${row('what')}.dataset.problem`), "EWobble has no field 'phase'\ndid you mean 'frequency'?");
         await p.clickOn('.tg-status');
         await p.until(`document.querySelectorAll('.tg-problems-popup .tg-problem').length === 2`, 'the list of problems');
-        assert.equal(await text(p, '.tg-problems-popup .tg-problem-note'), "did you mean 'phase'?");
+        assert.equal(await text(p, '.tg-problems-popup .tg-problem-note'), "did you mean 'frequency'?");
         await p.key('Escape');
         // The next check has one of them no more: it's gone from its element, at once
         await p.evaluate(`TideGraph.receive(${JSON.stringify({ type: 'diagnostics', diagnostics: [onField] })})`);
-        assert.equal(await p.evaluate(`document.querySelectorAll('.tg-node.tg-has-error').length`), 0);
+        assert.equal(await p.evaluate(`document.querySelectorAll('.tg-frame .tg-has-error').length`), 0);
         assert.match(await text(p, '.tg-status'), /1 problem$/);
         await p.evaluate(`TideGraph.receive({ type: 'diagnostics', diagnostics: [] })`);
         assert.equal(await p.evaluate(`document.querySelectorAll('.tg-has-error').length`), 0);
@@ -313,9 +426,13 @@ describe('the graph editor in a browser', { skip }, () => {
         assert.ok(c.drawn > 10 && c.drawn < c.nodes / 2, `their nodes alone: ${JSON.stringify(c)}`);
         assert.ok(c.wires > 10 && c.bad === 0, `wires are drawn: ${JSON.stringify(c)}`);
         assert.ok(opened < 20000, `opened in ${opened} ms`);
-        // A parameter's reads are wires from its pin: fewer nodes drawn than the frame has
-        const first = await p.evaluate(`(() => { const f = [...app.board.frames.values()].find(f => f.mode === 'near'); return { has: f.graph.nodes.length, hidden: f.analysis.reads.size, merged: f.analysis.merged.size, views: f.views.size - 1 }; })()`);
+        // Simple values are in the inputs that read them: fewer nodes drawn than the frame has, and far fewer wires
+        const first = await p.evaluate(`(() => { const f = [...app.board.frames.values()].find(f => f.mode === 'near'); return { has: f.graph.nodes.length, hidden: f.analysis.folded.size, merged: f.analysis.merged.size, views: f.views.size - 1, chips: f.el.querySelectorAll('.tg-path, .tg-inline-number').length, wires: f.el.querySelectorAll('path.tg-wire-data').length }; })()`);
         assert.ok(first.hidden > 0 && first.views === first.has - first.hidden - first.merged, JSON.stringify(first));
+        assert.ok(first.chips > first.wires, `more values in inputs than wires: ${JSON.stringify(first)}`);
+        // Far away, a frame's blocks are the nodes that are drawn near: the same count, by tidec's sizes
+        const far = await p.evaluate(`(() => { const f = [...app.board.frames.values()].find(f => f.mode === 'near'); return { sizes: f.sizes.size, views: f.views.size - 1 + f.analysis.merged.size }; })()`);
+        assert.equal(far.sizes, far.views, JSON.stringify(far));
         // Panning down the board draws other frames and lets go of the first
         const was = await p.evaluate(`[...app.board.frames.values()].filter(f => f.mode === 'near').map(f => f.item.id).join()`);
         const t = Date.now();
@@ -359,7 +476,7 @@ describe('the graph editor in a browser', { skip }, () => {
         const clip = p.posted.filter(m => m.type === 'clipboardWrite').at(-1);
         assert.ok(clip && JSON.parse(clip.text).tidegraphClip === 1);
         const settle = (await doc(p)).decls.find(d => d.name === 'Settle');
-        assert.equal(JSON.parse(clip.text).nodes.length, settle.body.nodes.length, 'the reads of pins go with the nodes that read them');
+        assert.equal(JSON.parse(clip.text).nodes.length, settle.body.nodes.length, 'the values shown in inputs go with the nodes that read them');
         await p.evaluate(`app.command('paste', { text: ${JSON.stringify(clip.text)} })`);
         await p.until(`app.editor.doc.root.decls.find(d => d.name === 'Settle').body.nodes.length === ${settle.body.nodes.length * 2}`, 'the pasted nodes');
         const ids = (await doc(p)).decls.find(d => d.name === 'Settle').body.nodes.map(n => n.id);
@@ -371,11 +488,11 @@ describe('the graph editor in a browser', { skip }, () => {
 
     const tidec = findProgram('tidec', 'TIDE_TIDEC');
     const tidels = findProgram('tidels', 'TIDE_TIDELS', path.dirname(tidec));
-    test('checked by tidels: the types and needs it offers, an error on its node, gone when fixed', { skip: !tidels && 'no tidels built' }, async () => {
+    test("checked by tidels: the types, needs and values it offers, a call's arguments by their names, a hole on its input, an error gone when fixed", { skip: !tidels && 'no tidels built' }, async () => {
         const game = path.join(scratch, 'game');
         fs.mkdirSync(game, { recursive: true });
         // What the rest of the game has, in Tide: the editor offers it where it's valid
-        fs.writeFileSync(path.join(game, 'main.tide'), 'enum Mood { Calm, Wild }\ncomponent Shell { float size; }\nscene Main { }\n');
+        fs.writeFileSync(path.join(game, 'main.tide'), 'enum Mood { Calm, Wild }\ncomponent Shell { float size; }\nconst int LIMIT = 9;\nint Twice(int amount) { return amount * 2; }\nvoid Shout(int loud) { }\nscene Main { }\n');
         const file = path.join(game, 'play.tidegraph');
         fs.writeFileSync(file, EMPTY);
         const server = startServer(tidels, game);
@@ -393,10 +510,18 @@ describe('the graph editor in a browser', { skip }, () => {
             const types = (await entries(p)).map(e => e.title);
             assert.ok(types.includes('float') && types.includes('Mood'));
             assert.ok(!types.includes('Shell') && !types.includes('Wobble'), 'a component is no type for a field');
+            // "In this game" is what the game itself declares (tide/graphNames); the engine's own are with the rest
+            let under = await grouped(p);
+            assert.equal(under.Mood, schema.typePicker.groups.game);
+            assert.equal(under.Random, schema.typePicker.groups.rest, JSON.stringify(under));
+            assert.ok(!Object.entries(under).some(([name, group]) => group === schema.typePicker.groups.game && name !== 'Mood'), JSON.stringify(under));
             await p.type('Moo');
             await p.key('Enter');
             await p.until(`app.editor.doc.root.decls[0].members[1].type === 'Mood'`, 'the enum picked');
             await p.until(`document.querySelector('.tg-status').textContent === 'Checked'`, 'checked with the enum');
+            // Its value is one of the enum's choices, though the enum is declared in another file (tide/graphMembers by name)
+            await p.until(`!!document.querySelector('.tg-card .tg-row:nth-child(2) .tg-value-enum')`, "the enum's own control");
+            assert.deepEqual(await p.evaluate(`[...document.querySelector('.tg-card .tg-row:nth-child(2) .tg-value-enum').options].map(o => o.value).filter(Boolean)`), ['Calm', 'Wild']);
             // What a system needs: the file's component, and the game's
             await p.clickOn('.tg-add');
             await p.until(`!!document.querySelector('.tg-add-menu')`, 'the Add menu');
@@ -409,46 +534,78 @@ describe('the graph editor in a browser', { skip }, () => {
             const needs = (await entries(p)).map(e => e.title);
             assert.ok(needs.includes('Wobble') && needs.includes('Shell') && needs.includes('Transform'), JSON.stringify(needs));
             assert.ok(!needs.includes('Mood'), 'an enum is nothing a system takes');
+            under = await grouped(p);
+            assert.deepEqual([under.Wobble, under.Shell, under.Transform], [schema.typePicker.groups.file, schema.typePicker.groups.game, schema.typePicker.groups.rest]);
             await p.type('Wobble');
             await p.key('Enter');
             await p.until(`document.querySelectorAll('.tg-entry-row').length === 1`, 'the parameter');
-            // wobble.frequency kept in a local: from the pin, the field; from its value, a local; from the arrow, it runs
-            const pin = await p.center('.tg-entry-row .tg-pin .tg-dot');
-            await p.drag(pin, { x: pin.x + 140, y: pin.y + 70 });
-            await p.until(`!!document.querySelector('.tg-node-search')`, 'the node search');
+            await p.clickOn('.tg-entry-row .tg-mode');
+            await p.until(`!!document.querySelector('.tg-menu')`, 'the ways to take it');
+            await p.evaluate(`[...document.querySelectorAll('.tg-menu-item')].find(i => i.textContent.startsWith('changes')).click()`);
+            await p.until(`app.editor.doc.root.decls[1].params[0].mode === 'mut'`, 'it changes it');
+            // Set wobble.frequency = Twice(wobble.frequency): what, from what this code has, with its fields by tidels
+            await addSet(p);
+            await p.until(`document.querySelectorAll('.tg-port.tg-has-error').length === 2`, 'both inputs said to be empty');
+            assert.equal(await p.evaluate(`${row('what')}.dataset.problem`), "EPick what goes in 'what'", "tidels's hole (data.port) in the page's words");
+            await p.evaluate(`${row('what')}.querySelector('.tg-pick').click()`);
+            await picker(p);
+            await p.type('wob');
+            await p.key('ArrowRight');
+            await p.until(`[...document.querySelectorAll('.tg-value-picker .tg-picker-name')].some(n => n.textContent === 'frequency')`, "wobble's fields");
             await p.type('freq');
             await p.key('Enter');
-            await p.until(`document.querySelectorAll('.tg-frame .tg-node.tg-data').length === 1`, 'the field node');
-            const out = await dot(p, `document.querySelector('.tg-frame .tg-node.tg-data .tg-port.tg-out .tg-dot')`);
-            await p.drag(out, { x: out.x - 30, y: out.y - 90 });
-            await p.until(`!!document.querySelector('.tg-node-search')`, 'what to do with the value');
-            await p.type('Local');
+            await picked(p);
+            await p.until(`app.lang.text?.includes('wobble.frequency = ')`, 'half made, and still read');
+            await p.until(`document.querySelectorAll('.tg-port.tg-has-error').length === 1 && document.querySelector('.tg-status').textContent === '1 problem'`, 'one input left to pick');
+            // The type tidels found colours the name, and says what its value takes
+            const set = (await doc(p)).decls[1].body.nodes.find(n => n.k === 'assign');
+            assert.equal(await p.evaluate(`app.lang.typeOf(${set.target})`), 'int');
+            await p.evaluate(`document.querySelector('.tg-frame .tg-node.tg-exec .tg-pick').click()`);
+            await picker(p);
+            await p.until(`[...document.querySelectorAll('.tg-value-picker .tg-picker-name')].some(n => n.textContent === 'Twice(amount)')`, "the game's functions");
+            assert.equal(await text(p, '.tg-value-picker .tg-picker-title'), "What goes in 'value'? An int.");
+            under = await grouped(p);
+            const game = schema.typePicker.groups.game, rest = schema.typePicker.groups.rest;
+            assert.equal(under.wobble, 'What this code has');
+            assert.deepEqual([under.LIMIT, under['Twice(amount)'], under.Math], [game, game, rest], JSON.stringify(under));
+            assert.ok(!('Shout(loud)' in under), 'a function that gives nothing is no value');
+            assert.ok(!('Mood' in under) && !('Wobble { … }' in under), "what isn't a number isn't offered where one goes");
+            assert.equal(under["Show what doesn't fit too"], 'Or', 'unless asked for');
+            assert.equal(under['Work it out…'], 'Work it out');
+            await p.type('Twice');
             await p.key('Enter');
-            await p.until(`document.querySelectorAll('.tg-frame .tg-node.tg-exec').length === 1`, 'a local');
-            await p.key('Escape');
-            const arrow = await p.center('.tg-entry-start .tg-dot');
-            const into = await dot(p, `document.querySelector('.tg-frame .tg-node.tg-exec .tg-port.tg-in.tg-port-exec .tg-dot')`);
-            await p.drag(arrow, into);
-            await p.until(`app.editor.doc.root.decls[1].body.entry > 0`, 'the local runs first');
-            await p.until(`app.lang.text?.includes('= wobble.frequency;')`, 'the Tide it stands for');
-            assert.match(await p.evaluate('app.lang.text'), /system Spin\(Wobble wobble\) \{\s*var \w+ = wobble\.frequency;\s*\}/);
-            // The pin and the wire take their type's colour once tidels has said it
-            const member = (await doc(p)).decls[1].body.nodes.find(n => n.k === 'member');
-            assert.equal(await p.evaluate(`app.lang.typeOf(${member.id})`), 'int');
-            // A field that isn't there: tidec's error on its node with its note, counted on the chip
-            const name = `[...document.querySelectorAll('.tg-frame .tg-node.tg-data .tg-node-name')].find(i => i.value.startsWith('frequenc'))`;
-            let at = await dot(p, name);
-            await p.click(at.x, at.y, { count: 2 });
-            await p.type('frequenc');
+            await p.until(`document.querySelectorAll('.tg-frame .tg-node.tg-data').length === 1`, 'the call, a node wired in');
+            assert.deepEqual(await drawn(p), { nodes: 2, wires: 1 });
+            // Its argument is called what the function calls it (tide/graphCalls), and the hole on it says so
+            await p.until(`!!${row('amount')}`, "the argument by its parameter's name");
+            await p.until(`${row('amount')}.dataset.problem === "EPick what goes in 'amount'"`, 'the hole on the argument');
+            assert.equal(await p.evaluate(`document.querySelectorAll('.tg-frame .tg-node.tg-data .tg-port-add').length`), 0, 'every parameter has its argument: none to add');
+            await p.evaluate(`${row('amount')}.querySelector('.tg-pick').click()`);
+            await picker(p);
+            assert.equal(await text(p, '.tg-value-picker .tg-picker-title'), "What goes in 'amount'? An int.");
+            await p.type('wobble.');
+            await p.until(`document.querySelector('.tg-value-picker .tg-picker-title')?.textContent === 'wobble: which of it?'`, "wobble's fields again");
+            await p.until(`[...document.querySelectorAll('.tg-value-picker .tg-picker-name')].some(n => n.textContent === '‹ Back')`, 'the list, once tidels answered');
+            assert.deepEqual((await entries(p)).map(e => e.title), ['frequency', "Show what doesn't fit too", '‹ Back'], 'only what fits: phase is a Mood');
             await p.key('Enter');
-            await p.until(`!!document.querySelector('.tg-node.tg-has-error[data-id="${member.id}"]')`, "tidels's error on the node");
-            assert.match(await p.evaluate(`document.querySelector('.tg-node.tg-has-error').dataset.problem`), /^EWobble has no field 'frequenc'\ndid you mean 'frequency'\?$/);
+            await picked(p);
+            await p.until(`app.lang.text?.includes('wobble.frequency = Twice(wobble.frequency);')`, 'the Tide it stands for');
+            assert.match(await p.evaluate('app.lang.text'), /system Spin\(mut Wobble wobble\) \{\s*wobble\.frequency = Twice\(wobble\.frequency\);\s*\}/);
+            await p.until(`!document.querySelector('.tg-has-error')`, 'nothing left to pick');
+            // A field that isn't there (as a change made in the text would leave it): tidec's error on the input that
+            // shows it, with its note, counted on the chip
+            const member = (await doc(p)).decls[1].body.nodes.find(n => n.id === set.target);
+            await p.evaluate(`app.edit(d => { d.get(${member.id}).member = 'frequenc'; })`);
+            await p.until(`!!${row('what')}?.classList.contains('tg-has-error')`, "tidels's error on the input");
+            assert.match(await p.evaluate(`${row('what')}.dataset.problem`), /^EWobble has no field 'frequenc'\ndid you mean 'frequency'\?$/);
             assert.match(await text(p, '.tg-status'), /1 problem/);
-            // Fixed, it goes: nothing of it stays on screen
-            at = await dot(p, name);
-            await p.click(at.x, at.y, { count: 2 });
+            // Fixed by picking the field again from that part of the path: nothing of it stays on screen
+            await p.evaluate(`[...${row('what')}.querySelectorAll('.tg-path-part')].find(b => b.textContent === 'frequenc').click()`);
+            await picker(p);
+            await p.until(`[...document.querySelectorAll('.tg-value-picker .tg-picker-name')].some(n => n.textContent === 'frequency')`, "wobble's fields to pick from");
             await p.type('frequency');
             await p.key('Enter');
+            await picked(p);
             await p.until(`!document.querySelector('.tg-has-error') && !document.querySelector('.tg-status').textContent.includes('problem')`, 'the error gone once fixed');
             assert.equal(await p.evaluate(`document.querySelectorAll('.tg-badge-error').length`), 0, 'no count of errors left on its frame');
             // Tidy up: the frame's nodes by tidels's layout, the board's cards and frames by its board

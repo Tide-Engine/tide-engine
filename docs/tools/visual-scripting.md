@@ -47,15 +47,15 @@ A member with code of its own, a method or an input's `Sample`, is a frame on th
 
 ### Picking a type
 
-A type is never typed free. Click a type (or type a letter on it) to open the type picker: a list with a search box that narrows as you type, with the common types first, then the game's own, then the ways to make a type of others (**List of…** asks what it holds, with the same picker), then the rest. Enter takes the first match. The picker asks Tide which types go there, so a field isn't offered a component, and a system's needs aren't offered an enum.
+A type is never typed free. Click a type (or type a letter on it) to open the type picker: a list with a search box that narrows as you type, with the common types first, then this file's and the rest of the game's own, then the ways to make a type of others (**List of…** asks what it holds, with the same picker), then the engine's. Enter takes the first match. The picker asks Tide which types go there, so a field isn't offered a component, and a system's needs aren't offered an enum.
 
 ### Values
 
-A value is edited by its type's own control: a number, a tick box, text, a vector's numbers, a colour, an enum's choices. An empty control shows the type's default, greyed. To work a value out instead (`GRAVITY * 2`), press the small **ƒ** on its row: the value opens as a small graph beside its card, whose last node is where its value is wired in. **Done** closes it.
+A value is edited by its type's own control: a number, a tick box, text, a vector's numbers, a colour, an enum's choices (the enum can be declared in any of the game's files). An empty control shows the type's default, greyed. To work a value out instead (`GRAVITY * 2`), press the small **ƒ** on its row: the value opens as a small graph beside its card, whose last node is where its value is wired in. **Done** closes it.
 
 ## Frames: what the game does
 
-A system, a view, an event handler, a command, a function and a type's method are frames: a titled box that holds the code's nodes. Drag its title to move it with everything in it; it grows around its nodes.
+A system, a view, an event handler, a command, a function and a type's method are frames: a titled box that holds the code's nodes and the wires between them. Drag its title to move it with everything in it; it grows around its nodes.
 
 A frame's first node is its **entry**. It says when the code runs, in the kind's own words (**Every tick, for each entity with** for a system, **When this happens** for an event handler, **Takes** for a function), and has a row for each thing the code takes:
 
@@ -64,16 +64,22 @@ A frame's first node is its **entry**. It says when the code runs, in the kind's
 - An event handler's first row picks its event; a command's rows are the values a player sends with it; a function's last row is its result's type.
 - Each row has a **pin** on its right, and the entry has an **arrow** at its top right.
 
-### Nodes and wires
+### Nodes
 
-The code is nodes joined by wires:
+The code is nodes. A node says what it does (**Set**, **If**, `ball.Bounce`, **Multiply**) and has a row for each of its inputs:
 
-- **Drag from the entry's arrow** and let go inside the frame to add what happens first: the search offers the statements (an assignment, a call, `If`, the loops, `Return`). Each statement has an arrow of its own to drag what happens next from, and those that hold code (an `If`'s branches, a loop's body) have an arrow for each.
-- **Drag from a pin** to use what the code takes. Let go on an input to wire it there, or inside the frame to pick what to do with it: its fields and methods come first. A read of a parameter isn't a node of its own, so the wire comes straight from its pin; renaming the parameter renames every read.
-- **A local** is a node that names a value. It has a pin of its own, to drag its reads from.
+- **Drag from the entry's arrow** and let go inside the frame to add what happens first: the search offers the statements (**Set**, a call, **If**, the loops, **Return**). Each statement has an arrow of its own to drag what happens next from, and those that hold code (an **If**'s branches, a loop's body) have an arrow for each.
+- **A simple value is in its input.** A number, a tick or text is typed there, a vector made of numbers has a box for each, and a colour has its swatch. Something the code has (a parameter, a local, a field of one) is a name in its type's colour, like `wobble.phase`. There is no node for it and no wire.
+- **Click an input**, or the **pick…** of an empty one, to choose what goes in it. The list has a search box and offers what fits there: a value to type, what this code has, the game's constants and functions, and **Work it out…**. Enter takes the first match. What doesn't fit is left out; **Show what doesn't fit too**, at the end, lists it.
+- **What the code has opens to its fields**: click its arrow, press the right arrow key, or type a dot after its name (`wobble.`). In a name already picked, click one of its parts (`phase` in `wobble.phase`) to change it from there.
+- **What's worked out is a node, wired in.** **Work it out…** has the operators (**Multiply**, **Less than**) and the calls. The new node goes beside the one that reads it, with a wire from its value, and what was in the input becomes its first input. Its own inputs are picked the same way. A value that two inputs read is a node too.
+- **Drag from a pin**, on the entry or on a local, onto an input to put it there, or let go inside the frame to pick what to do with it. With the pointer over a name, the row it comes from lights up, and its other reads. Renaming a parameter renames every read.
+- **A local** is a node that names a value. Inputs after it are offered it by its name.
 - **Right-click, or press Space, inside a frame** to add any node. Type to search; Enter adds the first.
-- **A call in the flow of statements is one node**, with arrows through it. Its result, wired on from it, is what it gave when it ran.
-- Drag the end of a wire off its input to take it away, or onto another to move it. An input takes one wire, and a statement runs from one place.
+- **A call in the flow of statements is one node**, with arrows through it, titled with what it's called on (`ball.Bounce`, `Math.Clamp`). Its arguments are named as the function names them.
+- Drag the end of a wire off its input to take it away, or onto another to move it. An input takes one value, and a statement runs from one place.
+
+A system that adds to a field each tick is one node. Drag from the entry's arrow and pick **Set**. Click **what** and choose `wobble`, then `phase`. Click the `=` under it and choose **goes up by**, which is `+=`. Click the value beside it and choose `wobble`, then `frequency`. The node reads: Set `wobble.phase` `+=` `wobble.frequency`.
 
 A wire stays inside its frame: code in one frame reaches another's through the game's data (a component, an event) or by calling it. Dropped outside, the wire says so.
 
@@ -81,7 +87,7 @@ Nodes that nothing runs, and values nothing reads, are left out of the game; the
 
 Where a frame is on the board says nothing of when its code runs. Systems run in the file's order, which **Contents** shows, unless a stage says otherwise; **Move earlier in the file** and **Move later in the file**, in a frame's or a card's "…" menu, change it.
 
-A node's own values (a number, a name, an operator) are edited on it. What's rare is in its "…" menu, with **Copy**, **Duplicate** and **Delete**. A right click on an input can remove it, or name an argument.
+What's rare on a node is in its "…" menu, with **Copy**, **Duplicate** and **Delete**. The small **+** at the end of a call's last argument adds the next one its function takes; there is none once each has its value. A right click on an input can remove it, or name an argument.
 
 ### Text in a graph
 
@@ -91,7 +97,7 @@ A **Text** node is a value written as Tide, `a * b + 1`, whose inputs are wired 
 
 Tide checks the board as you change it, with the rest of the game's code. The chip at the top right says **Checked**, or how many problems there are; click it for the list, and a problem to go to it.
 
-A problem is shown on what it's about: a field's row, a pin with nothing wired into it, a node. It's red there, and says the compiler's message and what to do about it when the pointer is over it. It goes as soon as its cause does.
+A problem is shown on what it's about: a field's row, an input, a node. It's red there, and says the compiler's message and what to do about it when the pointer is over it. An input with nothing in it says so by its name (**Pick what goes in 'what'**), and the rest of the file is still checked while it's empty. A problem goes as soon as its cause does.
 
 Without Tide's language server (`tidels`, which comes with `tide`), the chip says **Not checked**: editing works, and mistakes show when the game is built. Building says the same errors with the element they're about: `Assets/Enemy.tidegraph:@17: error: ...`.
 

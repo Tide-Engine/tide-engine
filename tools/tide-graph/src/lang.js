@@ -20,6 +20,10 @@
             this.text = null;      // The Tide the graph stands for, or null before a check (or without tidels)
             this.spans = [];       // [start, end, id], inner after outer
             this.types = {};       // id -> type
+            this.calls = {};       // a call's id -> { params, types, args }: its callee's parameters (tide/graphCalls)
+            this.callsKnown = false; // Whether tidels has said which calls have parameters to name
+            this.choices = {};     // an enum the rest of the game declares -> its choices (tide/graphMembers by name)
+            this.names = { game: {}, packages: {} }; // What the game itself declares, by name (tide/graphNames)
             this.diagnostics = []; // { severity, message, node, line, range }
             this.status = 'unchecked'; // 'checking', 'checked', 'unavailable'
             this.why = null;       // Why tidels didn't answer
@@ -48,20 +52,36 @@
                 // An answer that doesn't come (a server that stopped) isn't waited for for ever
                 let timer;
                 const late = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("Tide's language server didn't answer")), 30000); });
-                const [text, types] = await Promise.race([Promise.all([
+                // What's newer than a tidels may not be answered: the page then goes without it
+                const maybe = method => this.request(method, this.params()).catch(() => null);
+                const [text, types, calls, names] = await Promise.race([Promise.all([
                     this.request('tide/graphText', this.params()),
                     this.request('tide/graphTypes', this.params()),
+                    maybe('tide/graphCalls'),
+                    maybe('tide/graphNames'),
                 ]), late]).finally(() => clearTimeout(timer));
                 if (generation !== this.generation) return;
-                if (typeof text?.text === 'string') {
-                    this.text = text.text;
-                    this.spans = Array.isArray(text.spans) ? text.spans : [];
-                    this.types = types && typeof types === 'object' ? types : {};
-                    this.stale = false;
-                } else {
-                    // A graph with something missing (an input nothing is wired to) stands for no Tide yet: tidels
-                    // says what's missing, and what it knew of the graph before is kept to complete with meanwhile
-                    this.stale = true;
+                // A half-made graph is still read, an input with nothing in it as a hole: only a file tidec can't
+                // read at all (a node of no kind, a wire to nothing) has no Tide, and its diagnostics say why
+                this.text = typeof text?.text === 'string' ? text.text : null;
+                this.spans = Array.isArray(text?.spans) ? text.spans : [];
+                this.types = types && typeof types === 'object' ? types : {};
+                this.calls = calls && typeof calls === 'object' ? calls : {};
+                this.callsKnown = !!calls && typeof calls === 'object';
+                this.names = { game: names?.game || {}, packages: names?.packages || {} };
+                // The choices of the game's enums, for their fields' controls on the cards: asked once each, and
+                // again when the game's names change
+                const enums = Object.entries({ ...this.names.packages, ...this.names.game }).filter(([, kind]) => kind === 'enum').map(([name]) => name);
+                const key = enums.join('\n');
+                if (key !== this.enumsKey) {
+                    const found = await Promise.all(enums.map(name => this.membersOfName(name)));
+                    if (generation !== this.generation) return;
+                    this.enumsKey = key;
+                    this.choices = {};
+                    enums.forEach((name, i) => {
+                        const names = found[i].filter(item => item.kind === KIND.EnumMember || item.kind === KIND.Constant || item.kind === KIND.Value).map(item => String(item.label));
+                        if (names.length) this.choices[name] = names;
+                    });
                 }
                 this.status = 'checked';
                 this.why = null;
@@ -72,6 +92,8 @@
                 this.text = null;
                 this.spans = [];
                 this.types = {};
+                this.calls = {};
+                this.callsKnown = false;
                 this.diagnostics = [];
             }
             this.emit('check');
@@ -84,11 +106,13 @@
                 // The compiler's message, and its note (what to do about it) after it
                 const text = String(d.message ?? '');
                 const at = text.indexOf('\nnote: ');
-                // It's shown on its element, which "node 12's" only names again
-                const said = (at < 0 ? text : text.slice(0, at)).replace(/^node \d+'s /, 'Its ');
                 return {
                     severity: d.severity ?? 1,
-                    message: said,
+                    message: at < 0 ? text : text.slice(0, at),
+                    // An input with nothing in it: its key, and its place among the key's items (the page says it
+                    // on that input, in its own words)
+                    port: typeof d.data?.port === 'string' ? d.data.port : null,
+                    index: typeof d.data?.index === 'number' ? d.data.index : -1,
                     note: at < 0 ? '' : text.slice(at + 7).trim(),
                     node: typeof d.data?.node === 'number' ? d.data.node : (typeof d.node === 'number' ? d.node : 0),
                     range: d.range,
@@ -105,8 +129,78 @@
             this.text = null;
             this.spans = [];
             this.types = {};
+            this.calls = {};
             this.diagnostics = [];
             this.emit('check');
+        }
+
+        // What a call's arguments are called and take: { names, types } by argument, from its callee's parameters,
+        // or null before a check has said
+        callArgs(id) {
+            const c = this.calls[id] ?? this.calls[String(id)];
+            if (!c || !Array.isArray(c.params)) return null;
+            const args = Array.isArray(c.args) ? c.args : [];
+            return { params: c.params, types: c.types || [], at: i => (typeof args[i] === 'number' ? args[i] : i) };
+        }
+
+        // What an input is called on its node: the schema's word for its key (`portInfo`), a call's argument by its
+        // callee's parameter (tide/graphCalls), a named argument by its name. An argument is "argument 1" until a
+        // check has said; one tidels has no name for (Spawn's) then has none, but a vector's or a colour's parts
+        // (float2(x, y)). `always` gives a name to say whatever (a problem's words).
+        inputLabel(schema, node, p, always = false) {
+            if (!p.group) return schema.portLabel(p.key);
+            const list = schema.node(node.k)?.lists?.find(l => l.key === p.group);
+            if (list?.names) {
+                const named = Array.isArray(node[list.names]) ? node[list.names][p.index] : '';
+                if (named) return named;
+                const c = this.callArgs(node.id);
+                const known = c?.params[c.at(p.index)];
+                if (known) return known;
+                const count = Array.isArray(node[list.key]) ? node[list.key].length : 0;
+                const control = node.k === 'call' ? schema.control(node.name) : null;
+                if (control === 'vector' && count > 1 && count <= 4) return 'xyzw'[p.index];
+                if (control === 'colour' && count >= 3 && count <= 4) return ['red', 'green', 'blue', 'alpha'][p.index];
+                return this.callsKnown && !always ? '' : `argument ${p.index + 1}`;
+            }
+            return p.label;
+        }
+
+        // Whether the game itself (or one of its packages) declares a name: what's offered and isn't is the engine's.
+        // Before tidels has said, nothing is known to be the game's.
+        declares(name) {
+            return this.names.game[name] || this.names.packages[name] || null;
+        }
+
+        // What a value of a type has: its fields and methods, as completion items
+        async membersOfType(type) {
+            if (!type) return [];
+            try {
+                const c = await this.request('tide/graphMembers', this.params({ type }));
+                return Array.isArray(c) ? c : c?.items || [];
+            } catch {
+                return [];
+            }
+        }
+
+        // What a name itself has after a dot: an enum's choices, a namespace's functions (Math), as completion items
+        async membersOfName(name) {
+            if (!name) return [];
+            try {
+                const c = await this.request('tide/graphMembers', this.params({ name }));
+                return Array.isArray(c) ? c : c?.items || [];
+            } catch {
+                return [];
+            }
+        }
+
+        // The parameter a call's next argument would be for (tide/graphCalls): its name; '' when every parameter has
+        // its argument; null when tidels hasn't said what the call takes
+        nextParam(node, count) {
+            const c = this.callArgs(node.id);
+            if (!c) return null;
+            const used = new Set();
+            for (let i = 0; i < count; i++) used.add(c.at(i));
+            return c.params.find((_, i) => !used.has(i)) || '';
         }
 
         // What tidels offers where an element's own text starts, which is where its type is written (a field's, a

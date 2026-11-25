@@ -109,6 +109,11 @@
                 if (!ed.doc.find(v.slot.owner)) this.closeValue(false);
                 else { v.refresh(); v.dirty = true; v.renderHead(); }
             }
+            this.stale = false;
+            // What the pointer was over may be gone: what was said of it goes too
+            tooltip(0, 0, null);
+            this.hover = null;
+            this.lit = null;
             this.renderStart(items);
             if (!this.framed) {
                 // A file opens on its start; one that opens empty stays where its first thing is made
@@ -362,16 +367,29 @@
                 const f = this.frameOf(e.slot);
                 const drawn = f?.mode === 'near' ? f.elementOf(id) : null;
                 if (drawn) return drawn;
-                // A read of a pin has no node of its own: what reads it stands for it
-                if (f?.mode === 'near' && f.analysis.reads.has(id)) {
-                    for (const n of Doc.nodes(f.graph)) if (this.schema.dataWires(n).includes(id)) return f.elementOf(n.id);
-                }
+                // (A value shown in an input is that input's row: FrameView.elementOf)
             }
             // A card or a frame by its head: what's said of it is said there, not over all that's in it
             const c = this.cards.get(id), fr = this.frames.get(id);
             if (c) return c.el.querySelector('.tg-card-head') || c.el;
             if (fr) return fr.head;
             return this.world.querySelector(`[data-id="${id}"]`);
+        }
+
+        // Draws the frames again for what tidels found (an argument's name, a value's colour). One that's being
+        // typed in waits until that's done: what's typed isn't lost to it.
+        redrawFrames() {
+            const active = document.activeElement;
+            if (this.drag || (active && /^(INPUT|TEXTAREA)$/.test(active.tagName) && active.closest('.tg-frame'))) {
+                this.stale = true;
+                return;
+            }
+            this.stale = false;
+            for (const f of this.frames.values()) f.dirty = true;
+            if (this.valueFrame) this.valueFrame.dirty = true;
+            this.cull();
+            this.showSelection();
+            this.markProblems();
         }
 
         // The card or frame an id is, as it's drawn whole
@@ -383,9 +401,22 @@
         ensureVisible(id) {
             const c = this.cards.get(id), f = this.frames.get(id);
             const r = this.el.getBoundingClientRect();
-            const w = r.width || 800, h = r.height || 600, z = this.zoom, m = 24;
+            const w = r.width || 800, z = this.zoom, m = 24;
             const box = c ? { x: c.x, y: c.y, w: c.w, h: Math.max(c.h, 100) } : f ? { x: f.x, y: f.y, w: Math.min(f.size.w, (w - 2 * m) / z), h: Math.min(f.size.h + HEAD, 320) } : null;
-            if (!box) return;
+            if (box) this.bringIn(box, m);
+        }
+
+        // Brings a node of a frame into view when it isn't whole: one just made, or one whose input was just filled
+        showNode(frame, id) {
+            const v = frame?.mode === 'near' ? frame.views.get(frame.statementOf(id)) || frame.views.get(id) : null;
+            if (!v?.el) return;
+            this.bringIn({ x: frame.x + v.x, y: frame.y + HEAD + v.y, w: (v.el.offsetWidth || 160) + 24, h: (v.el.offsetHeight || 80) + 24 }, 40);
+        }
+
+        // Moves the board no more than it takes for a box of it to be in view, `m` from the edges
+        bringIn(box, m) {
+            const r = this.el.getBoundingClientRect();
+            const w = r.width || 800, h = r.height || 600, z = this.zoom;
             const x0 = box.x * z + this.pan.x, y0 = box.y * z + this.pan.y, x1 = x0 + box.w * z, y1 = y0 + box.h * z;
             let dx = 0, dy = 0;
             if (x1 > w - m) dx = w - m - x1;
@@ -400,8 +431,8 @@
             this.markProblems();
         }
 
-        // Problems on what they're about: the row, pin or node (red, with the compiler's words on hover), and a count
-        // on the card or frame they're in, which shows when that isn't drawn
+        // Problems on what they're about: the row, input or node (red, with the problem's words on hover), and a
+        // count on the card or frame they're in, which shows when that isn't drawn
         markProblems() {
             const lang = this.app.lang;
             for (const x of this.world.querySelectorAll('.tg-has-error, .tg-has-warning')) {
@@ -417,13 +448,14 @@
                     if (d.severity === 1) c.errors++; else c.warnings++;
                     counts.set(item, c);
                 }
-                const target = this.pinOf(d) || this.elementOf(d.node);
+                const hole = this.holeOf(d);
+                const target = (hole?.frame?.mode === 'near' ? hole.frame.ports.get(G.frames.portKey(hole.port))?.row : null) || this.elementOf(d.node);
                 if (!target) continue;
                 const error = d.severity === 1;
                 if (error) { target.classList.remove('tg-has-warning'); target.classList.add('tg-has-error'); }
                 else if (!target.classList.contains('tg-has-error')) target.classList.add('tg-has-warning');
                 // Each problem with its note, one after the other (see over())
-                const text = (error ? 'E' : 'W') + d.message + (d.note ? '\n' + d.note : '');
+                const text = (error ? 'E' : 'W') + this.wordsOf(d, hole) + (d.note && !hole ? '\n' + d.note : '');
                 target.dataset.problem = target.dataset.problem ? target.dataset.problem + '\u0001' + text : text;
             }
             for (const badge of this.world.querySelectorAll('[data-badge]')) {
@@ -436,14 +468,45 @@
             for (const [id, c] of this.cards) c.el.classList.toggle('tg-card-wrong', !!counts.get(id)?.errors);
         }
 
-        // The pin a problem is about, when it names one: an input nothing is wired to
-        pinOf(d) {
-            const named = /^Its '([A-Za-z_]\w*)' isn't connected/.exec(d.message);
-            if (!named) return null;
+        // The input a problem is about, when the compiler says one (an input with nothing in it: the diagnostic's
+        // data.port, and data.index among a list's): its port, what it's called on its node and the frame it's in
+        holeOf(d) {
+            if (!d.port || !d.node) return null;
             const e = this.editor.doc.find(d.node);
-            const f = e?.role === 'node' ? this.frameOf(e.slot) : null;
-            if (!f || f.mode !== 'near') return null;
-            return f.ports.get(`${d.node}|i|d|${named[1]}`)?.row || null;
+            if (e?.role !== 'node') return null;
+            const port = this.schema.ports(e.value).find(p => p.input && !p.exec && p.key === d.port && (d.index < 0 || p.index === undefined || p.index === d.index));
+            if (!port) return null;
+            return { port, label: G.frames.inputLabel(this.app, e.value, port, true), frame: this.frameOf(e.slot) };
+        }
+
+        // A problem's words: the compiler's, or the editor's own for an input with nothing in it
+        wordsOf(d, hole = this.holeOf(d)) {
+            return hole ? `Pick what goes in '${hole.label}'` : d.message;
+        }
+
+        // What reads the same thing lights with it: over a name shown in an input, the entry's row of that name (or
+        // the node that declares the local) and its other reads; over the entry's row or the local's pin, its reads
+        light(target) {
+            const frameEl = target.closest?.('.tg-frame');
+            let read = null;
+            if (frameEl) {
+                const chip = target.closest('[data-read]');
+                const row = chip ? null : target.closest('.tg-entry-row');
+                const pin = row ? row.querySelector('[data-pin]') : null;
+                const local = chip || row ? null : target.closest('.tg-pin[data-port$="|o|d|local"]');
+                read = chip ? chip.dataset.read : pin ? 'pin:' + pin.dataset.pin : local ? 'local:' + local.dataset.port.split('|')[0] : null;
+            }
+            const key = read ? frameEl.dataset.frame + '\n' + read : null;
+            if (key === this.lit) return;
+            this.lit = key;
+            for (const x of this.world.querySelectorAll('.tg-lit')) x.classList.remove('tg-lit');
+            if (!key) return;
+            for (const x of frameEl.querySelectorAll('[data-read]')) if (x.dataset.read === read) x.classList.add('tg-lit');
+            if (read.startsWith('pin:')) {
+                for (const x of frameEl.querySelectorAll('[data-pin]')) if (x.dataset.pin === read.slice(4)) x.closest('.tg-entry-row')?.classList.add('tg-lit');
+            } else {
+                frameEl.querySelector(`.tg-pin[data-port="${read.slice(6)}|o|d|local"]`)?.classList.add('tg-lit');
+            }
         }
 
         // Puts the cursor in a field by its name once the page has drawn again (`select` its text too)
@@ -540,8 +603,9 @@
             let target = null;
             if (f && e.role === 'node') {
                 const n = e.value;
-                const read = f.analysis.reads.has(id) ? Doc.nodes(f.graph).find(o => this.schema.dataWires(o).includes(id)) : null;
-                const at = f.analysis.byId.get(f.analysis.mergedInto.get(id) ?? (read ? read.id : id)) || n;
+                // A value shown in an input is where its reader is
+                const reader = f.analysis.shown.get(id)?.node;
+                const at = f.analysis.byId.get(f.analysis.mergedInto.get(reader ?? id) ?? reader ?? id) || n;
                 target = { x: f.x + f.dx(at) + 80, y: f.y + HEAD + f.dy(at) + 40 };
             } else if (f) {
                 // A frame by its start: its title and its entry at the top left
@@ -676,7 +740,8 @@
             });
             c.addEventListener('wheel', e => this.wheel(e), { passive: false });
             c.addEventListener('pointerover', e => this.over(e));
-            c.addEventListener('pointerleave', () => tooltip(0, 0, null));
+            c.addEventListener('focusout', () => { if (this.stale) requestAnimationFrame(() => { if (this.stale) this.redrawFrames(); }); });
+            c.addEventListener('pointerleave', () => { tooltip(0, 0, null); this.light(c); });
         }
 
         // What a press on nothing in particular opens: the node search inside a frame, the Add menu on the board
@@ -723,7 +788,10 @@
             if (e.button !== 0) return;
             const frame = this.frameAt(e.target);
             if (frame && frame.mode === 'near') {
-                const port = this.portAt(frame, e.target);
+                // A wire starts at an output or an arrow, or is taken off an input that has one: an input with a value
+                // shown in it, or nothing yet, is part of its node (it's pressed to move the node, and clicked to pick)
+                let port = this.portAt(frame, e.target);
+                if (port && port.input && !port.exec && !frame.hasNodeWire(port)) port = null;
                 if (port) {
                     if (e.altKey && port.input && frame.wireOf(port)) { frame.unwireNow(port); return; }
                     this.beginWire(frame, port, e);
@@ -1041,7 +1109,7 @@
                         }
                         why = f.join(doc, d.from, port);
                         doc.reindex();
-                        if (pending?.old && !why) doc.dropUnread(f.graph, [pending.old], f.pins);
+                        if (pending?.old && !why) doc.dropValue(f.graph, pending.old);
                     });
                     if (why) toast(`That wire can't be: ${why}.`);
                     return;
@@ -1142,6 +1210,10 @@
         // What the pointer is over says what it is: a problem's words, a node's type and what tidels says of it
         over(e) {
             if (this.drag) return;
+            if (this.stale) this.redrawFrames();
+            this.light(e.target);
+            // A list is open over the board: nothing else is said meanwhile
+            if (G.ui.popupOpen()) { this.hover = null; return; }
             const wrong = e.target.closest?.('[data-problem]');
             if (wrong) {
                 const parts = [];
@@ -1172,7 +1244,7 @@
             this.hoverTimer = setTimeout(() => {
                 if (this.hover !== nodeEl) return;
                 lang.hover(n).then(text => {
-                    if (this.hover !== nodeEl || !text) return;
+                    if (this.hover !== nodeEl || !text || G.ui.popupOpen()) return;
                     tooltip(x, y, text.replace(/```\w*\n?/g, '').trim());
                 });
             }, 450);

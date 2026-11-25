@@ -47,7 +47,37 @@
             this.modifierInfo = json.modifierInfo || {};
             this.paramModeInfo = json.paramModeInfo || {};
             this.typePicker = json.typePicker || { common: [], builders: [] };
+            this.flagInfo = json.flagInfo || {};
+            this.portInfo = json.portInfo || {};
+            this.accessorInfo = json.accessorInfo || {};
+            // Which kinds of value are shown in the input that reads them (1 always, 2 as a path, 3 a minus over a
+            // number, 4 a vector or a colour made of numbers: a call named one of `numbersOf`), as tidec's layout
+            // takes them (graph_schema_inline, graph_schema_numbers)
+            this.inlineKinds = new Map();
+            ['always', 'path', 'negative', 'numbers'].forEach((list, i) => {
+                for (const k of json.inline?.[list] || []) this.inlineKinds.set(k, i + 1);
+            });
+            this.numbersOf = new Set(json.inline?.numbersOf || []);
+            // Which control edits a type's value
+            this.controlOf = new Map();
+            for (const c of json.valueControls || []) for (const t of c.types || []) this.controlOf.set(t, c.control);
+            this.enumControl = (json.valueControls || []).find(c => c.of === 'enum')?.control || 'choice';
         }
+
+        // What a node's flag, an input or an exec output is called on its node; a key with no entry is shown as it is
+        flagLabel(key) { return this.flagInfo[key]?.label || this.keyLabel(key); }
+        flagHelp(key) { return this.flagInfo[key]?.help || ''; }
+        flagAdvanced(key) { return !!this.flagInfo[key]?.advanced; }
+        portLabel(key) { return this.portInfo[key]?.label || key; }
+        // 1, 2 or 3 for a kind of value shown in the input that reads it, 0 for a node of its own
+        inlineKind(k) { return this.inlineKinds.get(k) || 0; }
+        // The control that edits a type's value ('whole', 'decimal', 'tick', 'text', 'char', 'vector', 'colour'), or
+        // undefined for a type with none of its own (an enum's is `enumControl`, by what the game declares)
+        control(type) { return this.controlOf.get(String(type || '').replace(/\?$/, '')); }
+        // A group's title in the type picker
+        typeGroup(name) { return this.typePicker.groups?.[name] || name; }
+        // The words of the row that adds to a kind's rows ("+ field", "+ needs…")
+        addRow(kind, member) { return (member ? this.memberByKind.get(kind) : this.declByKind.get(kind))?.addRow || '+'; }
 
         // What the page calls a key, a modifier and a way of taking a parameter, and what it says of each
         keyLabel(key) { return this.keyInfo[key]?.label || key; }
@@ -295,8 +325,13 @@
             return null;
         }
 
-        opTitle(op) {
-            return this.operators.binary.find(o => o.op === op)?.title || this.operators.unary.find(o => o.op === op)?.title || op;
+        // What one of Set's operators does, in words: += "goes up by"
+        assignLabel(op) { return this.operators.assignInfo?.[op]?.label || ''; }
+
+        // What an operator is called: `unary` for one over a single value (- is Negate there, Subtract between two)
+        opTitle(op, unary = false) {
+            const own = unary ? this.operators.unary : this.operators.binary, other = unary ? this.operators.binary : this.operators.unary;
+            return own.find(o => o.op === op)?.title || other.find(o => o.op === op)?.title || op;
         }
     }
 

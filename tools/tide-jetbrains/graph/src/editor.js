@@ -198,10 +198,10 @@
             return { nodes, notes };
         }
 
-        // The selected nodes with what goes with them: a statement's call, the reads of pins that only they read
+        // The selected nodes with what goes with them: a statement's call, the values shown in their inputs
         selectedWithHidden(g) {
             const { nodes, notes } = this.selectedIn(g);
-            return { nodes: this.doc.withHidden(g, nodes, this.doc.pinsOfSlot(this.slot)), notes };
+            return { nodes: this.doc.withFolded(g, nodes), notes };
         }
 
         // Copy, cut, paste, duplicate and delete of the selected nodes
@@ -218,17 +218,7 @@
             if (!g) return false;
             const { nodes, notes } = this.selectedWithHidden(g);
             if (!nodes.size && !notes.size) return false;
-            const pins = this.doc.pinsOfSlot(this.slot);
-            this.edit(doc => {
-                // The reads of pins the deleted nodes were the last to read go with them
-                const sources = new Set();
-                for (const id of nodes) {
-                    const n = Doc.nodeIn(g, id);
-                    if (n) for (const w of doc.schema.dataWires(n)) sources.add(w);
-                }
-                doc.deleteNodes(g, [...nodes, ...notes]);
-                doc.dropUnread(g, [...sources].filter(id => !nodes.has(id)), pins);
-            });
+            this.edit(doc => doc.deleteNodes(g, [...nodes, ...notes]));
             this.selection.clear();
             this.emit('selection');
             return true;

@@ -7,27 +7,30 @@
     const { set } = G.json;
     const { Doc } = G;
 
-    // Types with a control of their own
-    const NUMBERS = new Set(['int', 'long', 'byte', 'float', 'double']);
-    const WHOLE = new Set(['int', 'long', 'byte']);
-    const VECTORS = { float2: 2, float3: 3, float4: 4, int2: 2, int3: 3, int4: 4, double2: 2, double3: 3, double4: 4 };
     const AXES = ['x', 'y', 'z', 'w'];
+    // How many numbers a vector type has: the digit its name ends with (float3), for a type whose control the
+    // schema says is a vector's; 0 for any other
+    function vectorSize(name, schema) {
+        return schema?.control(name) === 'vector' ? Number(/(\d)$/.exec(String(name))?.[1]) || 0 : 0;
+    }
     // A number as Tide writes one: 12, 0xFF, 1.5, .5, 1e3, 2.5d, 90deg
     const NUMBER = /^-?(0[xX][0-9a-fA-F_]+L?|0[bB][01_]+L?|(\d[\d_]*\.?\d*|\.\d+)([eE][+-]?\d+)?(L|f|d|deg)?)$/;
     const INT = /^-?(0[xX][0-9a-fA-F_]+L?|0[bB][01_]+L?|\d[\d_]*L?)$/;
 
-    // What a type is edited as: 'number', 'bool', 'string', 'char', 'vector' (with `size`), 'color', 'enum' (with
-    // `members`), or 'other'
-    function typeKind(type, doc) {
+    // What a type is edited as, by the schema's `valueControls`: 'number', 'bool', 'string', 'char', 'vector' (with
+    // `size`), 'color', 'enum' (with `members`, for one the file declares), or 'other'
+    function typeKind(type, doc, lang) {
         if (!type) return { kind: 'other' };
         const t = String(type).replace(/\?$/, '');
-        if (NUMBERS.has(t)) return { kind: 'number', whole: WHOLE.has(t) };
-        if (t === 'bool') return { kind: 'bool' };
-        if (t === 'string') return { kind: 'string' };
-        if (t === 'char') return { kind: 'char' };
-        if (VECTORS[t]) return { kind: 'vector', size: VECTORS[t], name: t, whole: t.startsWith('int') };
-        if (t === 'Color') return { kind: 'color' };
-        const members = doc?.enumMembers(t);
+        const control = doc?.schema.control(t);
+        if (control === 'whole' || control === 'decimal') return { kind: 'number', whole: control === 'whole' };
+        if (control === 'tick') return { kind: 'bool' };
+        if (control === 'text') return { kind: 'string' };
+        if (control === 'char') return { kind: 'char' };
+        if (control === 'vector') return { kind: 'vector', size: vectorSize(t, doc.schema), name: t, whole: /^int/.test(t) };
+        if (control === 'colour') return { kind: 'color' };
+        // An enum's choices: the file's own, or the rest of the game's as tidels gave them
+        const members = doc?.enumMembers(t) || lang?.choices?.[t.split('.').pop()];
         if (members) return { kind: 'enum', members, name: t.split('.').pop() };
         return { kind: 'other' };
     }
@@ -116,21 +119,22 @@
         const doc = app.editor.doc;
         const g = holder[key];
         const what = classify(g);
-        const tk = typeKind(type, doc);
+        const tk = typeKind(type, doc, app.lang);
         const put = make => app.edit(d => set(holder, key, make ? make(d) : undefined, order));
         const openGraph = () => app.openValue(slot, holder, key, order, type);
         const wrap = (...parts) => el('span.tg-value', { dataset: { value: `${slot.owner}:${key}` } }, parts,
             button('ƒ', openGraph, 'Work it out with nodes instead', 'tg-value-more'));
         const title = label ? `${label}` : undefined;
 
-        if (what.kind === 'graph') {
+        if (what.kind === 'graph' || (what.kind === 'call' && !callFits(app.editor.schema, what))) {
             return el('span.tg-value', { dataset: { value: `${slot.owner}:${key}` } },
                 button('ƒ ' + summary(g, app.editor.schema), openGraph, 'A value worked out with nodes: open it', 'tg-value-graph'));
         }
         // What kind of control: the type's, or the literal's own where the type doesn't say
         let kind = tk.kind;
         if (kind === 'other' || (what.kind !== 'none' && !fits(what, tk))) {
-            kind = what.kind === 'none' ? 'other' : what.kind === 'call' ? (what.name === 'Color' ? 'color' : VECTORS[what.name] ? 'vector' : 'graph')
+            const schema = app.editor.schema;
+            kind = what.kind === 'none' ? 'other' : what.kind === 'call' ? (schema.control(what.name) === 'colour' ? 'color' : vectorSize(what.name, schema) ? 'vector' : 'graph')
                 : what.kind === 'member' ? 'graph' : what.kind;
         }
         if (kind === 'number') {
@@ -162,7 +166,7 @@
         }
         if (kind === 'vector') {
             const name = what.kind === 'call' ? what.name : tk.name;
-            const size = VECTORS[name] || tk.size || 3;
+            const size = vectorSize(name, app.editor.schema) || tk.size || 3;
             const texts = what.kind === 'call' ? what.texts.slice() : [];
             // One number for every axis is written as it is: float3(1)
             const spread = texts.length === 1 && size > 1;
@@ -205,6 +209,13 @@
                 what.kind === 'none' ? 'Give it a value, made with nodes' : 'Open its value', 'tg-value-graph' + (what.kind === 'none' ? '.tg-unset' : '')));
     }
 
+    // Whether a call of numbers is a vector's or a colour's, which have a control
+    function callFits(schema, what) {
+        const size = vectorSize(what.name, schema);
+        if (size) return what.texts.length === size || what.texts.length === 1;
+        return schema.control(what.name) === 'colour' && what.texts.length >= 3;
+    }
+
     // Whether a literal is one its type's control can show
     function fits(what, tk) {
         switch (tk.kind) {
@@ -212,12 +223,12 @@
             case 'bool': return what.kind === 'bool';
             case 'string': return what.kind === 'string';
             case 'char': return what.kind === 'char';
-            case 'vector': return what.kind === 'call' && !!VECTORS[what.name] && (what.texts.length === VECTORS[what.name] || what.texts.length === 1);
-            case 'color': return what.kind === 'call' && what.name === 'Color' && what.texts.length >= 3;
+            case 'vector': return what.kind === 'call' && what.name === tk.name && (what.texts.length === tk.size || what.texts.length === 1);
+            case 'color': return what.kind === 'call' && what.texts.length >= 3;
             case 'enum': return what.kind === 'member' && tk.members.includes(what.member) && (!what.type || what.type.split('.').pop() === tk.name);
             default: return false;
         }
     }
 
-    G.values = { control, classify, typeKind, summary, NUMBER, numberGraph };
+    G.values = { control, classify, typeKind, summary, NUMBER, INT, AXES, numberGraph, vectorSize, toHex, fromHex };
 })(globalThis.TideGraph = globalThis.TideGraph || {});

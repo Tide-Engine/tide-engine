@@ -1,7 +1,7 @@
 // A .tidegraph's contents with what an editor does to them: every element with an id found by it, graphs by the
 // element and key holding them, nodes made, wired, deleted, copied and pasted, declarations and members made, and
 // the board's view of it: which declarations are cards and which are frames, a frame's pins (its parameters), and
-// which nodes are drawn as wires from a pin (a parameter's or a local's reads).
+// which nodes are shown in the input that reads them (a number, a name, a path of fields) and so aren't drawn.
 // Edits change the JSON in place; the editor (app.js) writes the file after each, and keeps the texts for undo.
 (function (G) {
     'use strict';
@@ -680,60 +680,85 @@
             return e.role === 'accessor' ? this.pins(e.owner, e.value) : this.pins(e.value);
         }
 
-        // The nodes that go with `ids` when they're copied, moved or deleted: a statement's merged call, and the
-        // reads of pins and locals that only they read
-        withHidden(g, ids, pins) {
-            const a = this.analyse(g, pins);
+        // The nodes that go with `ids` when they're copied, moved or deleted: a statement's call, and the values shown
+        // in their inputs (a name, a path, a number), which are nodes of the file though not of the board
+        withFolded(g, ids, a = this.analyse(g)) {
             const out = new Set(ids);
-            for (const id of ids) if (a.merged.has(id)) out.add(a.merged.get(id));
-            const counts = new Map();
-            for (const id of out) {
+            const stack = [...ids];
+            while (stack.length) {
+                const id = stack.pop();
                 const n = a.byId.get(id);
                 if (!n) continue;
-                for (const w of this.schema.dataWires(n)) if (a.reads.has(w)) counts.set(w, (counts.get(w) || 0) + 1);
+                const also = [...this.schema.dataWires(n).filter(w => a.folded.has(w))];
+                if (a.merged.has(id)) also.push(a.merged.get(id));
+                for (const w of also) {
+                    if (out.has(w)) continue;
+                    out.add(w);
+                    stack.push(w);
+                }
             }
-            for (const [w, c] of counts) if (c === a.readers.get(w)) out.add(w);
             return out;
         }
 
-        // How a graph's nodes are drawn. A `name` that reads one of the frame's pins and a `local` aren't nodes of
-        // their own while something reads them: their wire comes from the pin (`reads`: node id -> { pin: its name }
-        // or { local: the declaring node's id }). A call that one statement alone runs is drawn as that statement
-        // (`merged`: the statement's id -> the call's, `mergedInto` the other way). `readers` counts each node's
-        // readers.
-        analyse(g, pins) {
+        // How a graph's nodes are drawn (notes/visual-scripting.md, Simple values are in the input). A value read by
+        // one input is shown in that input and is no node of the board when it's simple: a literal, a name or a
+        // local (the schema's `inline.always`), a member of what is itself shown there (`path`), a `-` over a number
+        // (`negative`), a vector or a colour made of numbers alone (`numbers`: float2(16, 14)): `folded`, as tidec's
+        // layout folds them (graph_layout_fold), so its sizes are the board's.
+        // `shown`: a folded node's id -> { node, path }, the drawn node and its input that shows it. A call that one
+        // statement alone runs is drawn as that statement (`merged`: the statement's id -> the call's, `mergedInto`
+        // the other way). `rootReads` counts a value graph's root as read once, by its Result.
+        analyse(g, { rootReads = false } = {}) {
             const s = this.schema;
             const nodes = Doc.nodes(g);
             const byId = new Map(nodes.map(n => [n.id, n]));
             const readers = new Map();
             const wiresOf = new Map();
+            const readBy = new Map(); // A node read once: by which node, at which path
             for (const n of nodes) {
-                const wires = s.dataWires(n);
-                wiresOf.set(n.id, wires);
-                for (const w of wires) readers.set(w, (readers.get(w) || 0) + 1);
-            }
-            if (g.root) readers.set(g.root, (readers.get(g.root) || 0) + 1);
-            // Names a lambda's parameters hide, for the nodes its value is made of
-            const hidden = new Map(); // node id -> Set of names it can't read from a pin
-            for (const n of nodes) {
-                if (n.k !== 'lambda' || !Array.isArray(n.params) || !n.body) continue;
-                const names = n.params.map(p => p?.name).filter(Boolean);
-                const stack = [n.body], seen = new Set();
-                while (stack.length) {
-                    const id = stack.pop();
-                    if (seen.has(id)) continue;
-                    seen.add(id);
-                    if (!hidden.has(id)) hidden.set(id, new Set());
-                    for (const name of names) hidden.get(id).add(name);
-                    stack.push(...(wiresOf.get(id) || []));
+                const wires = [];
+                for (const p of s.ports(n)) {
+                    if (!p.input || p.exec || !p.path) continue;
+                    const w = s.wire(n, p.path);
+                    if (!w) continue;
+                    wires.push(w);
+                    readers.set(w, (readers.get(w) || 0) + 1);
+                    readBy.set(w, { node: n.id, path: p.path });
                 }
+                wiresOf.set(n.id, wires);
             }
-            const pinNames = new Set((pins || []).map(p => p.name));
-            const reads = new Map();
-            for (const n of nodes) {
-                if (!readers.get(n.id)) continue;
-                if (n.k === 'local' && byId.has(n.ref)) reads.set(n.id, { local: n.ref });
-                else if (n.k === 'name' && !n.local && pinNames.has(n.name) && !hidden.get(n.id)?.has(n.name)) reads.set(n.id, { pin: n.name });
+            if (rootReads && g.root) {
+                readers.set(g.root, (readers.get(g.root) || 0) + 1);
+                readBy.set(g.root, { node: -2, path: null });
+            }
+            const state = new Map(); // 1 being worked out, 2 no, 3 yes
+            const folds = n => {
+                if (state.has(n.id)) return state.get(n.id) === 3;
+                state.set(n.id, 1);
+                const kind = readers.get(n.id) === 1 ? s.inlineKind(n.k) : 0;
+                const inputs = wiresOf.get(n.id) || [];
+                const of = inputs.length === 1 ? byId.get(inputs[0]) : null;
+                let yes = false;
+                if (kind === 1) yes = inputs.length === 0;
+                else if (kind === 2) yes = inputs.length === 0 || (!!of && s.inlineKind(of.k) !== 3 && folds(of));
+                else if (kind === 3) yes = n.op === '-' && !!of && (of.k === 'int' || of.k === 'float') && folds(of);
+                else if (kind === 4 && s.numbersOf.has(n.name)) { // float2(16, -14): each argument a number shown there
+                    yes = inputs.length > 0;
+                    for (let i = 0; yes && i < inputs.length; i++) {
+                        const arg = byId.get(inputs[i]);
+                        yes = !!arg && (arg.k === 'int' || arg.k === 'float' || s.inlineKind(arg.k) === 3) && folds(arg);
+                    }
+                }
+                state.set(n.id, yes ? 3 : 2);
+                return yes;
+            };
+            const folded = new Set();
+            for (const n of nodes) if (folds(n)) folded.add(n.id);
+            const shown = new Map();
+            for (const id of folded) {
+                let at = readBy.get(id);
+                for (let depth = 0; at && folded.has(at.node) && depth < 256; depth++) at = readBy.get(at.node);
+                if (at) shown.set(id, at);
             }
             const merged = new Map(), mergedInto = new Map();
             for (const n of nodes) {
@@ -743,7 +768,64 @@
                 merged.set(n.id, call.id);
                 mergedInto.set(call.id, n.id);
             }
-            return { reads, merged, mergedInto, readers, byId };
+            return { folded, shown, merged, mergedInto, readers, byId };
+        }
+
+        // How big tidec takes a graph's nodes to be (graph_layout_measure, graph_layout_fold): what's laid out and what
+        // isn't drawn go by it. A value shown in an input has no size, and what reads it is as wide as its widest
+        // row. Returns a node's id -> { w, h }, for the nodes that are drawn.
+        sizes(g, analysis = this.analyse(g)) {
+            const schema = this.schema;
+            const text = n => {
+                let widest = 0;
+                for (const v of Object.values(n)) if (typeof v === 'string' && v.length > widest) widest = v.length;
+                return widest;
+            };
+            const shown = (n, depth) => {
+                const wires = schema.dataWires(n);
+                const of = wires.length === 1 && depth < 64 ? analysis.byId.get(wires[0]) : null;
+                return text(n) + (of && analysis.folded.has(of.id) ? 1 + shown(of, depth + 1) : 0);
+            };
+            const sizes = new Map();
+            for (const n of Doc.nodes(g)) {
+                if (analysis.folded.has(n.id)) continue;
+                const wires = schema.dataWires(n);
+                let w = 140 + Math.min(260, text(n) * 8);
+                for (const id of wires) {
+                    const read = analysis.byId.get(id);
+                    if (read && analysis.folded.has(id)) w = Math.max(w, 100 + Math.min(260, shown(read, 0) * 8 + 24));
+                }
+                sizes.set(n.id, { w, h: 48 + 24 * (wires.length + schema.execWires(n).length + 1) });
+            }
+            return sizes;
+        }
+
+        // A simple value as it reads where it's shown: 12, "text", wobble.phase, .Run, -4
+        valueText(g, id, depth = 0) {
+            const n = Doc.nodeIn(g, id);
+            if (!n || depth > 64) return '';
+            switch (n.k) {
+                case 'int': case 'float': case 'char': return String(n.text ?? '');
+                case 'string': return `"${n.text ?? ''}"`;
+                case 'bool': return n.value ? 'true' : 'false';
+                case 'this': case 'default': case 'null': return n.k;
+                case 'name': return String(n.name ?? '');
+                case 'local': return this.schema.declaredLocal(Doc.nodeIn(g, n.ref) || {}) || '?';
+                case 'member': return `${n.shorthand || !n.object ? '' : this.valueText(g, n.object, depth + 1)}.${n.member ?? ''}`;
+                case 'unary': return `${n.op ?? ''}${this.valueText(g, n.value, depth + 1)}`;
+                case 'call': return `${n.name ?? ''}(${(Array.isArray(n.args) ? n.args : []).map(a => this.valueText(g, a, depth + 1)).join(', ')})`;
+                default: return this.schema.title(n.k);
+            }
+        }
+
+        // The nodes of a path, from what it starts at to its last member: [name wobble, member phase]
+        pathNodes(g, id) {
+            const out = [];
+            for (let n = Doc.nodeIn(g, id), depth = 0; n && depth < 64; depth++) {
+                out.unshift(n);
+                n = n.k === 'member' && !n.shorthand && n.object ? Doc.nodeIn(g, n.object) : null;
+            }
+            return out;
         }
 
         // Renames what a frame's code takes, and every read of it in the frame's nodes
@@ -754,20 +836,86 @@
             }
         }
 
-        // Removes the reads of pins and locals among `ids` that nothing reads any more (after their wire went)
-        dropUnread(g, ids, pins) {
-            const pinNames = new Set((pins || []).map(p => p.name));
+        // Removes a simple value nothing reads any more (after its input took another), with what it was made of:
+        // a path's members down to its name, a minus's number. A value that was worked out stays, to be wired again.
+        dropValue(g, id) {
+            const s = this.schema;
             const gone = [];
             const read = new Set();
-            for (const n of Doc.nodes(g)) for (const w of this.schema.dataWires(n)) read.add(w);
+            for (const n of Doc.nodes(g)) for (const w of s.dataWires(n)) read.add(w);
             if (g.root) read.add(g.root);
-            for (const id of ids) {
-                const n = Doc.nodeIn(g, id);
-                if (!n || read.has(id)) continue;
-                if (n.k === 'local' || (n.k === 'name' && !n.local && pinNames.has(n.name))) gone.push(id);
-            }
+            const drop = at => {
+                const n = Doc.nodeIn(g, at);
+                if (!n || read.has(at) || !s.inlineKind(n.k) || gone.includes(at)) return;
+                gone.push(at);
+                // What it alone read goes with it
+                const wires = s.dataWires(n);
+                const others = new Set();
+                for (const o of Doc.nodes(g)) if (o !== n && !gone.includes(o.id)) for (const w of s.dataWires(o)) others.add(w);
+                for (const w of wires) if (!others.has(w) && g.root !== w) { read.delete(w); drop(w); }
+            };
+            drop(id);
             if (gone.length) this.deleteNodes(g, gone);
             return gone;
+        }
+
+        // Puts a value into an input (a path of an input of a node, or null for a value graph's result): `make(doc, g)`
+        // makes the value's nodes and returns the id of the one whose value it is, or 0 for no value. What was there
+        // goes if it was simple. Returns why it can't be, or null.
+        setInput(g, node, path, make) {
+            const s = this.schema;
+            const n = path ? Doc.nodeIn(g, node) : null;
+            const old = path ? (n ? s.wire(n, path) : 0) : g.root;
+            const id = make ? make(this, g) : 0;
+            this.reindex();
+            let why = null;
+            if (!path) why = this.setRoot(g, id || null);
+            else if (id) why = this.connect(g, node, path, id);
+            else this.disconnect(g, node, path);
+            this.reindex();
+            if (why && id) this.dropValue(g, id);
+            else if (old && old !== id) this.dropValue(g, old);
+            return why;
+        }
+
+        // A path's nodes made in a graph: what it starts at ({ name } or { local: the declaring node's id } or
+        // { word: 'this' }), then its members. Returns the id of its last node.
+        makePath(g, start, members, at) {
+            const x = Math.round(at?.x ?? 0), y = Math.round(at?.y ?? 0);
+            let last;
+            if (start.local !== undefined) last = this.newNode('local', x, y, { ref: start.local });
+            else if (start.word) last = this.newNode(start.word, x, y);
+            else if (start.shorthand) last = this.newNode('member', x, y, { shorthand: true, member: start.shorthand });
+            else last = this.newNode('name', x, y, { name: start.name });
+            Doc.nodes(g).push(last);
+            for (const m of members || []) {
+                const node = this.newNode('member', x, y, { member: m });
+                this.schema.setWire(node, ['object'], last.id);
+                Doc.nodes(g).push(node);
+                last = node;
+            }
+            return last.id;
+        }
+
+        // A literal's nodes made in a graph: a number (a minus over it when it's negative), text, yes or no
+        makeLiteral(g, kind, text, at) {
+            const x = Math.round(at?.x ?? 0), y = Math.round(at?.y ?? 0);
+            const order = this.schema.nodeOrder(kind);
+            if (kind === 'int' || kind === 'float') {
+                const negative = String(text).startsWith('-');
+                const n = this.newNode(kind, x, y, { text: negative ? String(text).slice(1) : String(text) });
+                Doc.nodes(g).push(n);
+                if (!negative) return n.id;
+                const minus = this.newNode('unary', x, y, { op: '-' });
+                this.schema.setWire(minus, ['value'], n.id);
+                Doc.nodes(g).push(minus);
+                return minus.id;
+            }
+            const n = this.newNode(kind, x, y);
+            if (kind === 'bool') set(n, 'value', text === true || text === 'true', order);
+            else if (text !== undefined) set(n, 'text', String(text), order);
+            Doc.nodes(g).push(n);
+            return n.id;
         }
 
         // A declaration of a type by its name, wherever the file has it: { value, list }

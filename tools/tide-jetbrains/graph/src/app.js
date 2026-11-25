@@ -179,9 +179,16 @@
             if (!this.editor) return;
             this.problemCounts = null;
             if (what === 'check') {
-                // The types tidels found: the colours of pins and wires
-                for (const f of this.board.frames.values()) if (f.mode === 'near') f.drawWires();
-                if (this.board.valueFrame) this.board.valueFrame.drawWires();
+                // What tidels found: the colours of pins, wires and names by their types, and what a call's
+                // arguments are called. Frames say those, so they're drawn again when any changed.
+                const found = JSON.stringify([this.lang.callsKnown, this.lang.calls, this.lang.types]);
+                if (found !== this.found) {
+                    this.found = found;
+                    this.board.redrawFrames();
+                } else {
+                    for (const f of this.board.frames.values()) if (f.mode === 'near') f.drawWires();
+                    if (this.board.valueFrame) this.board.valueFrame.drawWires();
+                }
             }
             if (what === 'check' || what === 'diagnostics') {
                 this.board.markProblems();
@@ -229,7 +236,8 @@
             chip.style.display = text ? '' : 'none';
         }
 
-        // The list of problems: each with the compiler's words, what it's on, and a click to go there
+        // The list of problems: each with its words (the compiler's; the editor's own for an input with nothing in
+        // it), what it's on, and a click to go there
         showProblems() {
             const ed = this.editor;
             if (!ed) return;
@@ -250,7 +258,7 @@
                     title: d.node ? 'Go to it' : '',
                 },
                 el('span.tg-problem-mark', { text: d.severity === 1 ? '●' : '▲' }),
-                el('span.tg-problem-text', null, el('span.tg-problem-message', { text: d.message }), d.note ? el('span.tg-problem-note', { text: d.note }) : null),
+                el('span.tg-problem-text', null, el('span.tg-problem-message', { text: this.board.wordsOf(d) }), d.note && !d.port ? el('span.tg-problem-note', { text: d.note }) : null),
                 item ? el('span.tg-problem-where', { text: `${ed.doc.titleOf(item)}${e && e.id !== item.id && e.role !== 'node' ? ' · ' + ed.doc.describe(e) : ''}` }) : null));
             }
             popup({ anchor: this.statusChip, className: 'tg-popup tg-problems-popup', content: body });
@@ -572,7 +580,7 @@
                         const target = Doc.nodeIn(g, from.node);
                         const old = target ? s.wire(target, from.path) : 0;
                         say(doc.connect(g, from.node, from.path, node.id));
-                        if (old) { doc.reindex(); doc.dropUnread(g, [old], frame.pins); }
+                        if (old) { doc.reindex(); doc.dropValue(g, old); }
                     }
                 } else if (from?.exec && statement) {
                     if (!from.input) {
@@ -597,6 +605,7 @@
             if (whys.length) toast(`That wire can't be: ${whys[0]}.`);
             if (!made) return;
             ed.selectNodes(frame.slot, [made.id]);
+            this.board.showNode(this.board.frameOf(frame.slot), made.id);
             // A node that starts with a name to give has it selected to type over
             const named = ed.doc.get(made.id);
             const own = named?.k === 'eval' ? ed.doc.get(named.value) : named;
@@ -663,7 +672,7 @@
                     const f = this.activeFrame();
                     const g = f?.graph;
                     if (g) {
-                        const ids = [...Doc.nodes(g).filter(n => !f.analysis.reads.has(n.id) && !f.analysis.mergedInto.has(n.id)).map(n => n.id), ...(g.notes || []).map(n => n.id)];
+                        const ids = [...Doc.nodes(g).filter(n => f.drawn(n)).map(n => n.id), ...(g.notes || []).map(n => n.id)];
                         ed.selectNodes(f.slot, ids);
                     } else {
                         ed.pick(ed.doc.items().filter(i => !i.region).map(i => i.id));
@@ -756,9 +765,9 @@
                 dy = at.y - Math.min(...xs.map(n => Number(n.y) || 0));
             }
             const made = ed.paste(text, dx, dy, f.slot);
-            // What's selected is what's drawn: not the reads of pins that came with it
+            // What's selected is what's drawn: not the values shown in inputs that came with it
             f.refresh();
-            ed.selectNodes(f.slot, made.filter(id => !f.analysis.reads.has(id) && !f.analysis.mergedInto.has(id)));
+            ed.selectNodes(f.slot, made.filter(id => { const n = ed.doc.get(id); return !n || n.k === undefined || f.drawn(n); }));
             this.checkSoon();
         }
 

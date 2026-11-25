@@ -317,7 +317,6 @@
         const hasRows = has('members') || has('entries');
         const listKey = has('entries') ? 'entries' : 'members';
         const rowsOf = () => (Array.isArray(v[listKey]) ? v[listKey] : []);
-        const rowWord = has('entries') ? 'entry' : isEnum ? 'member' : (s.memberSpec('field')?.title || 'field').toLowerCase();
 
         function addRow() {
             let made;
@@ -409,7 +408,7 @@
             }
         }
         if (hasRows) {
-            G.ui.put(rows, button('+ ' + rowWord, addRow, isEnum ? 'Another choice' : has('entries') ? 'Another setting' : s.memberSpec('field')?.summary, 'tg-add-row'));
+            G.ui.put(rows, button(s.addRow(v.kind, false), addRow, isEnum ? 'Another choice' : has('entries') ? 'Another setting' : s.memberSpec('field')?.summary, 'tg-add-row'));
         }
         if (has('type')) {
             // One value: a constant, an asset, another name for a type
@@ -436,14 +435,14 @@
     // Whether a literal is what a type's control shows
     function sameControl(doc, g, type) {
         const what = G.values.classify(g);
-        const tk = G.values.typeKind(type, doc);
+        const tk = G.values.typeKind(type, doc, app.lang);
         if (what.kind === 'none') return false;
         return (tk.kind === 'number' && what.kind === 'number') || (tk.kind === what.kind) || (tk.kind === 'other');
     }
 
     // What a value that has to be there starts as, by its type
     function defaultValue(doc, type) {
-        const tk = G.values.typeKind(type, doc);
+        const tk = G.values.typeKind(type, doc, app.lang);
         switch (tk.kind) {
             case 'number': return doc.valueGraph(tk.whole ? 'int' : 'float', tk.whole ? '0' : '0.0');
             case 'bool': return doc.valueGraph('bool', 'false');

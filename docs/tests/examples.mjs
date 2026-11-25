@@ -564,7 +564,8 @@ try {
             const within = f.el;
             return {
                 nodes: within.querySelectorAll('.tg-node:not(.tg-entry)').length,
-                graphNodes: f.graph.nodes.length - f.analysis.reads.size - f.analysis.merged.size,
+                graphNodes: f.graph.nodes.length - f.analysis.folded.size - f.analysis.merged.size,
+                values: within.querySelectorAll('.tg-path, .tg-inline-number').length,
                 pins: within.querySelectorAll('.tg-entry .tg-pin').length,
                 wires: within.querySelectorAll('.tg-wires path').length,
                 exec: within.querySelectorAll('.tg-wires path.tg-wire-exec').length,
@@ -575,8 +576,8 @@ try {
                 themed: doc.documentElement.classList.contains(document.documentElement.classList.contains('dark') ? 'tg-dark' : 'tg-light'),
             };
         })()`));
-        assert.equal(view.nodes, view.graphNodes, `every node of Fall is drawn, its parameters' reads as wires from their pins: ${JSON.stringify(view)}`);
-        assert.ok(view.pins >= 4 && view.wires > 10 && view.exec >= 3 && view.bad === 0, `pins and wires are drawn: ${JSON.stringify(view)}`);
+        assert.equal(view.nodes, view.graphNodes, `every node of Fall is drawn but the simple values, which are in the inputs that read them: ${JSON.stringify(view)}`);
+        assert.ok(view.pins >= 4 && view.values > 10 && view.wires > view.exec && view.exec >= 3 && view.bad === 0, `pins, values in inputs and wires are drawn: ${JSON.stringify(view)}`);
         assert.ok(view.cards >= 10 && view.frames >= 7 && view.themed, `the board's cards and frames, in the site's theme: ${JSON.stringify(view)}`);
         assert.equal(view.source, 0, 'the Tide the graph stands for is not on screen');
         await until(inGraph(`doc.querySelector('.tg-status').textContent === 'Checked' && app.lang.text?.includes('system Fall(')`),

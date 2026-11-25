@@ -1,8 +1,9 @@
 // A frame: a titled box on the board that holds the nodes of one piece of code (a system's, a function's, a type's
 // method's...). Its first node is the entry: the kind's sentence, a row with a pin for each thing the code takes,
-// and the arrow the first statement is wired from. A read of a parameter or of a local isn't a node: its wire comes
-// from the parameter's pin, or from the pin of the node that declares the local. A value that's more than a literal
-// opens as a small frame of its own beside its card, with a Result where its value goes.
+// and the arrow the first statement is wired from. A node's input is a row: its name, then what's in it. A simple
+// value (a number, a name, a path of fields) is shown and changed there, and is no node and has no wire; a value
+// that's worked out is a node wired in (notes/visual-scripting.md, Simple values are in the input). A value that's
+// more than a literal opens as a small frame of its own beside its card, with a last node where its value goes.
 (function (G) {
     'use strict';
     const { el, svg, field, select, button, menu, typeColor } = G.ui;
@@ -16,11 +17,7 @@
     const HEAD = 48, PAD = 16, BOTTOM = 40, ENTRY_W = 320, NODE_X0 = PAD + ENTRY_W + 60;
     const MIN_W = NODE_X0 + 330, MIN_H = 190; // Room in an empty frame to say what to do, and to drop a first wire in
 
-    // What a node's own flags are called, where the schema has no word for them
-    const FLAG_WORDS = {
-        mut: 'Can be changed', shared: 'Shared between threads', indexed: 'With its index', postfix: 'After reading it', withBlock: 'Holds code of its own',
-        stacked: 'Shares the block of the call before', shorthand: 'Type left out (.Name)', local: 'This machine\'s',
-    };
+    const ONE = ['++', '--']; // The ways Set changes a value that take no value
 
     function portKey(p) {
         if (p.pin !== undefined) return `${ENTRY}|o|d|pin:${p.pin}`;
@@ -28,13 +25,10 @@
         return `${p.node}|${p.input ? 'i' : 'o'}|${p.exec ? 'x' : 'd'}|${p.path ? p.path.join('.') : ''}`;
     }
 
-    // How big tidec takes a node to be (graph_layout_measure): what's laid out and what isn't drawn go by it
-    function estimate(schema, n) {
-        let widest = 0;
-        for (const v of Object.values(n)) if (typeof v === 'string' && v.length > widest) widest = v.length;
-        const ports = schema.dataWires(n).length + schema.execWires(n).length + 1;
-        return { w: 140 + Math.min(260, widest * 8), h: 48 + 24 * ports };
-    }
+    // How big tidec takes a graph's nodes to be, and what an input is called on its node: the model's (Doc.sizes,
+    // Lang.inputLabel)
+    const estimate = (schema, g, analysis) => Doc.prototype.sizes.call({ schema }, g, analysis);
+    const inputLabel = (app, node, p, always = false) => app.lang.inputLabel(app.editor.schema, node, p, always);
 
     class FrameView {
         // `item`: the board's item of a frame of code, or null for a value's frame, which `value` describes:
@@ -70,8 +64,9 @@
             if (item) this.item = item;
             this.pins = this.isValue ? [] : this.doc.pinsOfSlot(this.slot);
             const g = this.graph;
-            this.analysis = g ? this.doc.analyse(g, this.pins) : { reads: new Map(), merged: new Map(), mergedInto: new Map(), readers: new Map(), byId: new Map() };
+            this.analysis = g ? this.doc.analyse(g, { rootReads: this.isValue }) : { folded: new Set(), shown: new Map(), merged: new Map(), mergedInto: new Map(), readers: new Map(), byId: new Map() };
             this.reached = g ? this.doc.reached(g) : new Set();
+            this.sizes = g ? estimate(this.schema, g, this.analysis) : new Map();
             this.estimateSize();
         }
 
@@ -81,8 +76,8 @@
             const s = this.schema;
             let x0 = 0, y0 = 0, x1 = 0, y1 = 0, first = true;
             for (const n of g ? Doc.nodes(g) : []) {
-                if (this.analysis.reads.has(n.id) || this.analysis.mergedInto.has(n.id)) continue;
-                const e = estimate(s, n);
+                if (!this.drawn(n)) continue;
+                const e = this.sizes.get(n.id);
                 const x = Number(n.x) || 0, y = Number(n.y) || 0;
                 if (first || x < x0) x0 = x;
                 if (first || y < y0) y0 = y;
@@ -99,6 +94,12 @@
             const w = this.nodeX + (x1 - this.origin.x) + (this.isValue ? 60 + 160 : 0) + BOTTOM;
             const h = PAD + Math.max(y1 - this.origin.y, entryH) + BOTTOM;
             this.size = { w: Math.max(this.isValue ? 300 : MIN_W, w), h: Math.max(this.isValue ? 130 : MIN_H, h) };
+        }
+
+        // Whether a node of the graph is drawn as a node: not a value shown in the input that reads it, nor a call
+        // drawn as its statement
+        drawn(n) {
+            return !this.analysis.folded.has(n.id) && !this.analysis.mergedInto.has(n.id);
         }
 
         rowCount() {
@@ -208,16 +209,13 @@
             else this.renderEntry(g);
             if (g) {
                 for (const note of g.notes || []) this.renderNote(note);
-                for (const n of Doc.nodes(g)) {
-                    if (this.analysis.reads.has(n.id) || this.analysis.mergedInto.has(n.id)) continue;
-                    this.renderNode(n);
-                }
+                for (const n of Doc.nodes(g)) if (this.drawn(n)) this.renderNode(n);
             }
             if (!this.isValue && g && !Doc.nodes(g).length) {
                 G.ui.put(this.nodesLayer, el('div.tg-frame-hint', { style: { left: PAD + ENTRY_W + 30 + 'px', top: PAD + 1 + 'px' } },
                     el('span.tg-frame-hint-arrow', { text: '←' }), 'Drag from the arrow to add what happens'));
             } else if (this.isValue && g && !g.root) {
-                G.ui.put(this.nodesLayer, el('div.tg-frame-hint', { style: { left: PAD + 'px', top: PAD + 70 + 'px' } }, 'Right-click, or drag from the dot, to make its value'));
+                G.ui.put(this.nodesLayer, el('div.tg-frame-hint', { style: { left: PAD + 'px', top: PAD + 70 + 'px' } }, 'Click "pick…" for its value; "Work it out…" there makes a node'));
             }
             this.measure();
             this.drawWires();
@@ -232,8 +230,8 @@
                 G.ui.put(far, svg('rect', { x: PAD, y: PAD, width: ENTRY_W, height: 34 + 26 * (this.rowCount() + 1), rx: 10, class: 'tg-far-entry' }));
             }
             for (const n of g ? Doc.nodes(g) : []) {
-                if (this.analysis.reads.has(n.id) || this.analysis.mergedInto.has(n.id)) continue;
-                const e = estimate(s, n);
+                if (!this.drawn(n)) continue;
+                const e = this.sizes.get(n.id);
                 const r = svg('rect', { x: this.dx(n), y: this.dy(n), width: e.w, height: Math.max(40, e.h - 24), rx: 10 });
                 r.style.fill = s.color(n.k);
                 if (!this.reached.has(n.id)) r.style.opacity = 0.35;
@@ -254,9 +252,9 @@
             const order = item.accessor ? s.element('accessor') : spec?.keys || [];
             const own = [...(item.type?.typeParams || []), ...(v.typeParams || [])];
             const edit = change => app.edit(change);
-            const view = el('div.tg-node.tg-entry', { dataset: { id: ENTRY }, style: { left: PAD + 'px', top: PAD + 'px', width: ENTRY_W + 'px' } });
+            const view = el('div.tg-node.tg-entry', { dataset: { id: ENTRY, entry: item.id }, style: { left: PAD + 'px', top: PAD + 'px', width: ENTRY_W + 'px' } });
             const record = { el: view, node: { id: ENTRY }, fixed: true, x: PAD, y: PAD };
-            const sentence = item.accessor ? (v.word === 'set' ? 'When it is set, with' : 'When it is read') : spec?.sentence || (order.includes('params') ? s.keyLabel('params') : spec?.title || '');
+            const sentence = item.accessor ? s.accessorInfo[v.word]?.label || v.word || '' : spec?.sentence || (order.includes('params') ? s.keyLabel('params') : spec?.title || '');
             const head = el('div.tg-entry-head', null, el('span.tg-entry-sentence', { text: sentence }));
             if (g) {
                 const port = { node: ENTRY, input: false, exec: true, path: null, label: 'start' };
@@ -270,7 +268,7 @@
             const pinOf = (name, type) => {
                 const port = { node: ENTRY, input: false, exec: false, pin: name, label: name, type };
                 const dot = el('span.tg-dot');
-                const row = el('span.tg-port.tg-out.tg-pin', { dataset: { port: portKey(port) }, title: `Drag from here to use ${name}` }, dot);
+                const row = el('span.tg-port.tg-out.tg-pin', { dataset: { port: portKey(port), pin: name }, title: `Drag from here into an input to use ${name}` }, dot);
                 this.ports.set(portKey(port), { port, dot, row, view: record });
                 return row;
             };
@@ -347,7 +345,7 @@
             } else if (order.includes('params')) {
                 const list = Array.isArray(v.params) ? v.params : [];
                 for (const p of list) G.ui.put(rows, this.paramRow(v, list, p, 0, pinOf, rename, own));
-                G.ui.put(rows, button('+ needs…', e => G.pickers.needsPicker(app, item, { anchor: e.currentTarget }),
+                G.ui.put(rows, button(s.addRow(v.kind, !!item.member), e => G.pickers.needsPicker(app, item, { anchor: e.currentTarget }),
                     'Add something it takes: pick what', 'tg-add-row'));
             }
             // What it gives back
@@ -441,19 +439,17 @@
 
         // A value's result: where its value is wired
         renderResult(g) {
-            const nodes = g ? Doc.nodes(g).filter(n => !this.analysis.reads.has(n.id) && !this.analysis.mergedInto.has(n.id)) : [];
+            const nodes = g ? Doc.nodes(g).filter(n => this.drawn(n)) : [];
             const root = g ? Doc.nodeIn(g, g.root) : null;
             let right = 0;
-            for (const n of nodes) right = Math.max(right, this.dx(n) + estimate(this.schema, n).w);
-            const x = nodes.length ? right + 60 : PAD + 200;
-            const y = root && !this.analysis.reads.has(root.id) ? this.dy(root) : PAD;
-            const port = { node: RESULT, input: true, exec: false, path: null, label: 'value' };
-            const dot = el('span.tg-dot');
-            const row = el('div.tg-port.tg-in', { dataset: { port: portKey(port) } }, dot, el('span.tg-port-label', { text: this.value.type || 'its value' }));
+            for (const n of nodes) right = Math.max(right, this.dx(n) + this.sizes.get(n.id).w);
+            const x = nodes.length ? right + 60 : PAD;
+            const y = root && this.drawn(root) ? this.dy(root) : PAD;
+            const port = { node: RESULT, input: true, exec: false, path: null, label: this.value.type || 'its value' };
             const view = el('div.tg-node.tg-result', { dataset: { id: RESULT }, style: { left: x + 'px', top: y + 'px' } },
-                el('div.tg-node-header', null, el('span.tg-node-kind', { text: this.schema.keyLabel(this.value.key === 'components' ? 'value' : this.value.key || 'value') })), row);
+                el('div.tg-node-header', null, el('span.tg-node-title', { text: this.schema.keyLabel(this.value.key === 'components' ? 'value' : this.value.key || 'value') })));
             const record = { el: view, node: { id: RESULT }, fixed: true, x, y };
-            this.ports.set(portKey(port), { port, dot, row, view: record });
+            G.ui.put(view, this.inputRow(port, record));
             G.ui.put(this.nodesLayer, view);
             this.views.set(RESULT, record);
         }
@@ -478,19 +474,16 @@
         // ---------------------------------------------------------------------------------------------------------
         // Nodes
 
-        // What a node's flag is called
-        flagWord(key) {
-            return this.schema.json.nodeKeyInfo?.[key]?.label || FLAG_WORDS[key] || this.schema.keyLabel(key);
-        }
-
-        // A node: its kind and what it's called, its own values, its inputs on the left and its outputs on the right
+        // A node. Its title is what it does in the node's own words (a call's name, "ball.Bounce", "Set"), each input
+        // is a row (its name, then what's in it), and its outputs are on the right. A value read by one input and
+        // simple (a number, a name, a path of fields) is no node: it's shown and changed in that input's row.
         renderNode(n) {
             const s = this.schema;
             const app = this.app;
-            const g = this.graph;
+            const a = this.analysis;
             // A call that one statement runs is drawn as the statement: the call's name and inputs, the statement's
             // place, arrows and value
-            const call = this.analysis.merged.has(n.id) ? this.analysis.byId.get(this.analysis.merged.get(n.id)) : null;
+            const call = a.merged.has(n.id) ? a.byId.get(a.merged.get(n.id)) : null;
             const shown = call || n;
             const spec = s.node(shown.k);
             const own = s.node(n.k);
@@ -502,19 +495,19 @@
             const execIn = ports.find(p => p.input && p.exec), execOuts = ports.filter(p => !p.input && p.exec);
             const record = { el: null, node: n, x: this.dx(n), y: this.dy(n), ids: call ? [n.id, call.id] : [n.id] };
             const dotOf = p => el('span.tg-dot' + (p.exec ? '.tg-dot-exec' : ''));
-            const portRow = (p, ...extra) => {
+            const outRow = p => {
                 const dot = dotOf(p);
-                const row = el('div.tg-port' + (p.input ? '.tg-in' : '.tg-out') + (p.exec ? '.tg-port-exec' : '') + (p.local !== undefined ? '.tg-pin' : ''),
-                    { dataset: { port: portKey(p) } },
-                    p.input ? dot : null, extra, p.label ? el('span.tg-port-label', { text: p.label }) : null, p.input ? null : dot);
+                const row = el('div.tg-port.tg-out' + (p.exec ? '.tg-port-exec' : '') + (p.local !== undefined ? '.tg-pin' : ''),
+                    { dataset: { port: portKey(p) }, title: p.local !== undefined ? `Drag from here to use ${p.label}` : undefined },
+                    p.label ? el('span.tg-port-label', { text: p.label }) : null, dot);
                 this.ports.set(portKey(p), { port: p, dot, row, view: record });
                 return row;
             };
 
             if (!spec) {
                 const view = el('div.tg-node.tg-unknown', { dataset: { id: n.id }, style: { left: record.x + 'px', top: record.y + 'px' } },
-                    el('div.tg-node-header', null, el('span.tg-node-kind', { text: n.k })),
-                    el('div.tg-node-unknown', { text: `This editor doesn't know '${n.k}' nodes. It's kept as it is.` }), ports.map(p => portRow(p)));
+                    el('div.tg-node-header', null, el('span.tg-node-title', { text: n.k })),
+                    el('div.tg-node-unknown', { text: `This editor doesn't know '${n.k}' nodes. It's kept as it is.` }), ports.map(p => (p.input ? this.inputRow(p, record) : outRow(p))));
                 record.el = view;
                 G.ui.put(this.nodesLayer, view);
                 this.views.set(n.id, record);
@@ -531,7 +524,29 @@
                 if (key === 'ref' && shown.k === 'local') continue;
                 if (key === 'op') {
                     const ops = s.ops(shown) || [];
-                    op = select(shown.op ?? '', ops.map(o => [o, shown.k === 'binary' || shown.k === 'unary' ? `${o}  ${s.opTitle(o)}` : o]), v => edit('op', v), 'Which one', 'tg-select.tg-op');
+                    const named = shown.k === 'binary' || shown.k === 'unary';
+                    // An operator is its node's title, by what it's called: picking another there changes the node
+                    // (Adding or taking away one takes no value: what was there goes with the choice)
+                    const pick = v => app.edit(doc => {
+                        set(shown, 'op', v, order);
+                        if (shown.k === 'assign' && ONE.includes(v) && shown.value) {
+                            const old = shown.value;
+                            delete shown.value;
+                            doc.reindex();
+                            doc.dropValue(this.graph, old);
+                        }
+                    });
+                    if (shown.k === 'assign') {
+                        // How Set changes what it sets: its sign on a button that says it in words, and a menu of
+                        // what each does (the schema's `assignInfo`)
+                        const words = s.assignLabel(shown.op);
+                        op = button(shown.op ?? '=', e => menu(e.clientX, e.clientY, ops.map(o => ({
+                            label: s.assignLabel(o) || o, hint: s.assignLabel(o) ? o : undefined, name: 'op:' + o, checked: o === shown.op, run: () => pick(o),
+                        })), { anchor: e.currentTarget, title: 'How it changes it' }), words ? `It ${words}: pick another way` : 'How it changes it', 'tg-op.tg-op-button');
+                        op.dataset.op = shown.op ?? '';
+                        continue;
+                    }
+                    op = select(shown.op ?? '', ops.map(o => [o, named ? `${s.opTitle(o, shown.k === 'unary')}  ${o}` : o]), pick, named ? 'What it does: pick another' : 'How it changes it', named ? 'tg-select.tg-op.tg-op-title' : 'tg-select.tg-op');
                     continue;
                 }
                 if (type === 'flag') {
@@ -539,7 +554,7 @@
                         const box = el('input', { type: 'checkbox', checked: !!shown.value, onchange: e => edit('value', e.target.checked), onpointerdown: e => e.stopPropagation() });
                         fields.push(el('label.tg-value-bool', { onpointerdown: e => e.stopPropagation() }, box, el('span', { text: shown.value ? 'yes' : 'no' })));
                     } else if (shown[key]) {
-                        tags.push(el('span.tg-node-tag', { text: this.flagWord(key).toLowerCase() }));
+                        tags.push(el('span.tg-node-tag', { text: s.flagLabel(key).toLowerCase(), title: s.flagHelp(key) }));
                     }
                     continue;
                 }
@@ -559,8 +574,7 @@
                 }
                 if (type === 'type') {
                     const optional = spec.declares || shown.k === 'lambda';
-                    const label = el('span.tg-field-label', { text: key === 'type' ? '' : s.keyLabel(key) });
-                    fields.push(el('span.tg-field', null, label.textContent ? label : null, G.cards.typeChip(app, {
+                    fields.push(el('span.tg-field', null, key === 'type' ? null : el('span.tg-field-label', { text: s.keyLabel(key) }), G.cards.typeChip(app, {
                         type: shown[key], at: shown.id, fk: `${shown.id}:${key}`, placeholder: optional ? 'any type' : 'pick a type',
                         allow: optional ? { none: 'Work it out', noneSummary: 'The type of the value it gets' } : {},
                         onPick: t => edit(key, t),
@@ -588,79 +602,325 @@
                 }
             }
 
-            // A value with nothing wired in, and one value of its own or none: a chip, with its output beside it
+            // A value with nothing in it to wire, and one value of its own or none: a pill, with its pin beside it
             const chip = !spec.exec && !call && !inputs.length && !execOuts.length && fields.length + (primary ? 1 : 0) <= 1 && !op && !spec.lists && !spec.items && !spec.map && outs.length === 1;
             const view = el('div.tg-node' + (own?.exec ? '.tg-exec' : '.tg-data') + (chip ? '.tg-chipnode' : '') + (reached ? '' : '.tg-dim'),
                 { dataset: { id: n.id }, style: { left: record.x + 'px', top: record.y + 'px', '--tg-cat': s.color(shown.k) } });
             record.el = view;
-            const kindTitle = shown.k === 'binary' || shown.k === 'unary' ? s.opTitle(shown.op) : shown.k === 'member' ? (shown.shorthand ? '.' : s.title('member')) : spec.title;
+            const words = shown.k === 'binary' || shown.k === 'unary' ? s.opTitle(shown.op, shown.k === 'unary') : spec.title;
             const moreButton = button('⋯', e => this.nodeMenu(n, e.clientX, e.clientY), 'More', 'tg-more.tg-node-more');
             if (chip) {
                 const out = outs[0];
                 const dot = dotOf(out);
-                const row = el('div.tg-port.tg-out.tg-chip-row', { dataset: { port: portKey(out) }, title: s.help(shown.k) },
-                    fields.length || primary ? null : el('span.tg-node-kind', { text: kindTitle }),
-                    shown.k === 'member' && shown.shorthand ? el('span.tg-node-kind', { text: '.' }) : null,
-                    primary, fields, tags, dot);
+                const lone = shown.k === 'local' ? el('span.tg-node-name', { text: this.doc.valueText(this.graph, shown.id) }) : null;
+                const row = el('div.tg-port.tg-out.tg-chip-row', { dataset: { port: portKey(out) }, title: reached ? s.help(shown.k) : `${s.help(shown.k)}. Nothing uses it yet: drag from its pin into an input.` },
+                    fields.length || primary || lone ? null : el('span.tg-node-title', { text: words }),
+                    shown.k === 'member' && shown.shorthand ? el('span.tg-node-dot', { text: '.' }) : null,
+                    primary, lone, fields, tags, dot);
                 this.ports.set(portKey(out), { port: out, dot, row, view: record });
                 G.ui.put(view, row);
-            } else {
-                const header = el('div.tg-node-header', { title: s.help(shown.k) });
-                if (execIn) {
-                    const dot = dotOf(execIn);
-                    const row = el('span.tg-port.tg-in.tg-port-exec.tg-head-port', { dataset: { port: portKey(execIn) } }, dot);
-                    this.ports.set(portKey(execIn), { port: execIn, dot, row, view: record });
-                    G.ui.put(header, row);
-                }
-                // A value made of one other (a field of it, not it): its input on the title's row too, one line in all
-                const headIn = !execIn && inputs.length === 1 && !inputs[0].group && !fields.length && !spec.lists && !spec.items && !spec.map ? inputs[0] : null;
-                if (headIn) {
-                    const dot = dotOf(headIn);
-                    const row = el('span.tg-port.tg-in.tg-head-port', { dataset: { port: portKey(headIn) }, title: `Wire in what it is ${headIn.label}` }, dot);
-                    this.ports.set(portKey(headIn), { port: headIn, dot, row, view: record });
-                    G.ui.put(header, row);
-                }
-                // An operator's choice says what it is
-                G.ui.put(header, el('span.tg-node-kind', { text: call || (op && (shown.k === 'binary' || shown.k === 'unary')) ? '' : kindTitle }), primary, op, tags, el('span.tg-grow'), moreButton);
-                // The first output on the title's row keeps the node short: next for a statement, the value else
-                const headOut = own?.exec ? execOuts.find(p => G.samePath(p.path, ['next'])) : outs.find(p => p.local === undefined);
-                if (headOut) {
-                    const dot = dotOf(headOut);
-                    const row = el('span.tg-port.tg-out.tg-head-port' + (headOut.exec ? '.tg-port-exec' : ''), { dataset: { port: portKey(headOut) }, title: headOut.exec ? 'What happens next' : 'Its value' }, dot);
-                    this.ports.set(portKey(headOut), { port: headOut, dot, row, view: record });
-                    G.ui.put(header, row);
-                }
-                G.ui.put(view, header);
-                if (shown.comment || n.comment) G.ui.put(view, el('div.tg-node-comment', { text: n.comment || shown.comment, title: n.comment || shown.comment }));
-                if (fields.length) G.ui.put(view, el('div.tg-node-fields', null, fields.map(f => el('div.tg-field-row', null, f))));
-                const left = el('div.tg-col.tg-col-in'), right = el('div.tg-col.tg-col-out');
-                let group = null, last = null;
-                const addMore = () => {
-                    if (!last) return;
-                    const more = this.groupAdd(shown, last);
-                    if (more) G.ui.put(left, more);
-                    last = null;
-                };
-                for (const p of inputs) {
-                    if (p === headIn) continue;
-                    if (p.group !== group) { addMore(); group = p.group; }
-                    G.ui.put(left, portRow(p));
-                    if (p.group) last = p;
-                }
-                addMore();
-                for (const key of this.emptyGroups(shown, inputs)) G.ui.put(left, this.groupAdd(shown, { key, group: key }));
-                for (const p of [...outs, ...execOuts]) {
-                    if (p === headOut) continue;
-                    G.ui.put(right, portRow(p));
-                }
-                if (left.childNodes.length || right.childNodes.length) G.ui.put(view, el('div.tg-node-ports', null, left, right));
+                G.ui.put(this.nodesLayer, view);
+                this.views.set(n.id, record);
+                return;
             }
+
+            const header = el('div.tg-node-header', { title: s.help(shown.k) });
+            if (execIn) {
+                const dot = dotOf(execIn);
+                const row = el('span.tg-port.tg-in.tg-port-exec.tg-head-port', { dataset: { port: portKey(execIn) } }, dot);
+                this.ports.set(portKey(execIn), { port: execIn, dot, row, view: record });
+                G.ui.put(header, row);
+            }
+            // What a method is called on, or a field is of: in the title when it's a name or a path (ball.Bounce),
+            // on the title's row when it's wired from a node, a row of its own when the title's row has an arrow
+            const objectPort = shown.k === 'method' || shown.k === 'member' ? inputs.find(p => p.key === 'object') : null;
+            const objectWire = objectPort ? this.wireOf(objectPort) : 0;
+            const objectNode = !!objectWire && !a.folded.has(objectWire);
+            const objectRow = objectNode && (!!execIn || inputs.length > 1);
+            const rowInputs = inputs.filter(p => p !== objectPort || objectRow);
+            // A value made of one other with nothing else to set: its input on the title's row, one line in all
+            const headIn = objectPort && objectNode && !objectRow ? objectPort
+                : !objectPort && !execIn && !op && rowInputs.length === 1 && !rowInputs[0].group && !fields.length && !spec.lists && !spec.items && !spec.map && this.wireOf(rowInputs[0]) && !a.folded.has(this.wireOf(rowInputs[0])) ? rowInputs[0] : null;
+            if (headIn) {
+                const dot = dotOf(headIn);
+                const row = el('span.tg-port.tg-in.tg-head-port', { dataset: { port: portKey(headIn) }, title: `What it is ${headIn.label}: a wire from a node` }, dot);
+                this.ports.set(portKey(headIn), { port: headIn, dot, row, view: record, label: headIn.label });
+                G.ui.put(header, row);
+            }
+            if (objectPort && !objectNode) {
+                // In the title: a chip to change it by, or "pick…"
+                const dot = el('span.tg-dot.tg-dot-off');
+                const row = el('span.tg-port.tg-in.tg-inline.tg-title-port', { dataset: { port: portKey(objectPort) } }, dot,
+                    objectWire ? this.pathChip(objectPort, objectWire) : this.pickButton(objectPort));
+                this.ports.set(portKey(objectPort), { port: objectPort, dot, row, view: record, label: objectPort.label });
+                G.ui.put(header, row);
+            }
+            if (objectPort) G.ui.put(header, el('span.tg-node-dot', { text: '.' }));
+            // How Set changes what it sets (=, +=) reads between the two: its choice is the name of its value's row.
+            // An operator's own choice (Multiply, Less than) is its node's title.
+            const titled = op && (shown.k === 'binary' || shown.k === 'unary');
+            // One that adds or takes away one (++) has no value: its choice comes after what it changes
+            const alone = op && shown.k === 'assign' && !inputs.some(p => p.key === 'value');
+            const opRow = op && !titled ? rowInputs.filter(p => !p.group && p !== headIn).at(-1) : null;
+            G.ui.put(header, primary && !objectPort && shown.k !== 'call' ? el('span.tg-node-title', { text: words }) : null,
+                primary || (titled ? op : el('span.tg-node-title', { text: words })), opRow || titled ? null : op, tags, el('span.tg-grow'), moreButton);
+            // The first output on the title's row keeps the node short: next for a statement, the value else
+            const headOut = own?.exec ? execOuts.find(p => G.samePath(p.path, ['next'])) : outs.find(p => p.local === undefined);
+            if (headOut) {
+                const dot = dotOf(headOut);
+                const row = el('span.tg-port.tg-out.tg-head-port' + (headOut.exec ? '.tg-port-exec' : ''), { dataset: { port: portKey(headOut) }, title: headOut.exec ? 'What happens next: drag from here' : 'Its value: drag from here into an input' }, dot);
+                this.ports.set(portKey(headOut), { port: headOut, dot, row, view: record });
+                G.ui.put(header, row);
+            }
+            G.ui.put(view, header);
+            if (shown.comment || n.comment) G.ui.put(view, el('div.tg-node-comment', { text: n.comment || shown.comment, title: n.comment || shown.comment }));
+            if (fields.length) G.ui.put(view, el('div.tg-node-fields', null, fields.map(f => el('div.tg-field-row', null, f))));
+            const left = el('div.tg-col.tg-col-in'), right = el('div.tg-col.tg-col-out');
+            // Another argument, item or field is added by a + at the end of the last one's row
+            let group = null, last = null, lastRow = null;
+            const addMore = () => {
+                if (!last) return;
+                const more = this.groupAdd(shown, last, true);
+                if (more) G.ui.put(lastRow, more);
+                last = null;
+            };
+            for (const p of rowInputs) {
+                if (p === headIn) continue;
+                if (p.group !== group) { addMore(); group = p.group; }
+                const row = this.inputRow(p, record, p === opRow && !alone ? op : null, p === opRow && alone ? op : null);
+                G.ui.put(left, row);
+                if (p.group) { last = p; lastRow = row; }
+            }
+            addMore();
+            for (const key of this.emptyGroups(shown, inputs)) G.ui.put(left, this.groupAdd(shown, { key, group: key }));
+            for (const p of [...outs, ...execOuts]) {
+                if (p === headOut) continue;
+                G.ui.put(right, outRow(p));
+            }
+            if (left.childNodes.length || right.childNodes.length) G.ui.put(view, el('div.tg-node-ports', null, left, right));
             G.ui.put(this.nodesLayer, view);
             this.views.set(n.id, record);
         }
 
-        // The ports of a node as it's drawn: its schema's, a pin for the local it declares, and for a statement drawn
-        // as its call, the call's inputs with the statement's own arrows and value
+        // An input's row: its name (or `lead` in its place: an operator's choice), then what's in it. A number, a
+        // tick or text is edited there; a name or a path is a chip; a wire from a node ends at its pin; nothing yet
+        // is "pick…".
+        inputRow(p, record, lead, trail) {
+            const w = this.wireOf(p);
+            const inline = !!w && this.analysis.folded.has(w);
+            const dot = el('span.tg-dot' + (w && !inline ? '' : '.tg-dot-off'));
+            const row = el('div.tg-port.tg-in' + (w && !inline ? '' : '.tg-inline'), { dataset: { port: portKey(p) } },
+                dot, lead || (p.label ? el('span.tg-port-label', { text: p.label }) : null),
+                !w ? this.pickButton(p) : inline ? this.inlineValue(p, w) : null, trail || null);
+            this.ports.set(portKey(p), { port: p, dot, row, view: record, label: p.label });
+            return row;
+        }
+
+        pickButton(p) {
+            return button('pick…', e => this.pickValue(p, e.currentTarget), 'Nothing is in it yet: pick what goes here', 'tg-pick');
+        }
+
+        // Opens the value picker of an input, under `anchor`; `from` is the place in the path shown there to change
+        // it from (0, or absent, for all of it)
+        pickValue(p, anchor, { from = 0 } = {}) {
+            return G.pickers.valuePicker(this.app, this, p, { anchor, from });
+        }
+
+        // A simple value where it's read: a number's, a tick's or a text's own control, or a chip with a name or a
+        // path
+        inlineValue(p, w) {
+            const app = this.app;
+            const n = this.analysis.byId.get(w);
+            const fk = `${w}:in`;
+            const other = () => button('▾', e => this.pickValue(p, e.currentTarget.parentElement), 'Pick something else for it', 'tg-row-pick');
+            if (n.k === 'int' || n.k === 'float' || n.k === 'unary') {
+                const inner = n.k === 'unary' ? this.analysis.byId.get(n.value) : n;
+                return el('span.tg-inline-value', null, field((n.k === 'unary' ? '-' : '') + (inner?.text ?? ''), v => this.setNumber(p, w, v.trim()), {
+                    className: 'tg-input.tg-inline-number', placeholder: '0', grow: 2, fk, title: 'A number',
+                    check: v => (G.values.NUMBER.test(v.trim()) ? null : `"${v}" isn't a number`),
+                }), other());
+            }
+            if (n.k === 'call') {
+                // A vector's numbers, one for each of its arguments, or a colour's swatch
+                const args = Array.isArray(n.args) ? n.args : [];
+                const texts = args.map(a => this.doc.valueText(this.graph, a));
+                const setArg = (i, text) => {
+                    const body = text.replace(/^-/, '');
+                    this.setInput({ node: n.id, input: true, exec: false, path: ['args', i] }, (doc, g, at) => doc.makeLiteral(g, G.values.INT.test(body) ? 'int' : 'float', text, at));
+                };
+                if (this.schema.control(n.name) === 'colour' && args.length >= 3) {
+                    const swatch = el('input.tg-value-color', { type: 'color', value: G.values.toHex(texts), title: `${this.doc.valueText(this.graph, w)}: pick a colour`, onpointerdown: e => e.stopPropagation() });
+                    swatch.dataset.fk = fk;
+                    swatch.addEventListener('change', () => app.edit(doc => {
+                        G.values.fromHex(swatch.value).forEach((t, i) => doc.setInput(this.graph, n.id, ['args', i], (d, g) => d.makeLiteral(g, 'float', t.includes('.') ? t : t + '.0', n)));
+                    }));
+                    return el('span.tg-inline-value', null, el('span.tg-port-type', { text: n.name }), swatch, other());
+                }
+                const names = args.length <= 4 && this.schema.control(n.name) === 'vector' ? G.values.AXES : [];
+                return el('span.tg-inline-value.tg-inline-vector', { title: n.name }, args.map((a, i) => field(texts[i], v => setArg(i, v.trim()), {
+                    className: 'tg-input.tg-inline-number.tg-inline-axis', placeholder: '0', grow: 1, fk: `${fk}.${i}`, title: names[i] ? `${n.name}: ${names[i]}` : n.name,
+                    check: v => (G.values.NUMBER.test(v.trim()) ? null : `"${v}" isn't a number`),
+                })), other());
+            }
+            if (n.k === 'bool') {
+                const box = el('input', { type: 'checkbox', checked: !!n.value, onchange: e => app.edit(() => { n.value = e.target.checked; }), onpointerdown: e => e.stopPropagation() });
+                box.dataset.fk = fk;
+                return el('span.tg-inline-value', null, el('label.tg-value-bool', { onpointerdown: e => e.stopPropagation() }, box, el('span', { text: n.value ? 'yes' : 'no' })), other());
+            }
+            if (n.k === 'string') {
+                return el('span.tg-inline-value', null, el('span.tg-inline-quote', { text: '“' }),
+                    field(n.text ?? '', v => app.edit(() => { n.text = v; }), { className: 'tg-input.tg-inline-text', placeholder: 'text', grow: 3, fk, title: 'Text' }),
+                    el('span.tg-inline-quote', { text: '”' }), other());
+            }
+            if (n.k === 'char') {
+                return el('span.tg-inline-value', null, field(String(n.text ?? '').replace(/^'|'$/g, ''), v => app.edit(() => { n.text = `'${v}'`; }), {
+                    className: 'tg-input.tg-inline-number', placeholder: 'a', grow: 1, fk, title: 'One character', check: v => ([...v].length === 1 || /^\\.+$/.test(v) ? null : 'One character'),
+                }), other());
+            }
+            return el('span.tg-inline-value', null, this.pathChip(p, w));
+        }
+
+        // A name or a path as a chip in its type's colour: each part is clicked to change the path from there
+        pathChip(p, w) {
+            const g = this.graph;
+            const doc = this.doc;
+            const nodes = doc.pathNodes(g, w);
+            const type = this.typeOfValue(w);
+            const start = nodes[0];
+            const read = this.readOf(start);
+            const chip = el('span.tg-path' + (typeColor(type) ? '' : '.tg-path-plain'), { style: { '--tg-type': typeColor(type) || undefined }, dataset: read ? { read } : undefined, title: type ? `${doc.valueText(g, w)}: ${type}` : undefined },
+                el('span.tg-path-dot', { style: { background: typeColor(type) || undefined } }));
+            nodes.forEach((node, i) => {
+                const text = i === 0 ? doc.valueText(g, node.id) : node.member;
+                if (i > 0) G.ui.put(chip, el('span.tg-path-sep', { text: '.' }));
+                G.ui.put(chip, button(text, e => this.pickValue(p, chip, { from: i }), i === 0 ? 'Pick something else for it' : `Pick another of what ${doc.valueText(g, nodes[i - 1].id)} has`, 'tg-path-part'));
+            });
+            return chip;
+        }
+
+        // What a path starts at, when it's something this code has: 'pin:<name>' for what it takes, 'local:<id>' for
+        // a local, by the node that declares it
+        readOf(start) {
+            if (!start) return null;
+            if (start.k === 'local') return `local:${start.ref}`;
+            if (start.k === 'name' && !start.local && this.pins.some(pin => pin.name === start.name)) return `pin:${start.name}`;
+            return null;
+        }
+
+        // A number typed into an input: the literal's text changes, or the literal is made again when it becomes
+        // another kind (a whole number, one with a fraction, a negative one)
+        setNumber(p, w, text) {
+            const n = this.analysis.byId.get(w);
+            const negative = text.startsWith('-');
+            const body = negative ? text.slice(1) : text;
+            const kind = G.values.INT.test(body) ? 'int' : 'float';
+            const inner = n.k === 'unary' ? this.analysis.byId.get(n.value) : n;
+            if ((n.k === 'unary') === negative && inner?.k === kind) this.app.edit(() => { inner.text = body; });
+            else this.setInput(p, (doc, g, at) => doc.makeLiteral(g, kind, text, at));
+        }
+
+        // Puts a value into an input: `make(doc, graph, at)` makes its nodes where its reader is and gives the id of
+        // the one whose value it is; null for nothing. What was there goes if it was simple.
+        setInput(p, make) {
+            let why = null, made = 0;
+            this.app.edit(doc => {
+                const g = doc.ensureGraph(this.slot);
+                if (!g) return;
+                const reader = p.node > 0 ? Doc.nodeIn(g, p.node) : null;
+                const at = { x: Number(reader?.x) || 0, y: Number(reader?.y) || 0 };
+                why = doc.setInput(g, p.node === RESULT ? 0 : p.node, p.node === RESULT ? null : p.path, make ? (d, graph) => (made = make(d, graph, at)) : null);
+            });
+            if (why) G.ui.toast(`That can't go there: ${why}.`);
+            // A node it made (something worked out) is brought into view, or the node the input is on
+            const f = this.value ? null : this.board.frameOf(this.slot);
+            if (f) this.board.showNode(f, made && f.views.has(made) ? made : p.node);
+            return why;
+        }
+
+        // The type an input takes, where it's known: a call's parameter's (tide/graphCalls), what an assignment
+        // changes, the other side of an operator, a local's own, the code's result, yes or no for a condition
+        expectedType(p) {
+            const lang = this.app.lang;
+            if (p.node === RESULT) return this.value?.type || null;
+            const n = this.analysis.byId.get(p.node);
+            if (!n) return null;
+            if ((n.k === 'call' || n.k === 'method') && p.group === 'args') {
+                const c = lang.callArgs(n.id);
+                const t = c?.types[c.at(p.index)];
+                if (t) return t;
+            }
+            if (n.k === 'assign' && p.key === 'value' && n.target) return this.typeOfValue(n.target);
+            if (n.k === 'binary' && (p.key === 'lhs' || p.key === 'rhs')) {
+                if (n.op === '&&' || n.op === '||') return 'bool';
+                const other = p.key === 'lhs' ? n.rhs : n.lhs;
+                if (other && this.typeOfValue(other)) return this.typeOfValue(other);
+            }
+            if (n.k === 'var' && p.key === 'value' && n.type) return n.type;
+            if (n.k === 'return' && p.key === 'value') {
+                const t = this.item?.accessor ? this.item.property?.type : this.item?.value.returnType;
+                if (t && t !== 'void') return t;
+            }
+            if (p.key === 'cond') return 'bool';
+            if (n.k === 'literal' && p.group === 'inits') {
+                const name = n.inits?.[p.index]?.name;
+                const field = this.doc.membersOf(n.type).find(m => m.name === name);
+                if (field?.type) return field.type;
+            }
+            const w = this.wireOf(p);
+            return w ? this.typeOfValue(w) : null;
+        }
+
+        // The type of a value by its node: what tidels found, or what the file says of a parameter or a local
+        typeOfValue(id) {
+            const lang = this.app.lang;
+            const known = lang.typeOf(id);
+            if (known && known !== 'nothing') return known;
+            const n = this.analysis.byId.get(id);
+            if (n?.k === 'name') return this.pins.find(pin => pin.name === n.name)?.type || null;
+            if (n?.k === 'local') return this.typeOfPort({ local: n.ref });
+            if (n?.k === 'int') return 'int';
+            if (n?.k === 'float') return 'float';
+            if (n?.k === 'bool') return 'bool';
+            if (n?.k === 'string') return 'string';
+            return null;
+        }
+
+        // The locals a node can read: those declared by a statement that runs before its own (or by a value of one)
+        localsBefore(id) {
+            const g = this.graph;
+            const s = this.schema;
+            const doc = this.doc;
+            const all = g ? doc.locals(g) : [];
+            if (!g || id <= 0) return all;
+            const readers = new Map();
+            for (const n of Doc.nodes(g)) for (const w of s.dataWires(n)) (readers.get(w) || readers.set(w, []).get(w)).push(n.id);
+            // The statements a node is part of: itself, or those that read it, through any number of values
+            const statements = from => {
+                const out = new Set(), seen = new Set(), stack = [from];
+                while (stack.length) {
+                    const at = stack.pop();
+                    if (seen.has(at)) continue;
+                    seen.add(at);
+                    const n = Doc.nodeIn(g, at);
+                    if (n && s.isExec(n.k)) out.add(at);
+                    stack.push(...(readers.get(at) || []));
+                }
+                return out;
+            };
+            const mine = statements(id);
+            if (!mine.size) return all;
+            return all.filter(d => {
+                if (d.id === id) return false;
+                for (const from of statements(d.id)) {
+                    for (const to of mine) if (from !== to ? doc.goesTo(g, from, to) : !s.isExec(d.k)) return true;
+                }
+                return false;
+            });
+        }
+
+        // The ports of a node as it's drawn: its schema's, named in the schema's and the game's words (`portInfo`, a
+        // call's parameters by tide/graphCalls), a pin for the local it declares, and for a statement drawn as its
+        // call, the call's inputs with the statement's own arrows and value
         portsOf(n, call) {
             const s = this.schema;
             let ports = s.ports(n);
@@ -668,27 +928,24 @@
                 ports = [...ports.filter(p => !(p.input && !p.exec)), ...s.ports(call).filter(p => p.input && !p.exec)];
                 // A call holds code only when it's made to
                 if (!n.withBlock && !n.block) ports = ports.filter(p => !(p.exec && !p.input && G.samePath(p.path, ['block'])));
-                // Its value, kept from when it ran, is there to read once something does or the call has one
                 ports = ports.map(p => (!p.input && !p.exec ? { ...p, label: '' } : p));
             } else if (n.k === 'eval' && !n.withBlock && !n.block) {
                 ports = ports.filter(p => !(p.exec && !p.input && G.samePath(p.path, ['block'])));
+            } else if (n.k === 'assign' && ONE.includes(n.op) && !n.value) {
+                // Adding or taking away one takes no value
+                ports = ports.filter(p => !(p.input && !p.exec && p.key === 'value'));
+            } else if (n.k === 'return' && !n.value && !this.value) {
+                // Code that gives nothing back (a system, a function with no result) stops with no value
+                const gives = this.item?.accessor ? this.item.value.word === 'get' : this.item?.value.returnType;
+                if (!gives || gives === 'void') ports = ports.filter(p => !(p.input && !p.exec && p.key === 'value'));
             }
             for (const p of ports) {
-                if (p.exec && !p.input && G.samePath(p.path, ['next'])) p.label = '';
-                else if (p.input && !p.exec && p.key && !p.group) p.label = this.inputWord(n, call, p);
+                if (p.exec && !p.input) p.label = G.samePath(p.path, ['next']) ? '' : p.group ? p.label : s.portLabel(p.key);
+                else if (p.input && !p.exec) p.label = inputLabel(this.app, call && p.node === call.id ? call : n, p);
             }
             const local = s.declaredLocal(n);
             if (local) ports.push({ node: n.id, input: false, exec: false, local: n.id, label: local });
             return ports;
-        }
-
-        // What an input is called on its node
-        inputWord(n, call, p) {
-            if (p.key === 'object') return 'of';
-            if (p.key === 'lhs') return 'a';
-            if (p.key === 'rhs') return 'b';
-            if (p.key === 'cond') return 'condition';
-            return p.key;
         }
 
         // The list, items or named inputs of a node that have nothing in them yet: each still gets its way to add
@@ -703,19 +960,27 @@
         }
 
         // The small "+" after a node's list of inputs: another argument, case, field or named input
-        groupAdd(n, p) {
+        // The way to add to a node's list, items or named inputs: a row of its own ("+ argument") while there are
+        // none, `inline` a + at the end of the last one's row
+        groupAdd(n, p, inline = false) {
             const s = this.schema;
             const app = this.app;
             const spec = s.node(n.k);
             const order = s.nodeOrder(n.k);
+            const text = word => (inline ? '+' : '+ ' + word);
+            const cls = inline ? 'tg-port-add.tg-port-add-inline' : 'tg-port-add';
             const list = spec.lists?.find(l => l.key === p.group);
             if (list) {
                 if (n.k === 'interp') return null;
-                return button('+ ' + list.label, () => app.edit(() => {
+                // A call's next argument is called what its function calls it (tide/graphCalls), and there's none to
+                // add once each parameter has its own
+                const next = list.names ? app.lang.nextParam(n, Array.isArray(n[list.key]) ? n[list.key].length : 0) : null;
+                if (next === '') return null;
+                return button(text(next || list.label), () => app.edit(() => {
                     if (!Array.isArray(n[list.key])) set(n, list.key, [], order);
                     n[list.key].push(null);
                     if (Array.isArray(n[list.names])) n[list.names].push('');
-                }), `Another ${list.label}`, 'tg-port-add');
+                }), next ? `Give it its ${next}` : `Another ${list.label}`, cls);
             }
             const item = spec.items?.find(i => i.key === p.group);
             if (item) {
@@ -731,7 +996,7 @@
                     n[item.key].push(blank);
                 });
                 const named = n.k === 'literal';
-                return button('+ ' + (named ? 'field' : item.label), e => {
+                return button(text(named ? 'field' : item.label), e => {
                     if (!named) { make(); return; }
                     // A field of its type, by name: those the file knows, or a name
                     const known = this.doc.membersOf(n.type).filter(m => !m.method && !(n.inits || []).some(i => i.name === m.name));
@@ -740,16 +1005,16 @@
                         free: text => (/^[A-Za-z_][A-Za-z0-9_]*$/.test(text) && !known.some(m => m.name === text) ? { title: text, detail: 'a field by this name' } : null),
                         empty: 'Type the field\'s name', onPick: entry => make(entry.title),
                     });
-                }, named ? 'Set another of its fields' : `Another ${item.label}`, 'tg-port-add');
+                }, named ? 'Set another of its fields' : `Another ${item.label}`, cls);
             }
             if (spec.map === p.group) {
-                return button('+ input', () => app.edit(() => {
+                return button(text('input'), () => app.edit(() => {
                     if (!n[spec.map] || typeof n[spec.map] !== 'object') set(n, spec.map, {}, order);
                     const names = Object.keys(n[spec.map]);
                     let name = 'a';
                     for (let c = 97; names.includes(name); c++) name = String.fromCharCode(c);
                     n[spec.map][name] = null;
-                }), 'A value the text reads by its name', 'tg-port-add');
+                }), 'Another value the text reads by its name', cls);
             }
             return null;
         }
@@ -812,19 +1077,17 @@
                 const order = s.nodeOrder(target.k);
                 for (const key of spec?.keys || []) {
                     if (s.keyType(key, target) !== 'flag' || (target.k === 'bool' && key === 'value')) continue;
-                    flags.push({ label: this.flagWord(key), checked: !!target[key], stay: true, run: on => app.edit(() => set(target, key, on ? true : undefined, order)) });
+                    flags.push({ label: s.flagLabel(key), summary: s.flagHelp(key), group: s.flagAdvanced(key) ? 'More' : undefined, checked: !!target[key], stay: true, run: on => app.edit(() => set(target, key, on ? true : undefined, order)) });
                 }
                 if (spec?.keys.includes('typeArgs')) {
                     items.push({ label: 'Add a type argument…', summary: 'For a generic call: Name<T>', run: () => G.pickers.typePicker(app, { x, y, title: 'Type argument',
                         onPick: t => app.edit(() => { if (!Array.isArray(target.typeArgs)) set(target, 'typeArgs', [], order); target.typeArgs.push(t); }) }) });
                 }
             }
-            if (shown.k === 'member' || shown.k === 'method') {
-                items.unshift({ label: 'Pick another member…', summary: 'Of the same value', run: () => {
-                    if (!shown.object) { G.ui.toast('It has no value whose members to offer: wire one into it'); return; }
-                    G.pickers.nodeSearch(app, this, x, y, { member: shown });
-                } });
+            if ((shown.k === 'member' || shown.k === 'method') && shown.object) {
+                items.unshift({ label: shown.k === 'method' ? 'Call another of its methods…' : 'Pick another of its fields…', summary: 'Of the same value', run: () => G.pickers.nodeSearch(app, this, x, y, { member: shown }) });
             }
+            flags.sort((f1, f2) => (f1.group ? 1 : 0) - (f2.group ? 1 : 0));
             items.push(...flags);
             const order = s.nodeOrder(n.k);
             items.push({ label: `${s.keyLabel('comment')}…`, summary: n.comment || s.keyHelp('comment'), run: () => G.cards.editNote(app, n, order, { x, y }) });
@@ -844,7 +1107,8 @@
             const n = port.node > 0 ? Doc.nodeIn(g, port.node) : null;
             const items = [];
             const wired = port.input && this.wireOf(port);
-            if (wired) items.push({ label: 'Remove the wire', run: () => this.unwireNow(port) });
+            if (port.input && !port.exec) items.push({ label: wired ? 'Pick something else…' : 'Pick what goes here…', run: () => this.pickValue(port, this.ports.get(portKey(port))?.row) });
+            if (wired) items.push({ label: this.analysis.folded.has(wired) ? 'Empty it' : 'Remove the wire', run: () => this.unwireNow(port) });
             if (n && port.group && port.path) {
                 const spec = s.node(n.k);
                 const order = s.nodeOrder(n.k);
@@ -894,14 +1158,13 @@
             return true;
         }
 
-        // An edit that takes wires away: the reads of pins that were only theirs go with them
+        // An edit that takes inputs away: the simple values that were in them go with them
         editWithSweep(change, sources) {
             const g = this.graph;
-            const pins = this.pins;
             this.app.edit(doc => {
                 change(doc);
                 doc.reindex();
-                doc.dropUnread(g, sources.filter(Boolean), pins);
+                for (const id of sources.filter(Boolean)) doc.dropValue(g, id);
             });
         }
 
@@ -946,12 +1209,15 @@
             return { x: left + p.rel.x, y: top + p.rel.y };
         }
 
-        // The key of the port a value comes from: a node's output, or the pin a read of a parameter or local stands
-        // for
+        // The key of the port a node's value comes from
         sourceKey(id) {
-            const read = this.analysis.reads.get(id);
-            if (read) return read.pin !== undefined ? portKey({ pin: read.pin }) : portKey({ local: read.local });
             return portKey({ node: id, input: false, exec: false, path: null });
+        }
+
+        // Whether an input has a wire from a node (not nothing, and not a value shown in it)
+        hasNodeWire(port) {
+            const w = this.wireOf(port);
+            return w > 0 && !this.analysis.folded.has(w);
         }
 
         // The id an input's wire comes from, or 0
@@ -994,10 +1260,11 @@
                         if (a && b) this.path(a, b, 'tg-wire-exec', null, { node: n.id, path: p.path });
                     } else {
                         if (merged === from && G.samePath(p.path, ['value'])) continue; // A statement and its call are one node
+                        if (this.analysis.folded.has(from)) continue; // Shown in the input: no wire
                         const key = this.sourceKey(from);
                         wiredOut.add(key);
                         const a = this.at(key), b = this.at(portKey(p));
-                        if (a && b) this.path(a, b, 'tg-wire-data', typeColor(types.typeOf(from) || this.typeOfSource(from)) || s.color(Doc.nodeIn(g, from)?.k), { node: n.id, path: p.path });
+                        if (a && b) this.path(a, b, 'tg-wire-data', typeColor(this.typeOfValue(from)) || s.color(Doc.nodeIn(g, from)?.k), { node: n.id, path: p.path });
                     }
                 }
             }
@@ -1005,7 +1272,7 @@
                 const a = this.at(portKey({ node: ENTRY, input: false, exec: true, path: null })), b = this.at(execIn(g.entry));
                 if (a && b) this.path(a, b, 'tg-wire-exec', null, { node: ENTRY, path: null });
             }
-            if (this.isValue && g.root) {
+            if (this.isValue && g.root && !this.analysis.folded.has(g.root)) {
                 const key = this.sourceKey(g.root);
                 wiredOut.add(key);
                 const a = this.at(key), b = this.at(portKey({ node: RESULT, input: true, exec: false, path: null }));
@@ -1017,8 +1284,8 @@
                 let type, wired;
                 if (p.port.input) {
                     const from = this.wireOf(p.port);
-                    type = from ? types.typeOf(from) || this.typeOfSource(from) : null;
-                    wired = !!from;
+                    type = from ? this.typeOfValue(from) : null;
+                    wired = !!from && !this.analysis.folded.has(from);
                 } else {
                     type = this.typeOfPort(p.port);
                     wired = wiredOut.has(key);
@@ -1026,8 +1293,9 @@
                 p.dot.style.background = typeColor(type) || '';
                 p.dot.style.boxShadow = type ? `0 0 0 1px ${typeColor(type)}` : '';
                 p.dot.classList.toggle('tg-wired', wired);
-                if (!p.row.title || p.row.dataset.typed) {
-                    p.row.title = type ? `${p.port.label || 'value'}: ${type}` : '';
+                if ((!p.row.title || p.row.dataset.typed) && !p.row.dataset.problem) {
+                    const wants = p.port.input && !type ? this.expectedType(p.port) : null;
+                    p.row.title = type ? `${p.port.label || 'value'}: ${type}` : wants ? `${p.port.label || 'value'}: takes a ${wants}` : '';
                     p.row.dataset.typed = '1';
                 }
             }
@@ -1037,7 +1305,7 @@
 
         path(a, b, cls, color, wire) {
             const dx = Math.max(40, Math.abs(b.x - a.x) / 2);
-            // A long wire (a parameter read far along the code) is drawn faint, so the nodes stay what's read first
+            // A long wire (a value worked out far from what reads it) is drawn faint, so the nodes stay what's read first
             const long = Math.abs(b.x - a.x) + Math.abs(b.y - a.y) > 900 && !cls.includes('tg-wire-new');
             const on = wire && wire.node > 0 && this.lit?.has(wire.node);
             const p = svg('path', { d: `M ${a.x} ${a.y} C ${a.x + dx} ${a.y}, ${b.x - dx} ${b.y}, ${b.x} ${b.y}`, class: cls.replace(/\./g, ' ') + (on ? ' tg-wire-on' : long ? ' tg-wire-long' : '') });
@@ -1053,40 +1321,25 @@
             if (port.pin !== undefined) {
                 const pin = this.pins.find(p => p.name === port.pin);
                 if (pin?.type) return pin.type;
-                for (const [id, read] of this.analysis.reads) if (read.pin === port.pin && lang.typeOf(id)) return lang.typeOf(id);
+                // (A query's rows, a changed field: what tidels found for a read of it)
+                for (const n of this.analysis.byId.values()) if (n.k === 'name' && n.name === port.pin && lang.typeOf(n.id)) return lang.typeOf(n.id);
                 return null;
             }
             if (port.local !== undefined) {
                 const n = this.analysis.byId.get(port.local);
                 if (n?.type) return n.type;
-                for (const [id, read] of this.analysis.reads) if (read.local === port.local && lang.typeOf(id)) return lang.typeOf(id);
+                for (const r of this.analysis.byId.values()) if (r.k === 'local' && r.ref === port.local && lang.typeOf(r.id)) return lang.typeOf(r.id);
                 return n?.value ? lang.typeOf(n.value) : null;
             }
             const merged = this.analysis.merged.get(port.node);
             return lang.typeOf(port.node) || (merged ? lang.typeOf(merged) : null);
         }
 
-        typeOfSource(id) {
-            const read = this.analysis.reads.get(id);
-            if (!read) return this.app.lang.typeOf(id);
-            return this.typeOfPort(read.pin !== undefined ? { pin: read.pin } : { local: read.local });
-        }
-
-        // A node tidels can be asked the members of, for a wire from a port: the value's own node, or for a pin any
-        // read of it (or anything of its type) that the checked graph has
+        // The node tidels is asked the members of, for a wire from a node's value: 0 for a pin's, whose members are
+        // its type's (tide/graphMembers by type)
         nodeForMembers(port) {
-            const lang = this.app.lang;
-            if (port.pin === undefined && port.local === undefined) return this.analysis.merged.get(port.node) ?? (port.node > 0 ? port.node : 0);
-            for (const [id, read] of this.analysis.reads) {
-                if ((port.pin !== undefined && read.pin === port.pin) || (port.local !== undefined && read.local === port.local)) {
-                    if (lang.span(id)) return id;
-                }
-            }
-            const type = this.typeOfPort(port);
-            if (type) {
-                for (const [id, t] of Object.entries(lang.types)) if (t === type && this.doc.find(Number(id))?.role === 'node') return Number(id);
-            }
-            return 0;
+            if (port.pin !== undefined || port.local !== undefined) return 0;
+            return this.analysis.merged.get(port.node) ?? (port.node > 0 ? port.node : 0);
         }
 
         statementOf(id) {
@@ -1124,7 +1377,7 @@
             const why = inp.node === RESULT ? doc.setRoot(g, source) : doc.connect(g, inp.node, inp.path, source);
             doc.reindex();
             if (why && made) doc.deleteNodes(g, [source]);
-            else if (!why && old && old !== source) doc.dropUnread(g, [old], this.pins);
+            else if (!why && old && old !== source) doc.dropValue(g, old);
             return why;
         }
 
@@ -1135,7 +1388,7 @@
             this.app.edit(doc => {
                 this.unwire(doc, port);
                 doc.reindex();
-                if (old > 0 && !port.exec) doc.dropUnread(g, [old], this.pins);
+                if (old > 0 && !port.exec) doc.dropValue(g, old);
             });
         }
 
@@ -1161,15 +1414,18 @@
             if ([...ed.selection].join() !== this.litKey && !this.board.drag) this.drawWires();
         }
 
-        // The element an id of the file is drawn as in this frame: a node's, a parameter's row
+        // The element an id of the file is drawn as in this frame: a node's, a parameter's row; for a value shown
+        // in an input, that input's row
         elementOf(id) {
             const direct = this.views.get(id)?.el;
             if (direct) return direct;
+            const at = this.analysis.shown.get(id);
+            if (at) return this.ports.get(portKey({ node: at.node, input: true, exec: false, path: at.path }))?.row || null;
             for (const v of this.views.values()) if (v.ids?.includes(id)) return v.el;
             return this.body.querySelector(`.tg-entry-row[data-id="${id}"]`);
         }
     }
 
     G.FrameView = FrameView;
-    G.frames = { ENTRY, RESULT, HEAD, PAD, BOTTOM, ENTRY_W, NODE_X0, portKey, estimate };
+    G.frames = { ENTRY, RESULT, HEAD, PAD, BOTTOM, ENTRY_W, NODE_X0, portKey, estimate, inputLabel };
 })(globalThis.TideGraph = globalThis.TideGraph || {});

@@ -1,6 +1,7 @@
 // The graph editor's model, without its UI: the file read and written as tidec writes it, ports from the schema,
 // the wiring rules, copy and paste, undo, a graph built from nodes that tidec reads as the Tide it should be, and
-// the board's view of a file: cards and frames with their places, pins, and the reads drawn as wires from them.
+// the board's view of a file: cards and frames with their places, pins, and the simple values shown in the inputs
+// that read them.
 //
 //   node --test tools/tide-graph/test/model.test.mjs
 //
@@ -436,14 +437,14 @@ test('nothing is offered that a kind cannot have', () => {
     assert.equal(schema.modeLabel('mut'), 'changes');
 });
 
-test("a read of a parameter or a local is a wire from its pin, not a node", () => {
+test('a simple value read by one input is shown in that input, not a node', () => {
     const { doc, f, g } = fileWithFunction();
     const pins = doc.pins(f);
     assert.deepEqual(pins.map(p => [p.name, p.type]), [['a', 'int']]);
     const read = doc.addNode(g, 'name', 0, 0, { name: 'a' });
     const loose = doc.addNode(g, 'name', 0, 100, { name: 'a' });
     const other = doc.addNode(g, 'name', 0, 200, { name: 'MAX' });
-    const sum = doc.addNode(g, 'binary', 200, 0);
+    const sum = doc.addNode(g, 'binary', 200, 0, { op: '+' });
     doc.connect(g, sum.id, ['lhs'], read.id);
     doc.connect(g, sum.id, ['rhs'], other.id);
     const v = doc.addNode(g, 'var', 400, 0, { name: 'x' });
@@ -453,42 +454,161 @@ test("a read of a parameter or a local is a wire from its pin, not a node", () =
     const ret = doc.addNode(g, 'return', 600, 0);
     doc.connect(g, ret.id, ['value'], local.id);
     doc.connect(g, v.id, ['next'], ret.id);
-    // A lambda's own parameter hides the pin of the same name
-    const inner = doc.addNode(g, 'name', 0, 300, { name: 'a' });
-    const lambda = doc.addNode(g, 'lambda', 200, 300, { params: [{ name: 'a' }] });
-    doc.connect(g, lambda.id, ['body'], inner.id);
-    const call = doc.addNode(g, 'call', 400, 300, { name: 'Each', args: [lambda.id] });
+    // A call one statement runs is drawn as the statement, with its arguments in its inputs
+    const five = doc.addNode(g, 'int', 0, 300, { text: '5' });
+    const minus = doc.addNode(g, 'unary', 0, 300, { op: '-' });
+    doc.connect(g, minus.id, ['value'], five.id);
+    const shared = doc.addNode(g, 'float', 0, 400, { text: '0.5' });
+    const call = doc.addNode(g, 'call', 400, 300, { name: 'Each', args: [minus.id, shared.id, shared.id] });
     const run = doc.addNode(g, 'eval', 600, 300);
     doc.connect(g, run.id, ['value'], call.id);
 
-    let a = doc.analyse(g, pins);
-    assert.deepEqual(a.reads.get(read.id), { pin: 'a' });
-    assert.deepEqual(a.reads.get(local.id), { local: v.id });
-    assert.ok(!a.reads.has(loose.id), 'a name nothing reads stays a node, to be seen and deleted');
-    assert.ok(!a.reads.has(other.id), 'a name of anything else is a node');
-    assert.ok(!a.reads.has(inner.id), "a lambda's parameter isn't the frame's");
+    let a = doc.analyse(g);
+    for (const n of [read, other, local, five, minus]) assert.ok(a.folded.has(n.id), `${n.k} is shown in the input that reads it`);
+    assert.ok(!a.folded.has(loose.id), 'a name nothing reads stays a node, to be seen and deleted');
+    assert.ok(!a.folded.has(shared.id), 'a value two inputs read stays a node');
+    assert.ok(!a.folded.has(sum.id), 'what is worked out is a node');
+    assert.deepEqual(a.shown.get(read.id), { node: sum.id, path: ['lhs'] });
+    assert.deepEqual(a.shown.get(five.id), { node: call.id, path: ['args', 0] }, "a minus's number is shown where the minus is");
     assert.equal(a.merged.get(run.id), call.id, 'a call one statement runs is drawn as the statement');
     assert.equal(a.mergedInto.get(call.id), run.id);
-    // Copied, moved or deleted, a node takes the reads that are only its own with it
-    assert.deepEqual([...doc.withHidden(g, new Set([sum.id]), pins)].sort(), [read.id, sum.id].sort());
-    assert.deepEqual([...doc.withHidden(g, new Set([run.id]), pins)].sort(), [call.id, run.id].sort());
-    // Renaming the parameter renames its reads (the lambda's own too, as text would: it's the same name)
+    assert.equal(doc.valueText(g, minus.id), '-5');
+    assert.equal(doc.valueText(g, local.id), 'x');
+    // A minus over anything but a number is worked out
+    const nameUnder = doc.addNode(g, 'name', 0, 500, { name: 'a' });
+    const negName = doc.addNode(g, 'unary', 0, 500, { op: '-' });
+    doc.connect(g, negName.id, ['value'], nameUnder.id);
+    const use = doc.addNode(g, 'return', 800, 500);
+    doc.connect(g, use.id, ['value'], negName.id);
+    a = doc.analyse(g);
+    assert.ok(!a.folded.has(negName.id) && a.folded.has(nameUnder.id));
+    // A vector or a colour made of numbers alone is shown in its input too; one with anything else in it is a node
+    const x = doc.addNode(g, 'int', 0, 600, { text: '16' });
+    const fourteen = doc.addNode(g, 'int', 0, 600, { text: '14' });
+    const y = doc.addNode(g, 'unary', 0, 600, { op: '-' });
+    doc.connect(g, y.id, ['value'], fourteen.id);
+    const vector = doc.addNode(g, 'call', 0, 600, { name: 'float2', args: [x.id, y.id] });
+    const mixedArg = doc.addNode(g, 'name', 0, 700, { name: 'a' });
+    const one = doc.addNode(g, 'int', 0, 700, { text: '1' });
+    const mixed = doc.addNode(g, 'call', 0, 700, { name: 'float2', args: [mixedArg.id, one.id] });
+    const other2 = doc.addNode(g, 'call', 0, 800, { name: 'Twice', args: [doc.addNode(g, 'int', 0, 800, { text: '2' }).id] });
+    const place = doc.addNode(g, 'call', 800, 600, { name: 'Place', args: [vector.id, mixed.id, other2.id] });
+    const placed = doc.addNode(g, 'eval', 1000, 600);
+    doc.connect(g, placed.id, ['value'], place.id);
+    a = doc.analyse(g);
+    assert.ok(schema.numbersOf.has('float2') && schema.inlineKind('call') === 4);
+    assert.ok(a.folded.has(vector.id) && a.folded.has(x.id) && a.folded.has(y.id) && a.folded.has(fourteen.id), 'float2(16, -14) is in the input that reads it');
+    assert.deepEqual(a.shown.get(fourteen.id), { node: place.id, path: ['args', 0] });
+    assert.equal(doc.valueText(g, vector.id), 'float2(16, -14)');
+    assert.ok(!a.folded.has(mixed.id) && a.folded.has(mixedArg.id), 'float2(a, 1) is worked out: a node, with its own values in its inputs');
+    assert.ok(!a.folded.has(other2.id), 'a call of anything else is a node');
+    // Copied, moved or deleted, a node takes the values shown in it with it
+    assert.deepEqual([...doc.withFolded(g, new Set([sum.id]))].sort(), [read.id, other.id, sum.id].sort());
+    assert.deepEqual([...doc.withFolded(g, new Set([run.id]))].sort(), [call.id, run.id, minus.id, five.id].sort());
+    // How big tidec takes the drawn nodes to be: none for a value shown in an input, and its reader as wide as it
+    const sizes = doc.sizes(g, a);
+    assert.ok(!sizes.has(read.id) && sizes.has(sum.id) && sizes.has(shared.id));
+    assert.deepEqual(sizes.get(sum.id), { w: 140 + 'binary'.length * 8, h: 48 + 24 * 3 });
+    // Renaming the parameter renames its reads
     f.params[0].name = 'count';
     doc.renamePin(g, 'a', 'count');
     assert.equal(read.name, 'count');
     assert.equal(other.name, 'MAX');
-    a = doc.analyse(g, doc.pins(f));
-    assert.deepEqual(a.reads.get(read.id), { pin: 'count' });
-    // A wire taken away takes the read with it; a name of something else stays
-    doc.disconnect(g, sum.id, ['lhs']);
-    doc.disconnect(g, sum.id, ['rhs']);
-    assert.deepEqual(doc.dropUnread(g, [read.id, other.id], doc.pins(f)), [read.id]);
-    assert.ok(!Doc.nodeIn(g, read.id) && Doc.nodeIn(g, other.id));
     // What a handler, a command and a setter take
     assert.deepEqual(doc.pins({ trigger: { type: 'Hit', name: 'hit' }, params: [{ id: 9, mode: 'mut', type: 'Score', name: 'score' }, { id: 10, mode: 'with', type: 'Tag' }] }).map(p => p.name), ['hit', 'score']);
     assert.deepEqual(doc.pins({ payload: [{ id: 3, type: 'int', name: 'card' }], params: [{ id: 4, mode: 'read', type: 'PlayerID', name: 'sender' }] }).map(p => p.from), ['payload', 'param']);
     assert.deepEqual(doc.pins({ type: 'float' }, { word: 'set' }).map(p => p.name), ['value']);
     assert.deepEqual(doc.pins({ type: 'float' }, { word: 'get' }), []);
+});
+
+test('a value is put in an input, a path is changed from one of its parts, and what was there goes', () => {
+    const doc = Doc.empty(schema);
+    const c = doc.newElement('component', false, 'Wobble');
+    for (const name of ['frequency', 'phase']) {
+        const field = doc.newElement('field', true, name);
+        field.type = 'float';
+        c.members.push(field);
+    }
+    const s = doc.newElement('system', false, 'Spin');
+    s.params.push({ id: doc.newId(), mode: 'mut', type: 'Wobble', name: 'wobble' });
+    doc.decls.push(c, s);
+    doc.reindex();
+    const g = s.body;
+    const set = doc.addNode(g, 'assign', 300, 0, { op: '+=' });
+    doc.setEntry(g, set.id);
+    const count = () => Doc.nodes(g).length;
+    // Set wobble.phase += wobble.frequency: one node on the board, five in the file
+    assert.equal(doc.setInput(g, set.id, ['target'], (d, graph) => d.makePath(graph, { name: 'wobble' }, ['phase'], set)), null);
+    assert.equal(doc.setInput(g, set.id, ['value'], (d, graph) => d.makePath(graph, { name: 'wobble' }, ['frequency'], set)), null);
+    doc.reindex();
+    assert.equal(count(), 5);
+    let a = doc.analyse(g);
+    assert.equal(a.folded.size, 4);
+    assert.deepEqual([...doc.sizes(g, a).keys()], [set.id]);
+    assert.equal(doc.valueText(g, set.target), 'wobble.phase');
+    assert.deepEqual(doc.pathNodes(g, set.value).map(n => n.k), ['name', 'member']);
+    assert.match(graphText(doc, 'spin'), /system Spin\(mut Wobble wobble\)\s*\{\s*wobble\.phase \+= wobble\.frequency;\s*\}/);
+    // The path changed from its second part: the nodes of the old one go
+    assert.equal(doc.setInput(g, set.id, ['value'], (d, graph) => d.makePath(graph, { name: 'wobble' }, ['phase'], set)), null);
+    doc.reindex();
+    assert.equal(count(), 5);
+    assert.equal(doc.valueText(g, set.value), 'wobble.phase');
+    // A number typed in: a negative one is a minus over it, as tidec writes it
+    assert.equal(doc.setInput(g, set.id, ['value'], (d, graph) => d.makeLiteral(graph, 'float', '-0.5', set)), null);
+    doc.reindex();
+    assert.equal(count(), 5);
+    assert.equal(doc.valueText(g, set.value), '-0.5');
+    assert.ok(doc.analyse(g).folded.has(set.value));
+    assert.match(graphText(doc, 'spin'), /wobble\.phase \+= -0\.5;/);
+    // Something worked out is a node wired in; the simple value it replaces goes, and the node stays when it's replaced
+    let times;
+    assert.equal(doc.setInput(g, set.id, ['value'], (d, graph) => {
+        times = d.newNode('binary', 100, 100, { op: '*' });
+        Doc.nodes(graph).push(times);
+        return times.id;
+    }), null);
+    doc.reindex();
+    assert.equal(count(), 4);
+    assert.ok(!doc.analyse(g).folded.has(times.id));
+    assert.equal(doc.setInput(g, times.id, ['lhs'], (d, graph) => d.makePath(graph, { name: 'wobble' }, ['frequency'], times)), null);
+    assert.equal(doc.setInput(g, times.id, ['rhs'], (d, graph) => d.makeLiteral(graph, 'int', '2', times)), null);
+    doc.reindex();
+    assert.match(graphText(doc, 'spin'), /wobble\.phase \+= wobble\.frequency \* 2;/);
+    assert.equal(doc.setInput(g, set.id, ['value'], (d, graph) => d.makeLiteral(graph, 'int', '1', set)), null);
+    doc.reindex();
+    assert.ok(Doc.nodeIn(g, times.id), 'what was worked out stays, to be wired again');
+    // Emptied
+    assert.equal(doc.setInput(g, set.id, ['value'], null), null);
+    assert.ok(!set.value);
+    // A local's read names the node that declares it
+    const v = doc.addNode(g, 'var', 0, 200, { name: 'x' });
+    doc.reindex();
+    assert.equal(doc.setInput(g, set.id, ['value'], (d, graph) => d.makePath(graph, { local: v.id }, [], set)), null);
+    doc.reindex();
+    assert.deepEqual([Doc.nodeIn(g, set.value).k, Doc.nodeIn(g, set.value).ref], ['local', v.id]);
+});
+
+test("what's shown in an input is what tidec's layout gives no room: in a converted file, a value is where its reader is exactly when it's shown in it", () => {
+    let folded = 0, drawn = 0;
+    for (const { file, text } of all()) {
+        const doc = Doc.parse(text, schema);
+        const graphs = new Set(nodesOf(doc).map(e => e.graph));
+        for (const g of graphs) {
+            const a = doc.analyse(g, { rootReads: !Doc.isBody(g) });
+            const readers = new Map();
+            for (const n of Doc.nodes(g)) for (const w of schema.dataWires(n)) (readers.get(w) || readers.set(w, []).get(w)).push(n);
+            const reached = Doc.isBody(g) ? doc.reached(g) : null;
+            for (const n of Doc.nodes(g)) {
+                const read = readers.get(n.id) || [];
+                // (tidec's layout puts a value it folds at its reader's x, and one it draws to the left of it)
+                if (read.length !== 1 || a.mergedInto.has(n.id) || (reached && !reached.has(n.id))) continue;
+                const shown = a.folded.has(n.id);
+                if (shown) folded++; else drawn++;
+                assert.equal(shown, n.x === read[0].x, `${path.basename(file)}: node ${n.id} (${n.k}) at x ${n.x}, read by node ${read[0].id} (${read[0].k}) at x ${read[0].x}, is ${shown ? '' : 'not '}shown in its input`);
+            }
+        }
+    }
+    assert.ok(folded > 1000 && drawn > 1000, `${folded} shown in inputs, ${drawn} drawn`);
 });
 
 test("a value that is one literal is edited by its type's control", () => {
@@ -591,6 +711,11 @@ test("tidels: a graph's text, types, members and diagnostics on its nodes", { sk
         assert.equal(lang.idAt(lang.text.indexOf('speed')), speed.id);
         const members = await lang.members(ball.id);
         assert.ok(members.items.some(i => i.label === 'speed'));
+        // The same by its type alone, as the value picker asks for what a parameter has
+        assert.ok((await lang.membersOfType('Ball')).some(i => i.label === 'speed'));
+        // What the game itself declares: the rest of what's offered is the engine's
+        assert.equal(lang.declares('Ball'), 'component');
+        assert.equal(lang.declares('Time'), null);
         const bounce = members.items.find(i => i.label === 'Bounce');
         assert.deepEqual(G.lang.entryOf(bounce, { member: true }).node.fields, { name: 'Bounce', args: [null] });
         assert.match(await lang.hover(speed) ?? '', /speed/);
@@ -601,6 +726,39 @@ test("tidels: a graph's text, types, members and diagnostics on its nodes", { sk
             && m.params.diagnostics.some(d => d.data?.node === speed.id));
         lang.setDiagnostics(published.params.diagnostics);
         assert.ok(lang.diagnosticsOf(speed.id).length);
+        // A call's arguments by its callee's parameters; an input with nothing in it is a hole the compiler names by
+        // its key, and the rest of the file is still checked
+        speed.member = 'speed';
+        const bounce2 = doc.addNode(g, 'method', 400, 200, { name: 'Bounce', args: [null] });
+        doc.connect(g, bounce2.id, ['object'], doc.addNode(g, 'name', 400, 200, { name: 'ball' }).id);
+        const statement = doc.addNode(g, 'eval', 600, 200);
+        doc.connect(g, statement.id, ['value'], bounce2.id);
+        doc.connect(g, set.id, ['next'], statement.id);
+        const empty = doc.addNode(g, 'assign', 800, 200, { op: '=' });
+        doc.connect(g, statement.id, ['next'], empty.id);
+        doc.connect(g, empty.id, ['value'], doc.addNode(g, 'int', 800, 200, { text: '2' }).id);
+        server.notify('textDocument/didChange', { textDocument: { uri, version: 20 }, contentChanges: [{ text: doc.text }] });
+        const holes = await server.until(m => m.method === 'textDocument/publishDiagnostics' && m.params.uri.toLowerCase() === uri.toLowerCase()
+            && m.params.diagnostics.some(d => d.data?.node === empty.id));
+        lang.setDiagnostics(holes.params.diagnostics);
+        await lang.check();
+        assert.equal(lang.status, 'checked', 'a half-wired graph is still checked');
+        assert.equal(lang.typeOf(speed.id), 'float');
+        assert.deepEqual(lang.diagnosticsOf(empty.id).map(d => d.port), ['target']);
+        assert.deepEqual(lang.diagnosticsOf(bounce2.id).map(d => [d.port, d.index]), [['args', 0]]);
+        assert.ok(lang.callsKnown);
+        assert.deepEqual(lang.callArgs(bounce2.id)?.params, ['by']);
+        assert.equal(lang.callArgs(bounce2.id).types[0], 'float');
+        assert.equal(lang.inputLabel(schema, bounce2, schema.ports(bounce2).find(p => p.group === 'args')), 'by');
+        assert.equal(schema.portLabel('target'), 'what');
+        assert.equal(schema.assignLabel('+='), schemaJson.operators.assignInfo['+='].label);
+        assert.equal(lang.nextParam(bounce2, 1), '', 'every parameter has its argument');
+        assert.equal(lang.nextParam(bounce2, 0), 'by');
+        // What a name itself has: a namespace's functions
+        assert.ok((await lang.membersOfName('Math')).some(i => i.label === 'Abs'));
+        Doc.nodes(g).splice(Doc.nodes(g).indexOf(bounce2));
+        delete set.next;
+        doc.reindex();
         const layout = await server.request('tide/graphLayout', { graph: g });
         assert.deepEqual(Object.keys(layout).map(Number).sort(), g.nodes.map(n => n.id).sort());
         // The board's layout: a place for every card and frame of the file

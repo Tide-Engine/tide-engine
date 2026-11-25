@@ -18,7 +18,7 @@ data is in the cards on the left: drag the board, or press **Contents**, to see 
 - On the card `FALL`, change `90` to `200`: the stars fall faster.
 - On `WIDTH`, change `40` to `80`: the basket is twice as wide.
 - On `GOLD`, click the colour and pick another: the stars change colour.
-- In `Fall`, the `1` wired into the `+=` after `caught` is what a catch counts: make it `10`.
+- In `Fall`, find the node that reads Set `score.caught` `+=` `1`. The `1` is what a catch counts: make it `10`.
 
 The score and the stars carry over. **Restart** starts the last successful build from the beginning, and
 **Reset graph** brings back the original graph and starts it again. Your graph is kept in this browser, so it's
@@ -33,11 +33,14 @@ running.
 This is the graph editor of the [editor extensions](../tools/editors.md), checked by the same language server:
 
 - **Cards** are the game's data: a row for each field, with its name, its type and its value, each changed where
-  it is. **Frames** are its code: nodes joined by wires, starting from the entry on the left, which says when the
-  code runs and what it takes.
+  it is. **Frames** are its code: nodes, starting from the entry on the left, which says when the code runs and
+  what it takes.
+- A node's simple values are in its inputs: a number is typed there, and a name such as `star.position` is
+  picked. Click an input to choose what goes in it from a list of what fits. Only what's worked out (a
+  **Multiply**, a call) is a node of its own, wired in.
 - **+ Add**, or a right click on the board, adds a card or a frame. A right click inside a frame adds a node, and
-  a wire dragged from a pin or an arrow and dropped in the frame offers what can go there.
-- A type is picked from a list, never typed. A problem is on the row, pin or node it's about, with what to do
+  a wire dragged from an arrow and dropped in the frame offers what can happen next.
+- A type is picked from a list, never typed. A problem is on the row, input or node it's about, with what to do
   about it, and goes when it's fixed.
 - **Contents** and **Find…** go to a declaration. The board's "…" menu has **View as Tide**, which shows the
   whole file as text and opens it in the text playground.

@@ -179,12 +179,13 @@ test('auto layout places every node of a body, and every card and frame of the b
     const fall = file.decls.find(d => d.kind === 'system' && d.name === 'Fall');
     const places = await p.ask('tide/graphLayout', { graph: fall.body });
     for (const n of fall.body.nodes) assert.ok(Array.isArray(places[n.id]) && places[n.id].length === 2, `node ${n.id}`);
-    // The starter's own places are the board tidels lays out: data in a column on the left, code beside it
+    // The starter's own places are the board tidels lays out: data in a column on the left, code in rows beside it
     const board = await p.ask('tide/graphLayout', { file });
     for (const d of file.decls) {
         assert.deepEqual(board[d.id], [d.x, d.y], `${d.kind} ${d.name ?? ''}`);
-        assert.equal(d.x, d.body ? 380 : 0, `${d.kind} ${d.name ?? ''} is in its column`);
+        assert.ok(d.body ? d.x >= 380 : d.x === 0, `${d.kind} ${d.name ?? ''} is on its side of the board`);
     }
+    assert.ok(new Set(file.decls.filter(d => d.body).map(d => d.x)).size > 1, 'the frames are packed in rows, not one long column');
 });
 
 test('the visitor\'s draft is kept, opened again, and Reset takes it away', async () => {

@@ -351,7 +351,7 @@ ${scripts.map(s => `<script>${inline(s)}<\/script>`).join('\n')}
     </div>
     <div class="panels" bind:this={panels} style:--split="{split}%">
         <div class="source">
-            <div class="panel-title"><span class="file">game.tidegraph</span><span>Right-click to add · drag from a pin to wire · ⋯ has View as Tide</span></div>
+            <div class="panel-title"><span class="file">game.tidegraph</span><span>Click an input to pick its value · right-click to add · ⋯ has View as Tide</span></div>
             <div class="editor">
                 {#if editorPage}
                     <iframe class="graph" bind:this={editorFrame} srcdoc={editorPage} title="Tide graph editor"></iframe>

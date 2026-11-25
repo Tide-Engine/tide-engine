@@ -309,8 +309,9 @@ textarea.tg-input { resize: vertical; width: 100%; background: var(--tg-input-bg
 .tg-node-header { display: flex; align-items: center; gap: 4px; min-height: 24px; padding: 1px 6px 1px 8px; border-radius: 7px 7px 0 0; white-space: nowrap;
   background: color-mix(in srgb, var(--tg-cat, #5c6170) 26%, var(--tg-node-bg)); border-left: 3px solid var(--tg-cat, #5c6170); }
 .tg-node-header:last-child { border-radius: 7px; }
-.tg-node-kind { font-size: 0.8em; font-weight: 650; text-transform: uppercase; letter-spacing: 0.04em; color: color-mix(in srgb, var(--tg-fg) 72%, var(--tg-cat, #5c6170)); }
-.tg-node-kind:empty { display: none; }
+/* A node says what it does in its own words: "Set", "ball.Bounce", "Multiply" */
+.tg-node-title { font-weight: 650; }
+.tg-node-dot { color: var(--tg-muted); font-weight: 650; margin: 0 -8px 0 -5px; }
 .tg-node-name { font-weight: 650; }
 .tg-node-input { padding: 0 4px; line-height: 18px; min-width: 3ch; max-width: 240px; }
 .tg-node-code { width: 240px; max-width: none; font-size: 0.92em; }
@@ -331,6 +332,46 @@ textarea.tg-input { resize: vertical; width: 100%; background: var(--tg-input-bg
 .tg-port.tg-in { margin-left: -6px; }
 .tg-port.tg-out { margin-right: -6px; }
 .tg-port:hover, .tg-port.tg-target { color: var(--tg-fg); }
+/* An input with its value in it (a number, a name, a path of fields), or nothing yet: part of its node, not a place
+   a wire starts from. Its pin is a small ring a wire can still be dropped on. */
+.tg-port.tg-inline { cursor: inherit; color: var(--tg-fg); min-height: 22px; }
+.tg-port.tg-inline .tg-port-label { color: var(--tg-muted); }
+.tg-dot.tg-dot-off { width: 7px; height: 7px; margin: 0 2px; border: none; background: transparent; box-shadow: 0 0 0 1px color-mix(in srgb, var(--tg-muted) 70%, transparent); opacity: 0.6; visibility: hidden; }
+/* (Its pin shows while a wire is being dragged: somewhere to drop it) */
+.tg-wiring .tg-dot.tg-dot-off { visibility: visible; background: var(--tg-node-bg) !important; }
+.tg-title-port { padding: 0; margin: 0 !important; min-height: 0; font-size: 1em; gap: 3px; }
+.tg-title-port .tg-dot-off { display: none; }
+.tg-port.tg-target.tg-inline .tg-dot-off { display: block; }
+.tg-pick { background: none; border: 1px dashed color-mix(in srgb, var(--tg-muted) 70%, transparent); color: var(--tg-muted); border-radius: 999px; padding: 0 8px; line-height: 17px; cursor: pointer; font: inherit; font-style: italic; }
+.tg-pick:hover, .tg-pick:focus-visible { color: var(--tg-accent); border-color: var(--tg-accent); outline: none; }
+.tg-port.tg-has-error .tg-pick { color: var(--tg-error); border-color: var(--tg-error); }
+.tg-inline-value { display: inline-flex; align-items: center; gap: 2px; min-width: 0; }
+.tg-inline-number, .tg-inline-text { padding: 0 5px; line-height: 18px; min-width: 3ch; max-width: 200px; background: var(--tg-input-bg); border-color: var(--tg-input-border); border-radius: 5px; }
+.tg-inline-number { font-family: var(--tg-mono); font-size: 0.95em; }
+.tg-inline-quote { color: var(--tg-muted); }
+.tg-inline-vector { gap: 3px; }
+.tg-inline-axis { min-width: 2.5ch; max-width: 9ch; text-align: right; }
+.tg-port-type { color: var(--tg-muted); font-size: 0.92em; }
+.tg-inline-value .tg-value-color { width: 26px; height: 18px; padding: 0; border: 1px solid var(--tg-input-border); border-radius: 4px; background: none; cursor: pointer; }
+.tg-row-pick { background: none; border: none; color: var(--tg-muted); cursor: pointer; padding: 0 3px; font-size: 0.85em; line-height: 16px; border-radius: 4px; visibility: hidden; }
+.tg-port:hover .tg-row-pick, .tg-port:focus-within .tg-row-pick { visibility: visible; }
+.tg-row-pick:hover { color: var(--tg-accent); }
+/* A name or a path of fields, in its type's colour: each part is a button that changes the path from there */
+.tg-path { display: inline-flex; align-items: center; border-radius: 999px; padding: 0 7px 0 6px; line-height: 18px; white-space: nowrap;
+  background: color-mix(in srgb, var(--tg-type, var(--tg-muted)) 16%, var(--tg-node-bg)); border: 1px solid color-mix(in srgb, var(--tg-type, var(--tg-muted)) 50%, transparent); }
+.tg-path-dot { width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; flex: none; background: var(--tg-muted); }
+.tg-path-sep { color: var(--tg-muted); padding: 0 1px; }
+.tg-path-part { background: none; border: none; padding: 0; margin: 0; color: var(--tg-fg); font: inherit; font-weight: 600; cursor: pointer; border-radius: 3px; }
+.tg-path-part:hover, .tg-path-part:focus-visible { color: var(--tg-accent); text-decoration: underline; outline: none; }
+/* In a node's title it reads as part of the name: ball.Bounce, Math.Abs */
+.tg-node-header .tg-path { background: none; border-color: transparent; padding: 0; line-height: 20px; }
+.tg-node-header .tg-path .tg-path-part { font-weight: 650; }
+.tg-node-header .tg-path-plain .tg-path-dot { display: none; }
+/* What reads the same thing lights together: a name in an input, the entry's row it comes from, its other reads */
+.tg-path.tg-lit { box-shadow: 0 0 0 2px var(--tg-accent); }
+.tg-entry-row.tg-lit { background: color-mix(in srgb, var(--tg-accent) 20%, transparent); }
+.tg-pin.tg-lit { color: var(--tg-accent); }
+.tg-pin.tg-lit .tg-dot { box-shadow: 0 0 0 3px var(--tg-accent) !important; }
 .tg-port.tg-has-error { color: var(--tg-error); }
 .tg-port.tg-has-error .tg-dot { background: transparent; box-shadow: 0 0 0 2px var(--tg-error) !important; opacity: 1; }
 .tg-port.tg-target .tg-dot, .tg-port:hover .tg-dot { box-shadow: 0 0 0 3px var(--tg-accent) !important; }
@@ -340,12 +381,17 @@ textarea.tg-input { resize: vertical; width: 100%; background: var(--tg-input-bg
 .tg-port-add { background: none; border: none; color: var(--tg-muted); cursor: pointer; padding: 0 8px; text-align: left; font-size: 0.88em; line-height: 18px; border-radius: 4px; visibility: hidden; }
 .tg-node:hover .tg-port-add, .tg-node.tg-selected .tg-port-add, .tg-lambda-params .tg-port-add { visibility: visible; }
 .tg-port-add:hover { color: var(--tg-accent); }
+.tg-port-add-inline { padding: 0 5px; margin: 0 -4px 0 0; font-size: 1.05em; line-height: 16px; }
 .tg-dot { width: 11px; height: 11px; border-radius: 50%; border: 2px solid var(--tg-node-bg); background: var(--tg-muted); box-shadow: 0 0 0 1px var(--tg-muted); flex: none; opacity: 0.75; }
 .tg-dot.tg-wired { opacity: 1; }
 /* An exec pin is an arrow */
 .tg-dot-exec { width: 0; height: 0; border-radius: 0; background: none !important; box-shadow: none !important; opacity: 1; border: 6px solid transparent; border-left: 9px solid var(--tg-exec); border-right: 0; }
 .tg-port:hover .tg-dot-exec, .tg-port.tg-target .tg-dot-exec { box-shadow: none !important; border-left-color: var(--tg-accent); }
 .tg-op { font-family: var(--tg-mono); height: 20px; }
+.tg-op-button { background: var(--tg-input-bg); color: var(--tg-fg); border: 1px solid var(--tg-input-border); border-radius: 5px; padding: 0 6px; min-width: 26px; line-height: 17px; cursor: pointer; font-size: 0.95em; font-weight: 600; }
+.tg-op-button:hover, .tg-op-button:focus-visible { border-color: var(--tg-accent); color: var(--tg-accent); outline: none; }
+.tg-op-title { font: inherit; font-weight: 650; height: 22px; padding: 0 2px; margin-left: -3px; background: transparent; border-color: transparent; color: var(--tg-fg); cursor: pointer; }
+.tg-op-title:hover, .tg-op-title:focus-visible { border-color: var(--tg-input-border); background: var(--tg-input-bg); }
 .tg-lambda-params { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 2px; }
 .tg-lambda-param { display: inline-flex; align-items: center; }
 
@@ -421,6 +467,10 @@ textarea.tg-input { resize: vertical; width: 100%; background: var(--tg-input-bg
 .tg-picker-summary { color: var(--tg-muted); font-size: 0.92em; }
 .tg-picker-tag { background: var(--tg-error); color: #fff; border-radius: 9px; padding: 0 6px; font-size: 0.85em; }
 .tg-picker-none { color: var(--tg-muted); padding: 8px; }
+.tg-picker-note { color: var(--tg-muted); font-size: 0.88em; white-space: nowrap; }
+.tg-picker-drill { color: var(--tg-muted); font-size: 1.25em; line-height: 1; padding: 0 4px 2px 8px; border-radius: 4px; }
+.tg-picker-drill:hover { color: var(--tg-accent); }
+.tg-value-picker { width: 360px; }
 .tg-form { padding: 10px; width: 320px; display: flex; flex-direction: column; gap: 8px; }
 .tg-form-title { font-weight: 650; }
 .tg-form-help { color: var(--tg-muted); font-size: 0.93em; margin-top: -4px; }
