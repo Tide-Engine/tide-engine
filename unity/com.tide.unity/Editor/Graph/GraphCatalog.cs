@@ -1,152 +1,92 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 
 namespace Tide.Editor
 {
-    // Where a search is made: the graph a new node goes in, the window it's in, the port a wire was dropped from,
-    // and the member or method node whose member it picks (Retarget), if it's for one
+    // Where a search is made: the graph a new node goes in, the window and the frame it's in, the pin a wire was
+    // dropped from, and the member or method node whose member it picks (Retarget), if it's for one
     sealed class GraphSearchContext
     {
         public GraphDocument Doc;
         public JValue Graph;
         public GraphSlot Slot;
         public TideGraphWindow Window;
+        public GraphFrame Frame;
         public GraphPort Pending;
         public int Retarget;
         public bool Body => Slot.IsBody;
     }
 
-    // A thing a search offers: what it makes, put in a graph at a place, returning the node to wire. The language
-    // server's say what they are (Detail), rank above the catalog's when Priority is higher, and can be a statement
-    // outside the catalog's Flow group (Statement). Apply makes a node the member or method picked, for a search
-    // that retargets one.
+    // A thing a search offers: what it makes, put in a graph at a place, returning the node to wire. Detail says
+    // what it is; the language server's rank above the catalog's when Priority is higher. Statement is a step of
+    // the flow (it goes on an arrow, not into a value's input). Apply makes a node the member or method picked, for
+    // a search that retargets one. Command does something else than make a node (a note, a paste).
     sealed class GraphSearchEntry
     {
         public string Group, Title, Keywords = "", Detail;
         public int Priority;
         public bool Statement;
+        public bool Reads; // A read of something the code takes, or of a local
         public Func<GraphDocument, JValue, Vector2, JValue> Make;
         public Action<JValue> Apply;
+        public Action Command;
     }
 
-    // Every node kind of the format, and the locals and parameters a graph's nodes can read
+    // Every node kind of the schema, under its category's title and with what the schema says it does, and the
+    // reads of what a graph's code takes and of its locals
     sealed class GraphCatalog : ITideGraphSearch
     {
         public IEnumerable<GraphSearchEntry> Entries(GraphSearchContext c)
         {
-            if (c.Body)
+            // What the code takes and its locals: the first things a value comes from
+            foreach (var read in GraphDocument.ReadsOf(c.Doc?.RoutineOf(c.Slot)))
             {
-                yield return Statement("Call", "eval call function invoke", "call");
-                yield return Statement("Method call", "eval method invoke", "method");
-                yield return Node("Flow", "Do (statement of a value)", "eval", "eval statement value");
-                yield return Node("Flow", "Local (var)", "var", "var let local variable declare");
-                yield return Node("Flow", "Assign =", "assign", "assign set = += -=");
-                yield return Node("Flow", "If", "if", "if else branch condition");
-                yield return Node("Flow", "While", "while", "while loop");
-                yield return Node("Flow", "For", "for", "for loop");
-                yield return Node("Flow", "For each", "foreach", "foreach loop each in");
-                yield return Node("Flow", "Parallel", "parallel", "parallel grid loop by offset");
-                yield return Node("Flow", "Switch", "switch", "switch case default");
-                yield return Node("Flow", "Return", "return", "return");
-                yield return Node("Flow", "Fail", "fail", "fail error");
-                yield return Node("Flow", "Break", "break", "break");
-                yield return Node("Flow", "Continue", "continue", "continue");
-                yield return Node("Flow", "Block", "block", "block scope braces");
-                yield return Node("Flow", "Discard _ =", "discard", "discard _");
-                yield return Node("Flow", "Code (Tide text)", "code", "code text tide statements");
+                if (!c.Body) break;
+                var name = read.Name;
+                yield return Node("This code takes", name, "name", "parameter name read " + name, read.Type, n => n.Set("name", JValue.Of(name), GraphSchema.NodeOrder("name")), true);
             }
-            yield return Node("Values", "Int", "int", "int integer number");
-            yield return Node("Values", "Float", "float", "float number decimal");
-            yield return Node("Values", "Bool", "bool", "bool true false");
-            yield return Node("Values", "String", "string", "string text");
-            yield return Node("Values", "Char", "char", "char character");
-            yield return Node("Values", "this", "this", "this self");
-            yield return Node("Values", "default", "default", "default zero");
-            yield return Node("Values", "null", "null", "null none");
-            yield return Node("Values", "Name", "name", "name constant type namespace parameter");
-            yield return Node("Values", "Member .", "member", "member field dot property");
-            yield return Node("Values", "Member shorthand .Name", "member", "member shorthand enum", n => { n.Set("shorthand", JValue.Of(true), GraphSchema.NodeOrder("member")); });
-            yield return Node("Values", "List [ ]", "list", "list array items");
-            yield return Node("Values", "Value of a type { }", "literal", "literal struct construct new init");
-            yield return Node("Values", "Text with values $\"\"", "interp", "interp interpolated string format");
-            yield return Node("Values", "Lambda =>", "lambda", "lambda function arrow");
-            yield return Node("Calls", "Call", "call", "call function invoke");
-            yield return Node("Calls", "Method", "method", "method call invoke");
-            yield return Node("Calls", "out", "out", "out argument");
-            yield return Node("Calls", "out var", "outVar", "out var declare");
-            foreach (var (op, title) in GraphSchema.BinaryOps)
-            {
-                var o = op;
-                yield return Node("Math and logic", $"{title} {op}", "binary", $"binary operator {title} {op}", n => n.Set("op", JValue.Of(o), GraphSchema.NodeOrder("binary")));
-            }
-            yield return Node("Math and logic", "Not !", "unary", "unary not !", n => n.Set("op", JValue.Of("!"), GraphSchema.NodeOrder("unary")));
-            yield return Node("Math and logic", "Negate -", "unary", "unary negate minus -", n => n.Set("op", JValue.Of("-"), GraphSchema.NodeOrder("unary")));
-            yield return Node("Math and logic", "Complement ~", "unary", "unary complement bitwise ~", n => n.Set("op", JValue.Of("~"), GraphSchema.NodeOrder("unary")));
-            yield return Node("Math and logic", "Increment ++x", "step", "step increment ++", n => n.Set("op", JValue.Of("++"), GraphSchema.NodeOrder("step")));
-            yield return Node("Math and logic", "Decrement --x", "step", "step decrement --", n => n.Set("op", JValue.Of("--"), GraphSchema.NodeOrder("step")));
-            yield return Node("Math and logic", "Increment after x++", "step", "step increment postfix ++", n =>
-            {
-                n.Set("op", JValue.Of("++"), GraphSchema.NodeOrder("step"));
-                n.SetFlag("postfix", true, GraphSchema.NodeOrder("step"));
-            });
-            yield return Node("Math and logic", "Decrement after x--", "step", "step decrement postfix --", n =>
-            {
-                n.Set("op", JValue.Of("--"), GraphSchema.NodeOrder("step"));
-                n.SetFlag("postfix", true, GraphSchema.NodeOrder("step"));
-            });
-            yield return Node("Math and logic", "Conditional ? :", "conditional", "conditional ternary ? :");
-            yield return Node("Math and logic", "Coalesce ??", "coalesce", "coalesce ?? null");
-            yield return Node("Math and logic", "Switch value", "switchExpr", "switch expression arms =>");
-            yield return Node("Math and logic", "is", "is", "is type test pattern");
-            yield return Node("Math and logic", "has", "has", "has field shader");
-            yield return Node("Math and logic", "try", "try", "try error fails");
-            yield return Node("Math and logic", "await", "await", "await async");
-            yield return Node("Math and logic", "Value or default !", "defaulted", "defaulted ! optional");
-            yield return Node("Math and logic", "Index [ ]", "index", "index subscript [ ] grid");
-            yield return Node("Text", "Text (Tide)", "text", "text tide expression");
-
-            // The locals declared in the graph, and the routine's parameters
             if (c.Graph != null)
-            {
                 foreach (var local in GraphDocument.Locals(c.Graph))
                 {
                     var r = local.Wire("id");
                     var name = GraphSchema.LocalName(local);
-                    yield return Node("Locals", name, "local", "local read " + name, n => n.Set("ref", JValue.Of(r), GraphSchema.NodeOrder("local")));
+                    yield return Node("Locals", name, "local", "local read " + name, local.Str("type"), n => n.Set("ref", JValue.Of(r), GraphSchema.NodeOrder("local")), true);
                 }
-            }
-            foreach (var name in Names(c))
+            if (c.Body)
             {
-                var nm = name;
-                yield return Node("Parameters", nm, "name", "parameter name " + nm, n => n.Set("name", JValue.Of(nm), GraphSchema.NodeOrder("name")));
+                yield return Statement("Call a function", "eval call function invoke do", "call", GraphSchema.Spec("call")?.Help);
+                yield return Statement("Call a method", "eval method invoke do", "method", GraphSchema.Spec("method")?.Help);
             }
-        }
-
-        // What a graph's code reads by name: its routine's parameters, a handler's trigger, a command's payload
-        static IEnumerable<string> Names(GraphSearchContext c)
-        {
-            var routine = c.Doc?.RoutineOf(c.Slot);
-            if (routine == null) yield break;
-            var parameters = routine.Arr("params");
-            if (parameters != null)
+            foreach (var spec in GraphSchema.Nodes)
             {
-                foreach (var p in parameters.Items)
+                if (spec.K == "local") continue; // A local is read from its pin, or from the entries above
+                if (spec.Exec && !c.Body) continue;
+                var group = GraphSchema.CategoryTitle(spec.Category);
+                var ops = GraphSchema.Ops(spec.K);
+                if (ops.Length > 0 && !spec.Exec)
                 {
-                    var name = p.Str("name");
-                    if (!string.IsNullOrEmpty(name) && p.Str("mode") != "with" && p.Str("mode") != "without") yield return name;
+                    // An operator each: Add +, Not !
+                    foreach (var (op, title) in ops)
+                    {
+                        var o = op;
+                        var k = spec.K;
+                        var entry = Node(group, $"{title ?? spec.Title} {op}", k, $"{k} operator {title} {op}", spec.Help, n => n.Set("op", JValue.Of(o), GraphSchema.NodeOrder(k)));
+                        yield return entry;
+                    }
+                    continue;
                 }
+                var made = Node(group, spec.Title, spec.K, spec.K + " " + spec.Title, spec.Help);
+                made.Statement = spec.Exec;
+                yield return made;
             }
-            var trigger = routine.Get("trigger");
-            if (trigger != null && !string.IsNullOrEmpty(trigger.Str("name"))) yield return trigger.Str("name");
-            var payload = routine.Arr("payload");
-            if (payload != null) foreach (var p in payload.Items) if (!string.IsNullOrEmpty(p.Str("name"))) yield return p.Str("name");
         }
 
-        static GraphSearchEntry Node(string group, string title, string k, string keywords, Action<JValue> set = null)
+        static GraphSearchEntry Node(string group, string title, string k, string keywords, string detail, Action<JValue> set = null, bool reads = false)
             => new GraphSearchEntry
             {
-                Group = group, Title = title, Keywords = keywords,
+                Group = group, Title = title, Keywords = keywords, Detail = detail, Reads = reads, Priority = reads ? 1 : 0,
                 Make = (doc, graph, at) =>
                 {
                     var n = doc.AddNode(graph, k, at.x, at.y);
@@ -155,11 +95,11 @@ namespace Tide.Editor
                 },
             };
 
-        // A call as a statement: an eval with the call in its value, shown as one node
-        static GraphSearchEntry Statement(string title, string keywords, string k)
+        // A call as a step: an eval with the call in its value, shown as one node
+        static GraphSearchEntry Statement(string title, string keywords, string k, string detail)
             => new GraphSearchEntry
             {
-                Group = "Flow", Title = title, Keywords = keywords,
+                Group = GraphSchema.CategoryTitle(GraphSchema.Spec("eval")?.Category), Title = title, Keywords = keywords, Detail = detail, Statement = true,
                 Make = (doc, graph, at) =>
                 {
                     var call = doc.AddNode(graph, k, at.x - 220, at.y + 60);

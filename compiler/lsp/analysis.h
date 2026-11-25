@@ -123,6 +123,8 @@ bool analysis_graph_position(int offset, int *line, int *character);
 void analysis_graph_types(jbuf *out);
 // ...and what each call's node calls with: its callee's parameters' names and types, and where each argument goes.
 void analysis_graph_calls(jbuf *out);
+// ...and what the game itself declares (and its packages), by name: what isn't in it is the engine's.
+void analysis_graph_names(jbuf *out);
 // The next analysis of the graph `uri` reads it with a '.' after node `node`'s text, where completion offers what
 // the node's value has (its fields and methods, a namespace's or a type's members); NULL ends it. Then the '.''s
 // place, past it, or -1 where the node has no text.

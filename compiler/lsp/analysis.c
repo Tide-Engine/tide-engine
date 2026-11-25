@@ -15525,6 +15525,31 @@ void analysis_graph_calls(jbuf *out)
     jb_put(out, "}");
 }
 
+// What the game itself declares, by name as the document writes it, for an editor to tell the game's own from
+// the engine's among what's offered: {"game": {"Ball": "component", "Heal": "function"}, "packages": {...}}.
+// Systems, views and handlers aren't named by code, and aren't in it.
+void analysis_graph_names(jbuf *out)
+{
+    jb_put(out, "{");
+    for (int pass = 0; pass < 2; pass++) {
+        jb_put(out, pass ? ",\"packages\":{" : "\"game\":{");
+        int written = 0;
+        for (int i = 0; A.prog && i < A.prog->decls.count; i++) {
+            const decl *d = A.prog->decls.items[i];
+            if (d->at.file < 0 || d->at.file >= A.file_count || d->at.line <= 0) continue; // The engine's own
+            if ((A.files[d->at.file].src.package != NULL) != (pass == 1)) continue;
+            if (d->kind == DECL_SYSTEM || d->kind == DECL_SHADER || d->kind == DECL_SETTINGS || d->kind == DECL_METHOD
+                || d->generic_of || d->type_param || !d->name.len) continue;
+            jb_put(out, written++ ? "," : "");
+            jb_string(out, name_for(d));
+            jb_put(out, ":");
+            jb_string(out, decl_keyword(d));
+        }
+        jb_put(out, "}");
+    }
+    jb_put(out, "}");
+}
+
 void analysis_graph_node_type(const int node, jbuf *out)
 {
     jbuf types = {0};

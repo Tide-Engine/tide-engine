@@ -142,6 +142,8 @@ namespace Tide.Editor
         public string Severity;   // error, warning or note
         public string Message;
         public string Detail = ""; // What tidec wrote after it: the line of Tide it's in
+        public string Port;        // The pin of its node it's about (an input with nothing wired), when it names one
+        public int Index = -1;     // ...and which of a list's (an argument, an item), from 0
     }
 
     sealed class GraphCheckResult

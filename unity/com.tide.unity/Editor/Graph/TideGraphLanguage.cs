@@ -68,8 +68,15 @@ namespace Tide.Editor
         public static void Check(TideLanguageClient client, string path, string json, Action<GraphCheckResult> done, Action<string> failed)
         {
             var uri = UriOf(path);
+            client.Wanted(uri);
             client.Operate(finish =>
             {
+                // Its window closed while it waited its turn: nobody reads the answer
+                if (client.IsClosed(uri))
+                {
+                    finish();
+                    return;
+                }
                 if (!client.SetText(uri, json))
                 {
                     finish();
@@ -105,12 +112,15 @@ namespace Tide.Editor
             foreach (var d in list.Items)
             {
                 var severity = (int)(d.Get("severity")?.Number ?? 1);
-                var id = d.Get("data")?.Wire("node") ?? 0;
+                var data = d.Get("data");
+                var id = data?.Wire("node") ?? 0;
                 var diagnostic = new GraphDiagnostic
                 {
                     Id = id,
                     Severity = severity == 1 ? "error" : severity == 2 ? "warning" : "note",
                     Message = d.Str("message") ?? "",
+                    Port = data?.Str("port"),
+                    Index = data?.Get("index")?.Kind == JKind.Number ? (int)data.Get("index").Number : -1,
                 };
                 if (result.Lowered != null && result.Lowered.Spans.TryGetValue(id, out var span)) diagnostic.Detail = result.Lowered.LineAt(span.start).Trim();
                 var related = d.Arr("relatedInformation");
@@ -130,8 +140,7 @@ namespace Tide.Editor
             var checkedText = window.Checked;
             var client = TideLanguageClient.Shared;
             if (client == null || checkedText?.Lowered == null || checkedText.Checker != "tidels") return;
-            var graph = window.Doc?.GetGraph(window.Slot);
-            var n = GraphDocument.NodeIn(graph, node);
+            var n = window.Doc?.Get(node);
             var offset = NameOffset(checkedText.Lowered, n, node);
             if (offset < 0) return;
             var uri = UriOf(window.Path);
@@ -204,6 +213,259 @@ namespace Tide.Editor
             });
         }
 
+        // Where tidec's layout puts a file's declarations on the board (tide/graphLayout with the file: data in a
+        // column on the left, code to its right): `done` gets {"<id>": [x, y]}, or null and why
+        public static void LayoutBoard(JValue file, Action<JValue, string> done)
+        {
+            var client = TideLanguageClient.Get(out var why);
+            if (client == null || !client.Usable)
+            {
+                done(null, why ?? client?.Failure ?? "tidels isn't running");
+                return;
+            }
+            var p = JValue.NewObject();
+            p.Set("file", file.Clone());
+            client.Request("tide/graphLayout", p, (r, why2) =>
+            {
+                if (r != null && r.IsObject) done(r, null);
+                else done(null, why2 ?? "tidels couldn't lay the board out");
+            });
+        }
+
+        // ---------------------------------------------------------------------------------------------------------
+        // What's valid at a place: the types that can go where a type goes, the words a parameter can start with
+
+        // The language server, when it's the one checking a window's graph
+        static TideLanguageClient ClientOf(TideGraphWindow window)
+        {
+            var client = TideLanguageClient.Shared;
+            if (window == null || window.Doc == null || client == null || !client.Usable || string.IsNullOrEmpty(window.Path)) return null;
+            return window.Checked == null || window.Checked.Checker == "tidels" ? client : null;
+        }
+
+        static int Find(GraphText t, string what, int from, int to, bool whole)
+        {
+            var bytes = Encoding.UTF8.GetBytes(what);
+            if (bytes.Length == 0) return -1;
+            bool Word(int i) => i >= 0 && i < t.Bytes.Length && (char.IsLetterOrDigit((char)t.Bytes[i]) || t.Bytes[i] == '_');
+            for (var i = Math.Max(0, from); i + bytes.Length <= Math.Min(to, t.Bytes.Length); i++)
+            {
+                var same = true;
+                for (var j = 0; same && j < bytes.Length; j++) same = t.Bytes[i + j] == bytes[j];
+                if (!same) continue;
+                if (whole && (Word(i - 1) || Word(i + bytes.Length))) continue;
+                return i;
+            }
+            return -1;
+        }
+
+        // A place's byte offset in the graph's Tide, or -1 when the Tide hasn't it
+        static int OffsetOf(GraphText t, GraphTypePlace place)
+        {
+            if (place == null || !t.Spans.TryGetValue(place.Element, out var span)) return -1;
+            if (place.After != null)
+            {
+                var at = Find(t, place.After, span.start, span.end, false);
+                return at < 0 ? -1 : at + Encoding.UTF8.GetByteCount(place.After);
+            }
+            return string.IsNullOrEmpty(place.Find) ? -1 : Find(t, place.Find, span.start, span.end, true);
+        }
+
+        static List<GraphTypeInfo> TypeItems(JValue completion)
+        {
+            var found = new List<GraphTypeInfo>();
+            foreach (var item in Items(completion))
+            {
+                var kind = (int)(item.Get("kind")?.Number ?? 0);
+                if (kind != KindStruct && kind != KindEnum && kind != KindClass && kind != KindInterface && kind != KindTypeParameter && kind != KindEvent) continue;
+                var label = item.Str("label");
+                if (string.IsNullOrEmpty(label) || label.StartsWith("_TideGraphProbe")) continue;
+                var info = new GraphTypeInfo { Name = label, Detail = item.Str("detail") ?? "", Doc = item.Get("documentation")?.Str("value"), Kind = kind };
+                // What a generic type is of, from what completion would write: `Pair<${1:T}>`, `Map<$1, $2>`
+                var insert = item.Str("insertText") ?? "";
+                var open = insert.IndexOf('<');
+                if (open > 0 && insert.EndsWith(">"))
+                    foreach (var part in GraphLists.Split(insert.Substring(open + 1, insert.Length - open - 2)))
+                    {
+                        var name = part.Trim().TrimStart('$').Trim('{', '}');
+                        var colon = name.IndexOf(':');
+                        info.Params.Add(colon >= 0 ? name.Substring(colon + 1) : "type " + (info.Params.Count + 1));
+                    }
+                found.Add(info);
+            }
+            return found;
+        }
+
+        // The types that can go at a place of a window's graph, as completion lists them there in the graph's Tide.
+        // A place that lists none (a function's result, something not written yet) is asked as a field's, in a copy
+        // of the file with a field to ask at. `done` gets them, or null and why, on the editor's thread.
+        public static void Types(TideGraphWindow window, GraphTypePlace place, Action<List<GraphTypeInfo>, string> done)
+        {
+            var client = ClientOf(window);
+            if (client == null)
+            {
+                done(null, "the language server isn't checking this file");
+                return;
+            }
+            var uri = UriOf(window.Path);
+            var text = window.Doc.Text;
+            client.Operate(finish =>
+            {
+                void End(List<GraphTypeInfo> found, string why)
+                {
+                    finish();
+                    done(found, why);
+                }
+                // Its window closed while this waited its turn: the file isn't opened again for an answer nobody reads
+                if (window == null)
+                {
+                    End(null, "the window closed");
+                    return;
+                }
+                if (!client.SetText(uri, text))
+                {
+                    End(null, client.Failure ?? "tidels can't be started");
+                    return;
+                }
+                void Probe()
+                {
+                    var copy = GraphDocument.Parse(text);
+                    var probe = copy.NewDecl("struct", "_TideGraphProbe");
+                    var field = copy.NewMember("field", "probe");
+                    probe.Arr("members").Items.Add(field);
+                    copy.Decls.Items.Add(probe);
+                    var fieldId = field.Wire("id");
+                    if (!client.SetText(uri, copy.Text))
+                    {
+                        End(null, client.Failure);
+                        return;
+                    }
+                    client.Ask("tide/graphText", uri, -1, (r, why) =>
+                    {
+                        var t = GraphText.Of(r);
+                        if (t == null || !t.Spans.TryGetValue(fieldId, out var span))
+                        {
+                            client.SetText(uri, text);
+                            End(null, why);
+                            return;
+                        }
+                        client.Ask("tide/graphCompletion", uri, span.start, (items, why2) =>
+                        {
+                            client.SetText(uri, text);
+                            End(TypeItems(items), why2);
+                        });
+                    });
+                }
+                if (place == null)
+                {
+                    Probe();
+                    return;
+                }
+                client.Ask("tide/graphText", uri, -1, (r, why) =>
+                {
+                    var t = GraphText.Of(r);
+                    var offset = t == null ? -1 : OffsetOf(t, place);
+                    if (offset < 0)
+                    {
+                        Probe();
+                        return;
+                    }
+                    client.Ask("tide/graphCompletion", uri, offset, (items, why2) =>
+                    {
+                        var found = TypeItems(items);
+                        if (found.Count == 0) Probe();
+                        else End(found, null);
+                    });
+                });
+            });
+        }
+
+        // The words completion offers at a place (mut, with, without, query, out…): which ways of taking a
+        // parameter a routine's kind has. `done` gets null when it can't be asked.
+        public static void Words(TideGraphWindow window, GraphTypePlace place, Action<HashSet<string>> done)
+        {
+            var client = ClientOf(window);
+            if (client == null)
+            {
+                done(null);
+                return;
+            }
+            var uri = UriOf(window.Path);
+            var text = window.Doc.Text;
+            client.Operate(finish =>
+            {
+                if (window == null || !client.SetText(uri, text))
+                {
+                    finish();
+                    done(null);
+                    return;
+                }
+                client.Ask("tide/graphText", uri, -1, (r, why) =>
+                {
+                    var t = GraphText.Of(r);
+                    var offset = t == null ? -1 : OffsetOf(t, place);
+                    if (offset < 0)
+                    {
+                        finish();
+                        done(null);
+                        return;
+                    }
+                    client.Ask("tide/graphCompletion", uri, offset, (items, why2) =>
+                    {
+                        finish();
+                        var words = new HashSet<string>();
+                        foreach (var item in Items(items))
+                        {
+                            var kind = (int)(item.Get("kind")?.Number ?? 0);
+                            if ((kind == KindKeyword || kind == KindSnippet) && item.Str("label") != null) words.Add(item.Str("label"));
+                        }
+                        done(words.Count > 0 ? words : null);
+                    });
+                });
+            });
+        }
+
+        // Something a type has: an enum's member, a struct's field
+        public sealed class Member
+        {
+            public string Label, Detail;
+            public int Kind;
+        }
+
+        // What a type of the game has (an enum's choices, a struct's fields), by its name: asked in a copy of the
+        // file with a function that names the type
+        public static void MembersOfType(TideGraphWindow window, string type, Action<List<Member>, string> done)
+        {
+            var client = ClientOf(window);
+            var name = (type ?? "").TrimEnd('?');
+            if (client == null || name.Length == 0 || name.IndexOfAny(new[] { '<', '[' }) >= 0)
+            {
+                done(null, "the language server isn't checking this file");
+                return;
+            }
+            var uri = UriOf(window.Path);
+            var text = window.Doc.Text;
+            client.Operate(finish =>
+            {
+                if (window == null || !client.SetText(uri, text))
+                {
+                    finish();
+                    done(null, "the window closed");
+                    return;
+                }
+                var parameters = JValue.NewObject();
+                parameters.Set("type", JValue.Of(name));
+                client.Ask("tide/graphMembers", uri, parameters, (items, why) =>
+                {
+                    finish();
+                    var found = new List<Member>();
+                    foreach (var item in Items(items))
+                        if (!string.IsNullOrEmpty(item.Str("label"))) found.Add(new Member { Label = item.Str("label"), Detail = item.Str("detail"), Kind = (int)(item.Get("kind")?.Number ?? 0) });
+                    done(found, why);
+                });
+            });
+        }
+
         // Moves a graph's nodes where a layout puts them, and nothing else: how many it moved
         public static int Place(JValue graph, JValue layout)
         {
@@ -236,10 +498,29 @@ namespace Tide.Editor
             var uri = UriOf(window.Path);
             var text = c.Doc.Text;
             var objectNode = ObjectOf(c);
+            string restore = null;
             if (c.Retarget != 0 && objectNode == 0)
             {
-                found(null, "Wire its object to see what it has");
+                found(null, "Wire what it's of to see what that has");
                 return;
+            }
+            // A wire from a parameter's pin: what its type has, asked by the type's name
+            var typeOfRead = c.Pending != null && c.Pending.IsRead ? ReadType(c) : null;
+            if (c.Pending != null && c.Pending.IsRead && typeOfRead == null)
+            {
+                // A wire from a parameter's or a local's pin: nothing reads it yet, so a copy of the file with a
+                // node that does is asked about, and the file is put back
+                var copy = GraphDocument.Parse(text);
+                var graph = copy.GetGraph(c.Slot);
+                if (graph != null)
+                {
+                    var read = copy.AddNode(graph, c.Pending.Local ? "local" : "name", 0, 0);
+                    if (c.Pending.Local) read.Set("ref", JValue.Of(c.Pending.Node), GraphSchema.NodeOrder("local"));
+                    else read.Set("name", JValue.Of(c.Pending.Name), GraphSchema.NodeOrder("name"));
+                    objectNode = read.Wire("id");
+                    restore = text;
+                    text = copy.Text;
+                }
             }
             client.Operate(finish =>
             {
@@ -248,20 +529,28 @@ namespace Tide.Editor
                     finish();
                     found(null, why);
                 }
+                if (window == null)
+                {
+                    Fail("the window closed");
+                    return;
+                }
                 if (!client.SetText(uri, text))
                 {
                     Fail(client.Failure ?? "tidels can't be started");
                     return;
                 }
-                if (objectNode != 0)
+                if (objectNode != 0 || typeOfRead != null)
                 {
-                    // What the value has: tidels reads the graph with a '.' after it, as after `value.` in a .tide file
+                    // What the value has: tidels reads the graph with a '.' after it, as after `value.` in a .tide
+                    // file; or, for a pin nothing reads yet, what a value of its type has
                     var parameters = JValue.NewObject();
-                    parameters.Set("node", JValue.Of(objectNode));
+                    if (typeOfRead != null) parameters.Set("type", JValue.Of(typeOfRead));
+                    else parameters.Set("node", JValue.Of(objectNode));
                     client.Ask("tide/graphMembers", uri, parameters, (items, why) =>
                     {
+                        if (restore != null) client.SetText(uri, restore);
                         finish();
-                        found(Members(c, items, objectNode, items?.Str("type")), why);
+                        found(Members(c, items, objectNode, items?.Str("type") ?? typeOfRead), why);
                     });
                     return;
                 }
@@ -283,13 +572,23 @@ namespace Tide.Editor
             });
         }
 
+        // The declared type of what a wire was dragged from, when it's a parameter's or a local's pin with one
+        static string ReadType(GraphSearchContext c)
+        {
+            var p = c.Pending;
+            string type;
+            if (p.Local) type = GraphDocument.NodeIn(c.Graph, p.Node)?.Str("type");
+            else type = GraphDocument.ReadsOf(c.Doc.RoutineOf(c.Slot)).FirstOrDefault(r => r.Name == p.Name)?.Type;
+            return string.IsNullOrEmpty(type) ? null : type;
+        }
+
         // The node whose members a search is for: the one a retargeted member's object is, or the value a wire
         // was dropped from
         static int ObjectOf(GraphSearchContext c)
         {
             if (c.Retarget != 0) return GraphDocument.NodeIn(c.Graph, c.Retarget)?.Wire("object") ?? 0;
             var p = c.Pending;
-            if (p == null || p.Input || p.Exec || p.Node <= 0) return 0;
+            if (p == null || p.Input || p.Exec || p.Node <= 0 || p.IsRead) return 0;
             return p.Node;
         }
 
@@ -317,7 +616,7 @@ namespace Tide.Editor
             int Start(int id) => t.Spans.TryGetValue(id, out var s) ? s.start : -1;
             if (p != null && p.Exec && !p.Input)
             {
-                if (p.Node == GraphNodeView.EntryId) return graph.Wire("entry") != 0 && Start(graph.Wire("entry")) >= 0 ? Start(graph.Wire("entry")) : BodyStart(c, t);
+                if (p.Node == GraphFrame.EntryId) return graph.Wire("entry") != 0 && Start(graph.Wire("entry")) >= 0 ? Start(graph.Wire("entry")) : BodyStart(c, t);
                 if (t.Spans.TryGetValue(p.Node, out var s))
                 {
                     var key = p.Path?.Parts[0] as string;
@@ -375,7 +674,7 @@ namespace Tide.Editor
         }
 
         // Completion's kinds (LSP's CompletionItemKind)
-        const int KindMethod = 2, KindFunction = 3, KindField = 5, KindVariable = 6, KindClass = 7, KindInterface = 8, KindModule = 9,
+        internal const int KindMethod = 2, KindFunction = 3, KindField = 5, KindVariable = 6, KindClass = 7, KindInterface = 8, KindModule = 9, KindTypeParameter = 25,
             KindProperty = 10, KindEnum = 13, KindKeyword = 14, KindSnippet = 15, KindEnumMember = 20, KindConstant = 21, KindStruct = 22, KindEvent = 23;
 
         static IEnumerable<JValue> Items(JValue completion)

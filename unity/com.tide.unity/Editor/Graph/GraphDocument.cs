@@ -645,6 +645,152 @@ namespace Tide.Editor
         // ---------------------------------------------------------------------------------------------------------
         // Declarations and members
 
+        // ---------------------------------------------------------------------------------------------------------
+        // The board: where a declaration (or a member with code of its own) is, and what its code reads by name
+
+        public static bool HasPlace(JValue v) => v != null && v.Get("x")?.Kind == JKind.Number && v.Get("y")?.Kind == JKind.Number;
+        public static Vector2 PlaceOf(JValue v) => new Vector2((float)(v.Get("x")?.Number ?? 0), (float)(v.Get("y")?.Number ?? 0));
+
+        public static void SetPlace(GraphElement e, Vector2 at)
+        {
+            var order = OrderOf(e);
+            if (order == null || order.IndexOf("x") < 0) return; // A kind with no place of its own (a namespace block)
+            e.Value.Set("x", JValue.Of(Mathf.Round(at.x)), order);
+            e.Value.Set("y", JValue.Of(Mathf.Round(at.y)), order);
+        }
+
+        // What a routine's code reads by a name: its parameters (not its filters), a handler's event, a command's
+        // payload. Source is the element (or the trigger) the name is of.
+        public sealed class Read
+        {
+            public string Name, Type;
+            public JValue Source;
+            public int Id; // The source's id, 0 for a trigger
+        }
+
+        public static List<Read> ReadsOf(JValue routine)
+        {
+            var reads = new List<Read>();
+            if (routine == null) return reads;
+            var payload = routine.Arr("payload");
+            if (payload != null)
+                foreach (var p in payload.Items)
+                    if (!string.IsNullOrEmpty(p.Str("name"))) reads.Add(new Read { Name = p.Str("name"), Type = p.Str("type"), Source = p, Id = p.Wire("id") });
+            var trigger = routine.Get("trigger");
+            if (trigger != null && trigger.IsObject && !string.IsNullOrEmpty(trigger.Str("name")))
+                reads.Add(new Read { Name = trigger.Str("name"), Type = trigger.Flag("changed") ? null : trigger.Str("type"), Source = trigger });
+            var parameters = routine.Arr("params");
+            if (parameters != null)
+                foreach (var p in parameters.Items)
+                {
+                    var mode = p.Str("mode");
+                    if (string.IsNullOrEmpty(p.Str("name")) || mode == "with" || mode == "without") continue;
+                    reads.Add(new Read { Name = p.Str("name"), Type = mode == "query" ? null : p.Str("type"), Source = p, Id = p.Wire("id") });
+                }
+            return reads;
+        }
+
+        // Renames what a routine's code reads by a name, and every read of it in the routine's code with it
+        public static void RenameRead(JValue routine, JValue source, string name)
+        {
+            var old = source.Str("name");
+            source.Set("name", JValue.Of(name));
+            if (string.IsNullOrEmpty(old) || old == name) return;
+            var nodes = routine.Get("body")?.Arr("nodes");
+            if (nodes == null) return;
+            foreach (var n in nodes.Items)
+                if (n.Str("k") == "name" && n.Str("name") == old && !n.Flag("local")) n.Set("name", JValue.Of(name));
+        }
+
+        // How many inputs read a node's value (the graph's own value among them)
+        public static int Readers(JValue graph, int id)
+        {
+            var count = graph.Wire("root") == id ? 1 : 0;
+            foreach (var n in Nodes(graph).Items)
+                foreach (var w in GraphPorts.DataWires(n))
+                    if (w == id) count++;
+            return count;
+        }
+
+        // The kinds of member a declaration can be given now: its kind's (the schema's memberKinds), but those it
+        // has one of already and can't have two of
+        public static List<string> OfferedMemberKinds(JValue decl)
+        {
+            var offered = new List<string>();
+            var members = decl.Arr("members");
+            foreach (var kind in GraphSchema.MemberKindsOf(decl.Str("kind")))
+            {
+                if (GraphSchema.MemberOnce(kind) && members != null && members.Items.Any(m => m.Str("kind") == kind)) continue;
+                offered.Add(kind);
+            }
+            return offered;
+        }
+
+        // A name no named declaration of the file has
+        public string UniqueName(string name)
+        {
+            var taken = new HashSet<string>(index.Values.Where(e => e.Role == GraphRole.Decl).Select(e => e.Value.Str("name")).Where(n => n != null));
+            if (!taken.Contains(name)) return name;
+            for (var i = 2; ; i++)
+                if (!taken.Contains(name + i)) return name + i;
+        }
+
+        // A name none of a list's elements (members, parameters, entries) has
+        public static string UniqueIn(JValue list, string name, JValue but = null)
+        {
+            var taken = new HashSet<string>();
+            if (list != null) foreach (var item in list.Items) if (item != but && item.IsObject && item.Str("name") != null) taken.Add(item.Str("name"));
+            if (!taken.Contains(name)) return name;
+            for (var i = 2; ; i++)
+                if (!taken.Contains(name + i)) return name + i;
+        }
+
+        // The type parameters in scope at an element: its own and its declaration's
+        public List<string> TypeParamsAt(int id)
+        {
+            var found = new List<string>();
+            for (var e = Find(id); e != null;)
+            {
+                var own = e.Value.Arr("typeParams");
+                if (own != null) foreach (var t in own.Items) if (t.Kind == JKind.String && !found.Contains(t.String)) found.Add(t.String);
+                var owner = e.Owner?.Wire("id") ?? 0;
+                e = owner != 0 && owner != e.Id ? Find(owner) : null;
+            }
+            return found;
+        }
+
+        // The members of an enum this file declares, or null when it declares none of that name
+        public List<string> EnumMembers(string name)
+        {
+            foreach (var e in index.Values)
+                if (e.Role == GraphRole.Decl && e.Value.Str("kind") == "enum" && e.Value.Str("name") == name)
+                    return (e.Value.Arr("members")?.Items ?? new List<JValue>()).Select(m => m.Str("name")).Where(n => !string.IsNullOrEmpty(n)).ToList();
+            return null;
+        }
+
+        // What a card or a frame is called: a declaration's name, a member with code's `Type.Name`
+        public string TitleOf(GraphElement e)
+        {
+            if (e == null) return "";
+            var v = e.Value;
+            var kind = v.Str("kind");
+            switch (e.Role)
+            {
+                case GraphRole.Decl:
+                    return v.Str("name") ?? GraphSchema.DeclTitle(kind);
+                case GraphRole.Member:
+                {
+                    var name = kind == "operator" ? "operator " + v.Str("op") : v.Str("name") ?? GraphSchema.MemberTitle(kind);
+                    var owner = e.Owner?.Str("name");
+                    return owner != null ? owner + "." + name : name;
+                }
+                case GraphRole.Accessor:
+                    return TitleOf(Find(e.Owner?.Wire("id") ?? 0)) + " " + v.Str("word");
+                default:
+                    return Describe(e);
+            }
+        }
+
         // A new declaration of a kind, with what its kind starts with
         public JValue NewDecl(string kind, string name)
         {

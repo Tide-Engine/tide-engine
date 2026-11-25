@@ -2,9 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Text;
 using UnityEditor;
-using UnityEditor.UIElements;
 using UnityEngine;
 using UnityEngine.UIElements;
 
@@ -17,54 +17,43 @@ namespace Tide.Editor
         public string json = "";
     }
 
-    // The graph editor of a .tidegraph file: its declarations on the left, the graph of what's selected in the
-    // middle, what's selected's keys on the right, and below the graph the Tide that tidec writes for the file with
-    // what tidec says is wrong with it.
+    // The graph editor of a .tidegraph file: one board (notes/visual-scripting.md, "The experience: one board").
+    // Above it a bar: what to add, the contents, whether the file checks, and the board's menu. The Tide the file
+    // stands for, the contents and the file's own lines are there when asked for, and not before.
     public sealed class TideGraphWindow : EditorWindow
     {
         [SerializeField] string path;
         [SerializeField] string saved = "";       // The file's text as last read or written
         [SerializeField] TideGraphState state;
-        [SerializeField] int selected;            // The element the inspector shows
-        [SerializeField] int slotOwner;           // The graph the canvas shows
-        [SerializeField] string slotKey;
-        [SerializeField] int slotIndex = -1;
-        [SerializeField] bool showTide = true;
+        [SerializeField] int selected;            // The element last selected or shown
+        [SerializeField] bool showTide;
 
         internal GraphDocument Doc;
-        internal GraphOutlineView Outline;
-        internal GraphCanvas Canvas;
-        internal GraphInspectorView Inspector;
+        internal GraphBoard Board;
         internal GraphCheckResult Checked;
-        internal HashSet<int> Selected => Canvas?.Selection ?? new HashSet<int>();
         internal string ReadError;   // Why the file couldn't be read
         internal string Path => path;
+        internal int SelectedElement => selected;
 
-        Label titleLabel;
-        Label tideText;
-        Label checkerLabel;
-        VisualElement tidePanel;
-        ScrollView diagnosticsList;
-        Label status;
+        VisualElement shell, body, overlay, shade, chip;
+        Label titleLabel, chipLabel, toast;
+        GraphPopup popup;
+        GraphContents contents;
+        GraphTideView tide;
         double checkAt = -1;
-        bool checking, checkAgain;
+        bool checking, checkAgain, framed, gone;
         DateTime fileTime;
         double nextFileLook;
         string waiting;            // The text read while there's no graph schema to edit it with
         bool waitingFromFile;      // ...read from the file, not Undo's state
+        bool? forcedLight;
 
-        internal GraphSlot Slot
-        {
-            get => new GraphSlot(slotOwner, slotKey, slotIndex);
-            set
-            {
-                slotOwner = value.Owner;
-                slotKey = value.Key;
-                slotIndex = value.Index;
-            }
-        }
-
-        internal int SelectedElement => selected;
+        // The editor's light theme, or one a test asks for
+        internal bool Light => forcedLight ?? !EditorGUIUtility.isProSkin;
+        internal GraphPopup Popup => popup;
+        internal GraphContents Contents => contents != null && contents.parent != null ? contents : null;
+        internal GraphTideView TideView => tide != null && tide.parent != null ? tide : null;
+        internal string LastSaid { get; private set; }
 
         // Opens a graph's file in its window, or a new one
         public static TideGraphWindow Open(string assetPath)
@@ -138,6 +127,8 @@ namespace Tide.Editor
 
         void OnDestroy()
         {
+            // Closed: a check that ends now (the server's stopping fails those it was asked) starts no other
+            gone = true;
             TideGraphServices.Checker.Closed(path);
             if (state != null)
             {
@@ -189,17 +180,9 @@ namespace Tide.Editor
                 ReadError = $"{path}:{e.Message}. Fix the file in a text editor; it's left as it is until then.";
             }
             state.json = Doc.Text;
-            if (!Slot.Valid || Doc.Find(slotOwner) == null) Slot = FirstSlot();
+            framed = false;
             Build();
             CheckSoon(0);
-        }
-
-        GraphSlot FirstSlot()
-        {
-            foreach (var e in Doc.Elements.OrderBy(e => e.Id))
-                if ((e.Role == GraphRole.Decl || e.Role == GraphRole.Member || e.Role == GraphRole.Accessor) && e.Value.Get("body") != null && e.Value.Get("body").IsObject)
-                    return new GraphSlot(e.Id, "body");
-            return default;
         }
 
         public override void SaveChanges()
@@ -221,8 +204,9 @@ namespace Tide.Editor
             UpdateTitle();
         }
 
-        // An edit: recorded for Undo, then made, then shown
-        internal void Edit(string name, Action change, GraphRedraw redraw = GraphRedraw.All)
+        // An edit: recorded for Undo, then made, then shown. `owners` are the declarations, members or frames whose
+        // card or nodes it changed, which alone are built again; with none, everything on screen is.
+        internal void Edit(string name, Action change, params int[] owners)
         {
             if (Doc == null || ReadError != null) return;
             Undo.IncrementCurrentGroup();
@@ -230,10 +214,8 @@ namespace Tide.Editor
             change();
             Doc.Reindex();
             state.json = Doc.Text;
-            if ((redraw & GraphRedraw.Outline) != 0) Outline?.Rebuild();
-            if ((redraw & GraphRedraw.Canvas) != 0) Canvas?.Rebuild();
-            else Canvas?.RefreshDimming();
-            if ((redraw & GraphRedraw.Inspector) != 0) Inspector?.Rebuild();
+            Board?.Changed(owners);
+            Contents?.Fill();
             UpdateTitle();
             CheckSoon();
         }
@@ -249,55 +231,15 @@ namespace Tide.Editor
             {
                 return;
             }
-            Refresh(true);
+            ClosePopup(popup);
+            Board?.Reload();
+            Contents?.Fill();
+            UpdateTitle();
             CheckSoon();
         }
 
-        // Selects an element: the inspector shows it, the outline marks it, and a graph of its own opens
-        internal void Select(int id, bool openGraph = true)
-        {
-            if (Outline == null) return;
-            var e = Doc.Find(id);
-            // A parameter, payload value or attribute is edited with what it's of
-            while (e != null && (e.Role == GraphRole.Param || e.Role == GraphRole.SampleParam || e.Role == GraphRole.Payload || e.Role == GraphRole.Attribute))
-            {
-                var owner = Doc.Find(e.Owner?.Wire("id") ?? 0);
-                if (owner == null || owner == e) break;
-                e = owner;
-            }
-            if (e != null) id = e.Id;
-            selected = id;
-            if (openGraph && e != null)
-            {
-                if (e.Role == GraphRole.Node || e.Role == GraphRole.Note)
-                {
-                    if (!e.Slot.Equals(Slot)) Show(e.Slot);
-                    Canvas.SelectOnly(id);
-                }
-                else if (e.Value.Get("body") != null && e.Value.Get("body").IsObject && e.Value.Str("kind") != "property") Show(new GraphSlot(id, "body"));
-            }
-            Outline.Mark(id);
-            Inspector.Rebuild();
-        }
-
-        // Shows a graph in the canvas
-        internal void Show(GraphSlot slot)
-        {
-            if (Canvas == null) return;
-            Slot = slot;
-            Canvas.Rebuild();
-            Canvas.FrameAll();
-            UpdateTitle();
-        }
-
-        internal void Refresh(bool outline)
-        {
-            if (Outline == null) return;
-            if (outline) Outline.Rebuild();
-            Canvas.Rebuild();
-            Inspector.Rebuild();
-            UpdateTitle();
-        }
+        // What's selected, for the title and for whoever asks
+        internal void Selected(int id) => selected = id;
 
         void UpdateTitle()
         {
@@ -306,8 +248,8 @@ namespace Tide.Editor
             hasUnsavedChanges = Dirty;
             if (titleLabel != null)
             {
-                var where = Doc?.Find(Slot.Owner);
-                titleLabel.text = (where != null ? Doc.Describe(where) + " > " + Slot.Key + (Slot.Index >= 0 ? $" {Slot.Index + 1}" : "") : "Nothing open") + (Dirty ? "  (unsaved)" : "");
+                titleLabel.text = name + (Dirty ? "  •  not saved" : "");
+                titleLabel.tooltip = path ?? "";
             }
         }
 
@@ -320,16 +262,56 @@ namespace Tide.Editor
             else if (waiting != null) BuildNoSchema();
         }
 
-        // The window without a schema: why, and a button that asks for it again
-        void BuildNoSchema()
+        // The theme the board is drawn in, whatever the editor's: a test's pictures of both
+        internal void ForceTheme(bool? light)
+        {
+            forcedLight = light;
+            if (Doc != null) Build();
+        }
+
+        VisualElement Shell()
         {
             var root = rootVisualElement;
             root.Clear();
-            Outline = null;
-            Canvas = null;
-            Inspector = null;
-            root.Add(new HelpBox(GraphSchema.Failure ?? "There's no graph schema.", HelpBoxMessageType.Error));
-            root.Add(new Button(GraphSchema.Reload) { text = "Try again" });
+            popup = null;
+            shade = null;
+            contents = null;
+            tide = null;
+            shell = new VisualElement();
+            shell.AddToClassList("tg-root");
+            shell.EnableInClassList("tg-light", Light);
+            var sheet = GraphLook.Sheet;
+            if (sheet != null) shell.styleSheets.Add(sheet);
+            if (forcedLight != null && forcedLight.Value == EditorGUIUtility.isProSkin)
+            {
+                // The other theme than the editor's: its own sheet of Unity's variables, on the board alone
+                var other = EditorSheet(forcedLight.Value);
+                if (other != null) shell.styleSheets.Insert(0, other);
+            }
+            root.Add(shell);
+            return shell;
+        }
+
+        static StyleSheet EditorSheet(bool light)
+        {
+            var utility = typeof(UnityEditor.UIElements.Toolbar).Assembly.GetType("UnityEditor.UIElements.UIElementsEditorUtility");
+            var method = utility?.GetMethod(light ? "GetCommonLightStyleSheet" : "GetCommonDarkStyleSheet", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public);
+            return method?.Invoke(null, null) as StyleSheet;
+        }
+
+        // The window without a schema: why, and a button that asks for it again
+        void BuildNoSchema()
+        {
+            Board = null;
+            var s = Shell();
+            var banner = GraphLook.Text(GraphSchema.Failure ?? "There's no graph schema.", "tg-banner");
+            s.Add(banner);
+            var again = GraphLook.Plain(GraphSchema.Reload, "tg-link");
+            again.text = "Try again";
+            again.style.alignSelf = Align.FlexStart;
+            again.style.marginLeft = 8;
+            again.style.marginTop = 6;
+            s.Add(again);
         }
 
         void Build()
@@ -339,74 +321,67 @@ namespace Tide.Editor
                 BuildNoSchema();
                 return;
             }
-            var root = rootVisualElement;
-            root.Clear();
-            root.style.flexDirection = FlexDirection.Column;
-            root.RegisterCallback<KeyDownEvent>(Keys, TrickleDown.TrickleDown);
+            var s = Shell();
+            s.RegisterCallback<KeyDownEvent>(Keys, TrickleDown.TrickleDown);
 
-            var bar = new Toolbar();
-            bar.Add(new ToolbarButton(Save) { text = "Save", tooltip = "Save the graph (Ctrl+S)" });
-            bar.Add(new ToolbarButton(() => Canvas.AutoLayout()) { text = "Auto Layout", tooltip = "Lay out the graph shown as tidec does" });
-            bar.Add(new ToolbarButton(() => Canvas.FrameSelectionOrAll()) { text = "Frame", tooltip = "Frame the selection, or the whole graph (F)" });
-            var tide = new ToolbarToggle { text = "Tide", value = showTide, tooltip = "Show the Tide the file stands for" };
-            tide.RegisterValueChangedCallback(e =>
-            {
-                showTide = e.newValue;
-                tidePanel.style.display = showTide ? DisplayStyle.Flex : DisplayStyle.None;
-            });
-            bar.Add(tide);
-            bar.Add(new ToolbarSpacer());
-            titleLabel = new Label { style = { unityTextAlign = TextAnchor.MiddleLeft, marginLeft = 8 } };
+            var bar = GraphLook.Row("tg-bar");
+            Button add = null;
+            add = GraphLook.Labelled("plus", "Add", () => Board.OpenAdd(null, add), "tg-bar-button", "tg-bar-button--primary");
+            add.name = "add";
+            add.tooltip = "Something new on the board (or right-click the board, or press Space)";
+            bar.Add(add);
+            var toContents = GraphLook.Labelled("list", "Contents", () => ShowContents(Contents == null), "tg-bar-button");
+            toContents.name = "contents";
+            toContents.tooltip = "Everything in this file, by name: pick one to go to it (Ctrl+F)";
+            bar.Add(toContents);
+            titleLabel = GraphLook.Text("", "tg-title");
             bar.Add(titleLabel);
-            root.Add(bar);
+            Button chipButton = null;
+            chipButton = GraphLook.Plain(() => OpenProblems(chipButton), "tg-chip");
+            chipButton.name = "check";
+            chipButton.Add(GraphLook.Row("tg-chip-dot"));
+            chipLabel = new Label("Checking…") { pickingMode = PickingMode.Ignore };
+            chipButton.Add(chipLabel);
+            chip = chipButton;
+            bar.Add(chip);
+            Button more = null;
+            more = GraphLook.IconButton("more", "Save, tidy up, view as Tide, the file's namespace", () => OpenMenu(more), "tg-bar-button", "tg-bar-button--bare");
+            more.name = "menu";
+            bar.Add(more);
+            s.Add(bar);
 
             if (ReadError != null)
             {
-                root.Add(new HelpBox(ReadError, HelpBoxMessageType.Error));
-                var again = new Button(Load) { text = "Read again" };
-                root.Add(again);
+                s.Add(GraphLook.Text(ReadError, "tg-banner"));
+                var again = GraphLook.Plain(Load, "tg-link");
+                again.text = "Read it again";
+                again.style.alignSelf = Align.FlexStart;
+                again.style.marginLeft = 8;
+                again.style.marginTop = 6;
+                s.Add(again);
+                Board = null;
+                UpdateTitle();
                 return;
             }
 
-            var split = new TwoPaneSplitView(0, 230, TwoPaneSplitViewOrientation.Horizontal);
-            split.style.flexGrow = 1;
-            Outline = new GraphOutlineView(this);
-            split.Add(Outline);
-            var right = new TwoPaneSplitView(1, 300, TwoPaneSplitViewOrientation.Horizontal);
-            var center = new VisualElement { style = { flexGrow = 1, flexDirection = FlexDirection.Column } };
-            Canvas = new GraphCanvas(this);
-            center.Add(Canvas);
-            center.Add(BuildTidePanel());
-            right.Add(center);
-            Inspector = new GraphInspectorView(this);
-            right.Add(Inspector);
-            split.Add(right);
-            root.Add(split);
-            status = new Label { style = { paddingLeft = 4, height = 18, unityTextAlign = TextAnchor.MiddleLeft } };
-            root.Add(status);
-            Refresh(true);
-            Canvas.FrameAll();
+            body = new VisualElement { style = { flexGrow = 1 } };
+            s.Add(body);
+            Board = new GraphBoard(this);
+            body.Add(Board);
+            overlay = new VisualElement { pickingMode = PickingMode.Ignore };
+            overlay.AddToClassList("tg-fill");
+            s.Add(overlay);
+            Board.Sync();
+            Board.RegisterCallback<GeometryChangedEvent>(_ =>
+            {
+                if (framed || float.IsNaN(Board.layout.width) || Board.layout.width <= 0) return;
+                framed = true;
+                Board.FrameStart();
+                if (selected != 0 && Doc.Find(selected) != null) Board.Reveal(selected);
+            });
+            if (showTide) ShowTide(true);
+            UpdateTitle();
             ShowCheck();
-        }
-
-        VisualElement BuildTidePanel()
-        {
-            tidePanel = new VisualElement { style = { height = 220, flexShrink = 0, borderTopWidth = 1, borderTopColor = new Color(0, 0, 0, 0.5f), flexDirection = FlexDirection.Row } };
-            tidePanel.style.display = showTide ? DisplayStyle.Flex : DisplayStyle.None;
-            var textScroll = new ScrollView(ScrollViewMode.VerticalAndHorizontal) { style = { flexGrow = 2 } };
-            tideText = new Label { enableRichText = false, selection = { isSelectable = true } };
-            tideText.style.unityFontDefinition = FontDefinition.FromFont(Font.CreateDynamicFontFromOSFont(new[] { "Consolas", "Menlo", "DejaVu Sans Mono", "Courier New" }, 12));
-            tideText.style.whiteSpace = WhiteSpace.Pre;
-            tideText.style.paddingLeft = 6;
-            textScroll.Add(tideText);
-            tidePanel.Add(textScroll);
-            var side = new VisualElement { style = { flexGrow = 1, minWidth = 200, borderLeftWidth = 1, borderLeftColor = new Color(0, 0, 0, 0.4f), flexDirection = FlexDirection.Column } };
-            checkerLabel = new Label { style = { fontSize = 10, color = new Color(0.65f, 0.65f, 0.65f), paddingLeft = 4, paddingTop = 2, whiteSpace = WhiteSpace.Normal } };
-            side.Add(checkerLabel);
-            diagnosticsList = new ScrollView { style = { flexGrow = 1 } };
-            side.Add(diagnosticsList);
-            tidePanel.Add(side);
-            return tidePanel;
         }
 
         void Keys(KeyDownEvent e)
@@ -416,14 +391,168 @@ namespace Tide.Editor
                 Save();
                 e.StopPropagation();
             }
+            // Escape closes what's open, wherever the keyboard is
+            else if (e.keyCode == KeyCode.Escape && popup != null && !(e.target is VisualElement t && popup.Contains(t)))
+            {
+                ClosePopup(popup);
+                e.StopPropagation();
+            }
         }
 
         // ---------------------------------------------------------------------------------------------------------
-        // Checking: tidec's Tide for the file and what it says is wrong, a moment after the last edit
+        // Popups: one at a time, over everything, closed by a pick, by Escape or by a click outside
 
-        internal void CheckSoon(double delay = 0.6)
+        // Opens a popup below the element it's opened from, or to its right
+        internal void Open(GraphPopup p, VisualElement from, bool beside = false)
+        {
+            p.From = from;
+            Open(p, from.worldBound, beside);
+        }
+
+        // Opens a popup below what it's opened from (`from`, in the panel's space), or to its right
+        internal void Open(GraphPopup p, Rect from, bool beside = false)
+        {
+            if (overlay == null) return;
+            ClosePopup(popup);
+            popup = p;
+            p.Window = this;
+            p.Beside = beside;
+            p.Anchor = new Rect(overlay.WorldToLocal(from.position), from.size);
+            shade = GraphLook.Row("tg-shade");
+            shade.RegisterCallback<PointerDownEvent>(e =>
+            {
+                ClosePopup(p);
+                e.StopPropagation();
+            });
+            overlay.Add(shade);
+            overlay.Add(p);
+            Fit(p);
+            p.RegisterCallback<GeometryChangedEvent>(_ => Fit(p));
+            p.Opened();
+        }
+
+        // Where a popup goes: by what it was opened from, and inside the window
+        void Fit(GraphPopup p)
+        {
+            var w = overlay.layout.width;
+            var h = overlay.layout.height;
+            var size = p.layout.size;
+            // What it was opened from, where it is now: it may not have been laid out when it was clicked
+            if (p.From != null && p.From.panel != null && !float.IsNaN(p.From.worldBound.width) && p.From.worldBound.width > 0)
+                p.Anchor = new Rect(overlay.WorldToLocal(p.From.worldBound.position), p.From.worldBound.size);
+            var a = p.Anchor;
+            var left = p.Beside ? a.xMax + 8 : a.xMin;
+            var top = p.Beside ? a.yMin : a.yMax + 2;
+            if (!float.IsNaN(w) && !float.IsNaN(size.x) && size.x > 0)
+            {
+                // No room below what it's opened from: beside it, where it hides less of it
+                if (!p.Beside && top + size.y > h - 4 && a.width > 0)
+                {
+                    if (a.xMax + 8 + size.x <= w - 4) left = a.xMax + 8;
+                    else if (a.xMin - 8 - size.x >= 4) left = a.xMin - 8 - size.x;
+                    top = Mathf.Max(4, Mathf.Min(a.yMin, h - size.y - 4));
+                }
+                if (left + size.x > w - 4) left = p.Beside && a.xMin - size.x - 8 >= 0 ? a.xMin - size.x - 8 : Mathf.Max(4, w - size.x - 4);
+                if (top + size.y > h - 4) top = Mathf.Max(4, h - size.y - 4);
+            }
+            p.style.left = Mathf.Round(left);
+            p.style.top = Mathf.Round(top);
+        }
+
+        internal void ClosePopup(GraphPopup p)
+        {
+            if (p == null || p != popup) return;
+            p.WasClosed = true;
+            popup = null;
+            shade?.RemoveFromHierarchy();
+            shade = null;
+            p.RemoveFromHierarchy();
+            p.Closed?.Invoke();
+            if (popup == null) Board?.Focus();
+        }
+
+        // Says something for a few seconds, at the board's foot: why what was tried can't be
+        internal void Say(string text, bool bad = false)
+        {
+            LastSaid = text;
+            if (body == null) return;
+            toast?.RemoveFromHierarchy();
+            var said = toast = GraphLook.Text(text, "tg-toast");
+            said.EnableInClassList("tg-toast--bad", bad);
+            said.pickingMode = PickingMode.Ignore;
+            body.Add(said);
+            said.schedule.Execute(() =>
+            {
+                said.RemoveFromHierarchy();
+                if (toast == said) toast = null;
+            }).ExecuteLater(5200);
+        }
+
+        internal List<GraphOption> MenuOptions()
+        {
+            return new List<GraphOption>
+            {
+                new GraphOption { Title = "Save", Detail = "Ctrl+S", Off = !Dirty, Pick = Save },
+                new GraphOption { Separator = true },
+                new GraphOption { Title = "See the whole board", Detail = "F", Pick = () => Board.FitAll() },
+                new GraphOption { Title = "Tidy up the board", Detail = "Data on the left, code to its right", Pick = () => Board.TidyBoard() },
+                new GraphOption { Separator = true },
+                new GraphOption { Title = "View as Tide", Detail = "The text this file stands for", Checked = TideView != null, Pick = () => ShowTide(TideView == null) },
+                new GraphOption { Title = "Namespace and using…", Detail = "The file's own lines", Pick = () => Open(new GraphFileSettings(this), chip) },
+                new GraphOption { Separator = true },
+                new GraphOption { Title = "How the board works", Detail = "Keys and gestures", Pick = () => Open(new GraphShortcuts(), chip) },
+            };
+        }
+
+        void OpenMenu(VisualElement from)
+        {
+            var list = new GraphOptionList(null, null, null, 300);
+            list.Set(MenuOptions());
+            Open(list, from);
+        }
+
+        internal void ShowContents(bool show)
+        {
+            if (body == null) return;
+            if (!show)
+            {
+                Contents?.Close();
+                return;
+            }
+            if (Contents == null)
+            {
+                contents = new GraphContents(this);
+                body.Add(contents);
+            }
+            contents.FocusSearch();
+        }
+
+        internal void ShowTide(bool show)
+        {
+            showTide = show;
+            if (body == null) return;
+            if (!show)
+            {
+                TideView?.RemoveFromHierarchy();
+                return;
+            }
+            if (TideView == null)
+            {
+                tide = new GraphTideView(this);
+                body.Add(tide);
+            }
+            tide.Show();
+        }
+
+        internal void TideClosed() => showTide = false;
+
+        // ---------------------------------------------------------------------------------------------------------
+        // Checking: what's wrong with the file, a moment after the last edit. What's shown is the last check's.
+
+        internal void CheckSoon(double delay = 0.35)
         {
             checkAt = EditorApplication.timeSinceStartup + delay;
+            ShowChip();
         }
 
         void Tick()
@@ -444,13 +573,14 @@ namespace Tide.Editor
 
         void RunCheck()
         {
-            if (Doc == null || ReadError != null) return;
+            if (Doc == null || ReadError != null || gone) return;
             checking = true;
             var text = Doc.Text;
             TideGraphServices.Checker.Check(path, text, result =>
             {
                 checking = false;
-                if (this == null) return;
+                if (this == null || gone) return;
+                if (result.Json == null) result.Json = text;
                 Checked = result;
                 ShowCheck();
                 if (checkAgain)
@@ -463,61 +593,79 @@ namespace Tide.Editor
 
         internal bool CheckPending => checking || checkAt >= 0;
 
+        void ShowChip()
+        {
+            if (chip == null) return;
+            var errors = Checked?.Diagnostics.Count(d => d.Severity == "error") ?? 0;
+            var warnings = Checked?.Diagnostics.Count(d => d.Severity == "warning") ?? 0;
+            var busy = Checked == null || CheckPending;
+            var failed = Checked?.Failure != null;
+            chip.EnableInClassList("tg-chip--bad", !busy && (errors > 0 || failed));
+            chip.EnableInClassList("tg-chip--warn", !busy && errors == 0 && !failed && warnings > 0);
+            chip.EnableInClassList("tg-chip--ok", !busy && errors == 0 && !failed && warnings == 0);
+            chipLabel.text = busy ? "Checking…" : failed ? "Couldn't check" : errors > 0 ? (errors == 1 ? "1 problem" : $"{errors} problems")
+                : warnings > 0 ? (warnings == 1 ? "1 thing to look at" : $"{warnings} things to look at") : "Checked";
+            chip.tooltip = (failed ? Checked.Failure + "\n" : "") + CheckerSays + "\nClick for the list.";
+        }
+
+        internal string ChipText => chipLabel?.text;
+
         void ShowCheck()
         {
-            if (tideText == null || Checked == null) return;
-            tideText.text = Checked.Failure != null && Checked.Text.Length == 0 ? "" : Checked.Text;
-            checkerLabel.text = CheckerSays;
-            checkerLabel.tooltip = Checked.CheckerNote ?? "";
-            diagnosticsList.Clear();
-            if (Checked.Failure != null) diagnosticsList.Add(new HelpBox(Checked.Failure, HelpBoxMessageType.Warning));
+            ShowChip();
+            if (Checked == null || Board == null) return;
+            // A check of the file as it was before the last edit: the one of the file as it is comes next
+            if (Checked.Json != null && Doc != null && Checked.Json != Doc.Text && CheckPending) return;
+            Board.SetProblems(Checked.Diagnostics);
+            foreach (var frame in Board.Items.OfType<GraphFrame>().Concat(Board.ValueFrames)) frame.ApplyTypes();
+            TideView?.Show();
+            Contents?.Fill();
+        }
+
+        // Which checked the graph: the language server, with the game's code, or tidec, which only reads the file
+        internal string CheckerSays => Checked == null ? "Not checked yet."
+            : Checked.Checker == "tidels" ? "Checked by tidels, the language server, with the game's code."
+            : "Read by tidec alone: only what the file itself gets wrong is found" + (Checked.CheckerNote != null ? " (no tidels: " + Checked.CheckerNote.Split('\n')[0] + ")." : ".");
+
+        // What the check chip lists: each problem, and where it is
+        internal List<GraphOption> ProblemOptions()
+        {
+            var options = new List<GraphOption>();
+            if (Checked == null) return options;
+            if (Checked.Failure != null) options.Add(new GraphOption { Title = "The check didn't run", Detail = Checked.Failure, Tall = true, Off = true });
             foreach (var d in Checked.Diagnostics)
             {
-                var row = new Label($"{d.Severity}: {d.Message}") { tooltip = d.Detail, style = { whiteSpace = WhiteSpace.Normal, paddingLeft = 4, paddingTop = 2, paddingBottom = 2 } };
-                row.style.color = d.Severity == "error" ? new Color(1f, 0.45f, 0.4f) : d.Severity == "warning" ? new Color(1f, 0.8f, 0.3f) : new Color(0.75f, 0.75f, 0.75f);
                 var diagnostic = d;
-                row.RegisterCallback<ClickEvent>(_ => JumpTo(diagnostic));
-                diagnosticsList.Add(row);
+                var where = Board?.ItemOf(d.Id)?.Title;
+                var lines = d.Message.Split('\n');
+                options.Add(new GraphOption
+                {
+                    Title = lines[0], Detail = string.Join("\n", lines.Skip(1).Concat(where != null ? new[] { "In " + where } : new string[0])), Tall = true, Help = d.Detail,
+                    Section = d.Severity == "error" ? "Problems" : d.Severity == "warning" ? "To look at" : "Notes", Off = Doc.Find(d.Id) == null,
+                    Pick = () => Reveal(diagnostic.Id),
+                });
             }
-            if (status != null)
-            {
-                var errors = Checked.Diagnostics.Count(d => d.Severity == "error");
-                var by = Checked.Checker;
-                status.text = Checked.Failure != null ? by + ": " + Checked.Failure.Split('\n')[0]
-                    : errors > 0 ? $"{by}: {errors} error(s)"
-                    : by == "tidels" ? "tidels checks the graph: no errors" : "tidec reads the graph";
-            }
-            Canvas?.MarkDiagnostics(Checked.Diagnostics);
-            Canvas?.MarkTypes(Checked.Types);
-            Outline?.MarkDiagnostics(Checked.Diagnostics);
+            if (options.Count == 0) options.Add(new GraphOption { Title = "Nothing's wrong", Detail = CheckerSays, Tall = true, Off = true });
+            return options;
         }
 
-        // Which checked the graph: the language server, with the game's code, or tidec, which only lowers it
-        internal string CheckerSays => Checked == null ? ""
-            : Checked.Checker == "tidels" ? "Checked by tidels, the language server, with the game's code"
-            : "Lowered by tidec, unchecked" + (Checked.CheckerNote != null ? " (no tidels: " + Checked.CheckerNote.Split('\n')[0] + ")" : "");
+        void OpenProblems(VisualElement from)
+        {
+            var list = new GraphOptionList(null, null, null, 420);
+            list.Set(ProblemOptions());
+            Open(list, from);
+        }
 
-        // Shows an element: a node in its graph, or another in the outline (a build's error on it, from the Console)
+        // Shows an element: a node in its frame, a field on its card (a build's error on it, from the Console)
         internal void Reveal(int id)
         {
-            if (Doc?.Find(id) != null) JumpTo(new GraphDiagnostic { Id = id });
+            if (Doc?.Find(id) == null || Board == null) return;
+            Board.Reveal(id);
+            selected = id;
         }
 
-        // Shows what a diagnostic is about: its node in its graph, or its element in the outline
-        internal void JumpTo(GraphDiagnostic d)
-        {
-            var e = Doc.Find(d.Id);
-            if (e == null) return;
-            if (e.Role == GraphRole.Node || e.Role == GraphRole.Note)
-            {
-                if (!e.Slot.Equals(Slot)) Show(e.Slot);
-                Canvas.SelectOnly(d.Id);
-                Canvas.Frame(new[] { d.Id });
-                selected = d.Id;
-                Inspector.Rebuild();
-            }
-            else Select(d.Id, false);
-        }
+        // Shows what a diagnostic is about
+        internal void JumpTo(GraphDiagnostic d) => Reveal(d.Id);
 
         // The file changed on disk: read again if nothing here is unsaved
         void LookAtFile()

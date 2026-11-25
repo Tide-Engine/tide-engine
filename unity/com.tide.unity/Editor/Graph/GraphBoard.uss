@@ -1,0 +1,1130 @@
+/* The graph editor's board (notes/visual-scripting.md, "The experience: one board"). Unity's own variables carry the
+   editor's theme; the board's few colours of its own have a dark and a light value. */
+
+.tg-root {
+    --tg-board: #242424;
+    --tg-surface: var(--unity-colors-window-background);
+    --tg-head: var(--unity-colors-inspector_titlebar-background);
+    --tg-border: #161616;
+    --tg-line: rgba(255, 255, 255, 0.08);
+    --tg-text: var(--unity-colors-default-text);
+    --tg-muted: rgba(210, 210, 210, 0.58);
+    --tg-faint: rgba(210, 210, 210, 0.34);
+    --tg-accent: #58a6ff;
+    --tg-accent-soft: rgba(88, 166, 255, 0.16);
+    --tg-select: #ffb13b;
+    --tg-error: #ff7468;
+    --tg-error-soft: rgba(255, 116, 104, 0.14);
+    --tg-warning: #f2c24b;
+    --tg-ok: #6cc788;
+    --tg-frame: rgba(255, 255, 255, 0.035);
+    --tg-frame-border: rgba(255, 255, 255, 0.16);
+    --tg-space: rgba(120, 170, 255, 0.06);
+    --tg-hover: rgba(255, 255, 255, 0.07);
+    --tg-data: #2f7d73;
+    --tg-behaviour: #5568c9;
+    --tg-more: #6b6b72;
+    flex-grow: 1;
+    color: var(--tg-text);
+}
+
+.tg-root.tg-light {
+    --tg-board: #b2b2b2;
+    --tg-border: #8a8a8a;
+    --tg-line: rgba(0, 0, 0, 0.1);
+    --tg-muted: rgba(9, 9, 9, 0.62);
+    --tg-faint: rgba(9, 9, 9, 0.4);
+    --tg-accent: #1565c0;
+    --tg-accent-soft: rgba(21, 101, 192, 0.14);
+    --tg-select: #c56a00;
+    --tg-error: #b3261e;
+    --tg-error-soft: rgba(179, 38, 30, 0.12);
+    --tg-warning: #8a5a00;
+    --tg-ok: #1f7a3d;
+    --tg-frame: rgba(255, 255, 255, 0.28);
+    --tg-frame-border: rgba(0, 0, 0, 0.3);
+    --tg-space: rgba(21, 101, 192, 0.07);
+    --tg-hover: rgba(0, 0, 0, 0.07);
+}
+
+/* ---- The bar ---- */
+
+.tg-bar {
+    flex-direction: row;
+    background-color: var(--unity-colors-toolbar-background);
+    border-bottom-width: 1px;
+    border-bottom-color: var(--unity-colors-toolbar-border);
+    flex-shrink: 0;
+    height: 28px;
+    align-items: center;
+    padding-left: 4px;
+    padding-right: 4px;
+}
+
+.tg-bar-button {
+    flex-direction: row;
+    align-items: center;
+    height: 22px;
+    padding: 0 8px;
+    margin: 0 2px;
+    border-radius: 4px;
+    border-width: 0;
+    background-color: rgba(0, 0, 0, 0);
+    color: var(--tg-text);
+}
+
+.tg-bar-button:hover {
+    background-color: var(--tg-hover);
+}
+
+.tg-bar-button:focus {
+    background-color: var(--tg-accent-soft);
+}
+
+.tg-bar-button--primary {
+    background-color: var(--tg-accent-soft);
+}
+
+.tg-bar-button > .tg-icon {
+    margin-right: 5px;
+}
+
+.tg-bar-button--bare > .tg-icon {
+    margin-right: 0;
+}
+
+.tg-title {
+    flex-grow: 1;
+    -unity-text-align: middle-center;
+    color: var(--tg-muted);
+    overflow: hidden;
+}
+
+.tg-chip {
+    flex-direction: row;
+    align-items: center;
+    height: 20px;
+    padding: 0 9px 0 7px;
+    margin: 0 4px;
+    border-radius: 10px;
+    border-width: 1px;
+    border-color: var(--tg-line);
+    background-color: rgba(0, 0, 0, 0);
+}
+
+.tg-chip:hover {
+    background-color: var(--tg-hover);
+}
+
+.tg-chip-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 4px;
+    margin-right: 6px;
+    background-color: var(--tg-faint);
+}
+
+.tg-chip--ok > .tg-chip-dot {
+    background-color: var(--tg-ok);
+}
+
+.tg-chip--bad {
+    border-color: var(--tg-error);
+    background-color: var(--tg-error-soft);
+}
+
+.tg-chip--bad > .tg-chip-dot {
+    background-color: var(--tg-error);
+}
+
+.tg-chip--warn > .tg-chip-dot {
+    background-color: var(--tg-warning);
+}
+
+/* ---- The board ---- */
+
+.tg-board {
+    flex-grow: 1;
+    overflow: hidden;
+    background-color: var(--tg-board);
+}
+
+.tg-layer {
+    position: absolute;
+    left: 0;
+    top: 0;
+}
+
+.tg-fill {
+    position: absolute;
+    left: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+}
+
+.tg-hint {
+    position: absolute;
+    left: 12px;
+    bottom: 8px;
+    color: var(--tg-faint);
+    font-size: 11px;
+}
+
+.tg-select-box {
+    position: absolute;
+    background-color: var(--tg-accent-soft);
+    border-width: 1px;
+    border-color: var(--tg-accent);
+}
+
+.tg-muted {
+    color: var(--tg-muted);
+}
+
+.tg-faint {
+    color: var(--tg-faint);
+}
+
+.tg-icon {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+}
+
+.tg-icon-button {
+    width: 20px;
+    height: 20px;
+    padding: 3px;
+    margin: 0;
+    border-width: 0;
+    border-radius: 4px;
+    background-color: rgba(0, 0, 0, 0);
+    color: var(--tg-muted);
+    flex-shrink: 0;
+}
+
+.tg-icon-button:hover {
+    background-color: var(--tg-hover);
+    color: var(--tg-text);
+}
+
+.tg-icon-button:focus {
+    background-color: var(--tg-accent-soft);
+}
+
+/* What shows only while the pointer is on its row, card or node */
+.tg-on-hover {
+    opacity: 0;
+}
+
+.tg-row:hover .tg-on-hover,
+.tg-card-head:hover .tg-on-hover,
+.tg-frame-head:hover .tg-on-hover,
+.tg-node:hover .tg-on-hover,
+.tg-on-hover:focus {
+    opacity: 1;
+}
+
+/* ---- Text edited where it's drawn ---- */
+
+.tg-inline {
+    margin: 0;
+    flex-shrink: 1;
+    min-width: 30px;
+}
+
+.tg-inline > .unity-base-text-field__input {
+    background-color: rgba(0, 0, 0, 0);
+    border-color: rgba(0, 0, 0, 0);
+    padding: 1px 3px;
+    border-radius: 3px;
+    color: var(--tg-text);
+}
+
+.tg-inline:hover > .unity-base-text-field__input {
+    border-color: var(--unity-colors-input_field-border);
+    background-color: var(--tg-hover);
+}
+
+.tg-inline > .unity-base-text-field__input:focus {
+    background-color: var(--unity-colors-input_field-background);
+    border-color: var(--unity-colors-input_field-border-focus);
+}
+
+.tg-inline .unity-base-text-field__input--placeholder {
+    color: var(--tg-faint);
+}
+
+.tg-inline--title > .unity-base-text-field__input {
+    -unity-font-style: bold;
+    font-size: 13px;
+}
+
+.tg-inline--value > .unity-base-text-field__input {
+    background-color: var(--unity-colors-input_field-background);
+    border-color: var(--unity-colors-input_field-border);
+}
+
+.tg-inline--bad > .unity-base-text-field__input {
+    border-color: var(--tg-error);
+}
+
+.tg-inline--mono > .unity-base-text-field__input {
+    white-space: pre;
+}
+
+.tg-text-area {
+    margin: 0;
+    flex-grow: 1;
+}
+
+.tg-text-area > .unity-base-text-field__input {
+    white-space: pre-wrap;
+    padding: 4px 6px;
+    min-height: 44px;
+}
+
+/* ---- Small things ---- */
+
+.tg-kind {
+    font-size: 10px;
+    padding: 1px 7px;
+    border-radius: 8px;
+    color: #ffffff;
+    background-color: var(--tg-more);
+    flex-shrink: 0;
+    -unity-text-align: middle-center;
+}
+
+.tg-kind--Data {
+    background-color: var(--tg-data);
+}
+
+.tg-kind--Behaviour {
+    background-color: var(--tg-behaviour);
+}
+
+.tg-type {
+    flex-direction: row;
+    align-items: center;
+    height: 20px;
+    padding: 0 7px 0 5px;
+    margin: 0 2px;
+    border-radius: 10px;
+    border-width: 1px;
+    border-color: var(--tg-line);
+    background-color: var(--tg-hover);
+    flex-shrink: 0;
+    max-width: 150px;
+}
+
+.tg-type:hover {
+    border-color: var(--tg-accent);
+}
+
+.tg-type:focus {
+    border-color: var(--tg-accent);
+    background-color: var(--tg-accent-soft);
+}
+
+.tg-type-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 4px;
+    margin-right: 5px;
+    flex-shrink: 0;
+}
+
+.tg-type > Label {
+    padding: 0;
+    margin: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex-shrink: 1;
+}
+
+.tg-type--unset > Label {
+    color: var(--tg-faint);
+    -unity-font-style: italic;
+}
+
+.tg-link {
+    flex-direction: row;
+    align-items: center;
+    padding: 1px 6px;
+    margin: 0 1px;
+    border-radius: 4px;
+    border-width: 0;
+    background-color: rgba(0, 0, 0, 0);
+    color: var(--tg-accent);
+}
+
+.tg-link:hover {
+    background-color: var(--tg-accent-soft);
+}
+
+.tg-link > .tg-icon {
+    margin-right: 4px;
+}
+
+.tg-read {
+    font-size: 11px;
+    padding: 0 6px;
+    margin: 0 2px;
+    border-radius: 7px;
+    border-width: 1px;
+    border-color: var(--tg-line);
+    background-color: var(--tg-hover);
+    color: var(--tg-text);
+    flex-shrink: 0;
+}
+
+.tg-link:focus {
+    background-color: var(--tg-accent-soft);
+}
+
+.tg-word {
+    flex-direction: row;
+    align-items: center;
+    padding: 1px 5px;
+    margin: 0 1px;
+    border-radius: 4px;
+    border-width: 0;
+    background-color: rgba(0, 0, 0, 0);
+    color: var(--tg-muted);
+    flex-shrink: 0;
+}
+
+.tg-word:hover {
+    background-color: var(--tg-hover);
+    color: var(--tg-text);
+}
+
+.tg-word:focus {
+    background-color: var(--tg-accent-soft);
+}
+
+.tg-note {
+    color: var(--tg-muted);
+    -unity-font-style: italic;
+    font-size: 11px;
+    white-space: normal;
+    padding: 3px 10px 4px 10px;
+    margin: 0;
+    border-width: 0;
+    background-color: rgba(0, 0, 0, 0);
+    -unity-text-align: upper-left;
+}
+
+.tg-note:hover {
+    color: var(--tg-text);
+}
+
+.tg-tag {
+    font-size: 10px;
+    padding: 0 6px;
+    margin: 1px 2px;
+    border-radius: 7px;
+    border-width: 1px;
+    border-color: var(--tg-line);
+    color: var(--tg-muted);
+    flex-shrink: 0;
+}
+
+.tg-tags {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    padding: 0 8px 4px 8px;
+}
+
+.tg-problem-text {
+    color: var(--tg-error);
+    font-size: 11px;
+    white-space: normal;
+    padding: 1px 10px 3px 10px;
+}
+
+.tg-problem-text--warning {
+    color: var(--tg-warning);
+}
+
+.tg-frame-head .tg-problems {
+    flex-shrink: 1;
+    overflow: hidden;
+}
+
+.tg-frame-head .tg-problem-text {
+    white-space: nowrap;
+    padding: 0 8px;
+}
+
+/* ---- A card: data ---- */
+
+.tg-item {
+    position: absolute;
+}
+
+.tg-card {
+    width: 300px;
+    background-color: var(--tg-surface);
+    border-width: 1px;
+    border-color: var(--tg-border);
+    border-radius: 7px;
+    padding-bottom: 3px;
+}
+
+.tg-item--far {
+    align-items: center;
+    justify-content: center;
+}
+
+.tg-frame.tg-item--far {
+    align-items: flex-start;
+    justify-content: flex-start;
+    padding: 1% 0 0 1%;
+}
+
+.tg-far-title {
+    -unity-font-style: bold;
+    -unity-text-align: middle-center;
+    white-space: normal;
+    color: var(--tg-text);
+}
+
+.tg-card-head {
+    flex-direction: row;
+    align-items: center;
+    height: 34px;
+    padding: 0 4px 0 8px;
+    background-color: var(--tg-head);
+    border-top-left-radius: 6px;
+    border-top-right-radius: 6px;
+    border-bottom-width: 1px;
+    border-bottom-color: var(--tg-line);
+}
+
+.tg-card-head > .tg-inline {
+    flex-grow: 1;
+    margin-left: 4px;
+}
+
+.tg-selected {
+    border-color: var(--tg-select);
+}
+
+.tg-flash {
+    border-color: var(--tg-accent);
+    border-width: 2px;
+}
+
+.tg-has-problem {
+    border-color: var(--tg-error);
+}
+
+.tg-row {
+    flex-direction: row;
+    align-items: center;
+    min-height: 26px;
+    padding: 0 4px 0 6px;
+}
+
+.tg-row:hover {
+    background-color: var(--tg-hover);
+}
+
+.tg-row--problem {
+    background-color: var(--tg-error-soft);
+    border-left-width: 2px;
+    border-left-color: var(--tg-error);
+    padding-left: 4px;
+}
+
+.tg-row--warning {
+    border-left-width: 2px;
+    border-left-color: var(--tg-warning);
+    padding-left: 4px;
+}
+
+.tg-row > .tg-inline {
+    flex-grow: 1;
+    flex-basis: 0;
+}
+
+.tg-row-value {
+    flex-direction: row;
+    align-items: center;
+    width: 84px;
+    flex-shrink: 0;
+    margin-left: 2px;
+}
+
+.tg-row-value--wide {
+    width: 150px;
+}
+
+.tg-row-value .unity-base-field {
+    margin: 0;
+    flex-grow: 1;
+    flex-shrink: 1;
+    min-width: 0;
+}
+
+.tg-row-value .unity-base-text-field__input {
+    padding: 1px 3px;
+}
+
+.tg-add-row {
+    flex-direction: row;
+    align-items: center;
+    min-height: 26px;
+    padding: 0 8px;
+    margin: 0;
+    border-width: 0;
+    border-radius: 0;
+    background-color: rgba(0, 0, 0, 0);
+    color: var(--tg-accent);
+    -unity-text-align: middle-left;
+}
+
+.tg-add-row:hover {
+    background-color: var(--tg-accent-soft);
+}
+
+.tg-add-row:focus {
+    background-color: var(--tg-accent-soft);
+}
+
+.tg-add-row > .tg-icon {
+    margin-right: 5px;
+}
+
+.tg-empty {
+    color: var(--tg-faint);
+    white-space: normal;
+    padding: 6px 10px 2px 10px;
+    font-size: 11px;
+}
+
+.tg-sub {
+    padding-left: 14px;
+}
+
+/* ---- A frame: code ---- */
+
+.tg-frame {
+    background-color: var(--tg-frame);
+    border-width: 1px;
+    border-color: var(--tg-frame-border);
+    border-radius: 9px;
+}
+
+.tg-frame--value {
+    background-color: var(--tg-surface);
+    border-color: var(--tg-accent);
+}
+
+.tg-frame-head {
+    flex-direction: row;
+    align-items: center;
+    height: 36px;
+    padding: 0 6px 0 10px;
+}
+
+.tg-frame-title {
+    -unity-font-style: bold;
+    font-size: 13px;
+    margin-left: 6px;
+    color: var(--tg-text);
+}
+
+.tg-frame-head > .tg-inline {
+    flex-grow: 0;
+    margin-left: 2px;
+    min-width: 60px;
+}
+
+.tg-frame-hint {
+    position: absolute;
+    color: var(--tg-faint);
+    font-size: 12px;
+    -unity-font-style: italic;
+}
+
+.tg-space {
+    position: absolute;
+    background-color: var(--tg-space);
+    border-width: 1px;
+    border-color: var(--tg-line);
+    border-radius: 12px;
+}
+
+.tg-space-head {
+    flex-direction: row;
+    align-items: center;
+    height: 30px;
+    padding: 0 10px;
+}
+
+/* ---- A node ---- */
+
+.tg-node {
+    position: absolute;
+    min-width: 110px;
+    background-color: var(--tg-surface);
+    border-width: 1px;
+    border-color: var(--tg-border);
+    border-radius: 6px;
+}
+
+.tg-node--unreached {
+    opacity: 0.45;
+}
+
+.tg-node--small {
+    min-width: 60px;
+}
+
+.tg-node-head {
+    flex-direction: row;
+    align-items: center;
+    min-height: 24px;
+    padding: 0 3px;
+    border-top-left-radius: 5px;
+    border-top-right-radius: 5px;
+}
+
+.tg-node-title {
+    flex-grow: 1;
+    -unity-font-style: bold;
+    color: #ffffff;
+    padding: 0 4px;
+    margin: 0;
+}
+
+.tg-node-head .tg-inline {
+    flex-shrink: 0;
+}
+
+.tg-node-head .tg-inline > .unity-base-text-field__input {
+    color: #ffffff;
+    -unity-font-style: bold;
+}
+
+.tg-node-dot {
+    flex-grow: 0;
+    padding: 0 0 0 4px;
+}
+
+.tg-node-head .tg-inline > .unity-base-text-field__input:focus {
+    color: var(--tg-text);
+}
+
+.tg-node-head .tg-icon-button {
+    color: rgba(255, 255, 255, 0.75);
+}
+
+.tg-node-body {
+    padding: 3px 0 4px 0;
+}
+
+.tg-node-note {
+    position: absolute;
+    left: 0;
+    bottom: 100%;
+    max-width: 360px;
+    color: var(--tg-muted);
+    -unity-font-style: italic;
+    font-size: 11px;
+    white-space: normal;
+    padding-bottom: 2px;
+}
+
+.tg-port-row {
+    flex-direction: row;
+    align-items: center;
+    min-height: 22px;
+    padding: 0 2px;
+}
+
+.tg-port-row--out {
+    justify-content: flex-end;
+}
+
+.tg-port-row--problem {
+    background-color: var(--tg-error-soft);
+}
+
+.tg-port-label {
+    font-size: 11px;
+    color: var(--tg-muted);
+    margin: 0 3px;
+    padding: 0;
+    flex-shrink: 0;
+}
+
+.tg-port {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+    margin: 0 1px;
+}
+
+.tg-pin-value {
+    flex-direction: row;
+    align-items: center;
+    max-width: 150px;
+    min-width: 34px;
+    margin: 0 2px;
+}
+
+.tg-pin-value .unity-base-field {
+    margin: 0;
+    flex-grow: 1;
+    flex-shrink: 1;
+    min-width: 0;
+}
+
+.tg-pin-value .unity-base-text-field__input {
+    padding: 0 3px;
+    font-size: 11px;
+}
+
+.tg-node-field {
+    flex-direction: row;
+    align-items: center;
+    min-height: 22px;
+    padding: 0 6px;
+}
+
+.tg-node-field > .tg-inline {
+    flex-grow: 1;
+}
+
+.tg-node-field .unity-base-popup-field {
+    margin: 0;
+    flex-grow: 1;
+}
+
+.tg-node-add {
+    font-size: 11px;
+    min-height: 20px;
+    padding: 0 8px;
+}
+
+.tg-node-problem {
+    position: absolute;
+    left: 0;
+    top: 100%;
+    max-width: 320px;
+    min-width: 140px;
+    margin-top: 3px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    border-left-width: 2px;
+    border-left-color: var(--tg-error);
+    background-color: var(--tg-surface);
+    color: var(--tg-error);
+    font-size: 11px;
+    white-space: normal;
+}
+
+.tg-node-problem--warning {
+    border-left-color: var(--tg-warning);
+    color: var(--tg-warning);
+}
+
+/* The entry of a frame: what its code takes */
+.tg-entry {
+    min-width: 230px;
+}
+
+.tg-entry-row {
+    flex-direction: row;
+    align-items: center;
+    min-height: 26px;
+    padding: 0 2px 0 6px;
+}
+
+.tg-entry-row:hover {
+    background-color: var(--tg-hover);
+}
+
+.tg-entry-row:hover .tg-on-hover {
+    opacity: 1;
+}
+
+.tg-entry-row > .tg-inline {
+    flex-grow: 1;
+}
+
+.tg-entry-result {
+    border-top-width: 1px;
+    border-top-color: var(--tg-line);
+    margin-top: 2px;
+}
+
+/* ---- Popups ---- */
+
+.tg-shade {
+    position: absolute;
+    left: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+}
+
+.tg-popup {
+    position: absolute;
+    background-color: var(--tg-surface);
+    border-width: 1px;
+    border-color: var(--tg-border);
+    border-radius: 7px;
+    padding: 4px 0;
+}
+
+.tg-popup-head {
+    padding: 4px 10px 2px 10px;
+    -unity-font-style: bold;
+}
+
+.tg-popup-help {
+    padding: 0 10px 4px 10px;
+    color: var(--tg-muted);
+    font-size: 11px;
+    white-space: normal;
+}
+
+.tg-search {
+    margin: 4px 6px 4px 6px;
+}
+
+.tg-search > .unity-base-text-field__input {
+    padding: 3px 6px;
+    border-radius: 4px;
+}
+
+.tg-section {
+    flex-direction: row;
+    align-items: flex-end;
+    padding: 6px 10px 2px 10px;
+}
+
+.tg-section-title {
+    font-size: 10px;
+    -unity-font-style: bold;
+    color: var(--tg-muted);
+    padding: 0;
+    margin: 0;
+}
+
+.tg-section-summary {
+    font-size: 10px;
+    color: var(--tg-faint);
+    margin-left: 6px;
+    padding: 0;
+}
+
+.tg-option {
+    flex-direction: row;
+    align-items: center;
+    min-height: 22px;
+    padding: 1px 10px;
+}
+
+.tg-option:hover {
+    background-color: var(--tg-hover);
+}
+
+.tg-option--current {
+    background-color: var(--unity-colors-highlight-background);
+}
+
+.tg-option--current .tg-option-title {
+    color: #ffffff;
+}
+
+.tg-option--current .tg-option-detail {
+    color: rgba(255, 255, 255, 0.78);
+}
+
+.tg-option--off {
+    opacity: 0.45;
+}
+
+.tg-option-title {
+    padding: 0;
+    margin: 0;
+    flex-shrink: 0;
+}
+
+.tg-option-detail {
+    padding: 0;
+    margin: 0 0 0 8px;
+    font-size: 11px;
+    color: var(--tg-muted);
+    flex-shrink: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.tg-option--tall {
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 4px 10px;
+}
+
+.tg-option--tall > .tg-option-detail {
+    margin: 1px 0 0 0;
+    white-space: normal;
+}
+
+.tg-option-check {
+    width: 16px;
+    flex-shrink: 0;
+}
+
+.tg-separator {
+    height: 1px;
+    margin: 4px 0;
+    background-color: var(--tg-line);
+}
+
+/* ---- The start ---- */
+
+.tg-start {
+    position: absolute;
+    left: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    align-items: center;
+    justify-content: center;
+}
+
+.tg-start-title {
+    font-size: 22px;
+    -unity-font-style: bold;
+    margin-bottom: 4px;
+}
+
+.tg-start-sub {
+    color: var(--tg-muted);
+    margin-bottom: 18px;
+}
+
+.tg-tiles {
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: center;
+    max-width: 720px;
+}
+
+.tg-tile {
+    width: 220px;
+    min-height: 84px;
+    margin: 6px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    border-width: 1px;
+    border-color: var(--tg-border);
+    background-color: var(--tg-surface);
+    align-items: flex-start;
+    justify-content: flex-start;
+    white-space: normal;
+}
+
+.tg-tile:hover {
+    border-color: var(--tg-accent);
+    background-color: var(--tg-surface);
+}
+
+.tg-tile:focus {
+    border-color: var(--tg-accent);
+    background-color: var(--tg-accent-soft);
+}
+
+.tg-tile-title {
+    font-size: 14px;
+    -unity-font-style: bold;
+    padding: 0;
+    margin: 4px 0 3px 0;
+    color: var(--tg-text);
+}
+
+.tg-tile-summary {
+    color: var(--tg-muted);
+    white-space: normal;
+    padding: 0;
+    margin: 0;
+    -unity-text-align: upper-left;
+}
+
+/* ---- Panels at the board's sides ---- */
+
+.tg-side {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    background-color: var(--tg-surface);
+    border-color: var(--tg-border);
+}
+
+.tg-side--left {
+    left: 0;
+    width: 260px;
+    border-right-width: 1px;
+}
+
+.tg-side--right {
+    right: 0;
+    width: 440px;
+    border-left-width: 1px;
+}
+
+.tg-side-head {
+    flex-direction: row;
+    align-items: center;
+    height: 30px;
+    padding: 0 4px 0 10px;
+    border-bottom-width: 1px;
+    border-bottom-color: var(--tg-line);
+    flex-shrink: 0;
+}
+
+.tg-side-title {
+    flex-grow: 1;
+    -unity-font-style: bold;
+}
+
+.tg-tide {
+    padding: 8px 10px;
+    white-space: pre;
+}
+
+.tg-toast {
+    position: absolute;
+    bottom: 34px;
+    align-self: center;
+    max-width: 560px;
+    padding: 6px 12px;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: var(--tg-border);
+    background-color: var(--tg-surface);
+    white-space: normal;
+}
+
+.tg-toast--bad {
+    border-color: var(--tg-error);
+}
+
+.tg-banner {
+    flex-shrink: 0;
+    padding: 6px 10px;
+    white-space: normal;
+    background-color: var(--tg-error-soft);
+    border-bottom-width: 1px;
+    border-bottom-color: var(--tg-error);
+}

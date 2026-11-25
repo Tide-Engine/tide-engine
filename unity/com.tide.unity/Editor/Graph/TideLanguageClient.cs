@@ -707,10 +707,20 @@ namespace Tide.Editor
             }
         }
 
+        // The documents whose windows closed: what was still asked about one (a check waiting its turn, a list
+        // being filled) doesn't open it again, which would keep the server running for a window that's gone
+        readonly HashSet<string> closed = new HashSet<string>();
+
+        // A window checks its document: it's open (again)
+        public void Wanted(string uri) => closed.Remove(uri);
+
+        public bool IsClosed(string uri) => closed.Contains(uri);
+
         // Sends a document's text, the file's as the window has it: opens it if the server hasn't it. False when the
-        // server can't be started.
+        // server can't be started, or the document's window has closed.
         public bool SetText(string uri, string text)
         {
+            if (closed.Contains(uri)) return false;
             if (!Start()) return false;
             if (!docs.TryGetValue(uri, out var d))
             {
@@ -734,6 +744,9 @@ namespace Tide.Editor
         }
 
         public bool IsOpen(string uri) => docs.ContainsKey(uri);
+
+        // The documents it has open, for whoever asks why it's still running
+        internal string OpenDocuments => string.Join(", ", docs.Keys);
 
         public string TextOf(string uri) => docs.TryGetValue(uri, out var d) ? d.Text : null;
 
@@ -779,6 +792,7 @@ namespace Tide.Editor
         // A window closed its graph: when it was the last, the server stops
         public void Close(string uri)
         {
+            closed.Add(uri);
             if (!docs.Remove(uri)) return;
             diagnostics.Remove(uri);
             if (Running) Notify("textDocument/didClose", Obj("textDocument", Obj("uri", JValue.Of(uri))));

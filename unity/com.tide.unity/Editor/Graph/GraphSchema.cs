@@ -30,7 +30,7 @@ namespace Tide.Editor
 
         public sealed class NodeSpec
         {
-            public string K, Title, Category;
+            public string K, Title, Category, Help;
             public bool Exec, Value, Ends;
             public string Map, Declares;
             public string[] Keys = Array.Empty<string>();    // Its own keys, in tidec's order
@@ -44,9 +44,30 @@ namespace Tide.Editor
 
         sealed class KindSpec
         {
-            public string Kind, Title, Group;
-            public string[] Keys, Modifiers;
-            public bool Members, Params, Body;
+            public string Kind, Title, Group, Summary, Sentence, AddRow;
+            public string[] Keys, Modifiers, MemberKinds;
+            public bool Members, Params, Body, Common, Once;
+        }
+
+        // What the editor says of a key, a modifier or a way a parameter is taken: its words, what they mean, and
+        // whether it's rare (behind "More")
+        public sealed class Info
+        {
+            public string Label, Help;
+            public bool Advanced;
+        }
+
+        // A type made of others ("List of…"): its title, its Tide with {0}, {1} for what's picked, and what each is
+        public sealed class TypeBuilder
+        {
+            public string Title, Type;
+            public string[] Slots = Array.Empty<string>();
+            public int[] Counts = Array.Empty<int>(); // The slots that are a number, not a type: how many a fixed array holds
+        }
+
+        public sealed class GroupSpec
+        {
+            public string Name, Title, Summary;
         }
 
         sealed class Schema
@@ -61,6 +82,14 @@ namespace Tide.Editor
             public NodeSpec[] Nodes;
             public Dictionary<string, NodeSpec> ByKind;
             public readonly Dictionary<string, string[]> NodeOrders = new Dictionary<string, string[]>();
+            public GroupSpec[] Groups = Array.Empty<GroupSpec>();
+            public readonly Dictionary<string, Info> KeyInfo = new Dictionary<string, Info>(), ModifierInfo = new Dictionary<string, Info>(), ParamModeInfo = new Dictionary<string, Info>();
+            public readonly Dictionary<string, Info> FlagInfo = new Dictionary<string, Info>(), PortInfo = new Dictionary<string, Info>(), AccessorInfo = new Dictionary<string, Info>();
+            public readonly Dictionary<string, string> TypeGroups = new Dictionary<string, string>();
+            public readonly Dictionary<string, (string control, string help)> ValueControls = new Dictionary<string, (string, string)>();
+            public string ChoiceHelp;
+            public string[] TypeCommon = Array.Empty<string>(), Rules = Array.Empty<string>();
+            public TypeBuilder[] TypeBuilders = Array.Empty<TypeBuilder>();
         }
 
         static Schema current;
@@ -221,6 +250,8 @@ namespace Tide.Editor
             {
                 Kind = d.Str("kind"), Title = d.Str("title"), Group = d.Str("group"), Keys = Strings(d.Arr("keys")), Modifiers = Strings(d.Arr("modifiers")),
                 Members = d.Flag("members"), Params = d.Flag("params"), Body = d.Flag("body"),
+                Summary = d.Str("summary"), Sentence = d.Str("sentence"), MemberKinds = Strings(d.Arr("memberKinds")), Common = d.Flag("common"), Once = d.Flag("once"),
+                AddRow = d.Str("addRow"),
             };
             s.Decls = j.Arr("declarations").Items.Select(Kind).ToArray();
             s.Members = (j.Arr("members")?.Items ?? new List<JValue>()).Select(Kind).ToArray();
@@ -242,7 +273,7 @@ namespace Tide.Editor
             }
             s.Nodes = j.Arr("nodes").Items.Select(n => new NodeSpec
             {
-                K = n.Str("k"), Title = n.Str("title"), Category = n.Str("category"), Exec = n.Flag("exec"), Value = n.Flag("value"), Ends = n.Flag("ends"),
+                K = n.Str("k"), Title = n.Str("title"), Category = n.Str("category"), Help = n.Str("help"), Exec = n.Flag("exec"), Value = n.Flag("value"), Ends = n.Flag("ends"),
                 Map = n.Str("map"), Declares = n.Str("declares"), Keys = Strings(n.Arr("keys")), Inputs = Strings(n.Arr("inputs")), Outputs = Strings(n.Arr("outputs")),
                 AbsentWhen = AbsentOf(n.Get("absentWhen")),
                 Lists = (n.Arr("lists")?.Items ?? new List<JValue>()).Select(l => new NodeList { Key = l.Str("key"), Label = l.Str("label"), Names = l.Str("names") }).ToArray(),
@@ -254,7 +285,38 @@ namespace Tide.Editor
             }).Where(n => n.K != null).ToArray();
             s.ByKind = new Dictionary<string, NodeSpec>();
             foreach (var n in s.Nodes) s.ByKind[n.K] = n;
+            s.Groups = (j.Arr("groups")?.Items ?? new List<JValue>()).Select(g => new GroupSpec { Name = g.Str("name"), Title = g.Str("title") ?? g.Str("name"), Summary = g.Str("summary") }).ToArray();
+            Infos(j.Get("keyInfo"), s.KeyInfo);
+            Infos(j.Get("modifierInfo"), s.ModifierInfo);
+            Infos(j.Get("paramModeInfo"), s.ParamModeInfo);
+            Infos(j.Get("flagInfo"), s.FlagInfo);
+            Infos(j.Get("portInfo"), s.PortInfo);
+            Infos(j.Get("accessorInfo"), s.AccessorInfo);
+            var picker = j.Get("typePicker");
+            s.TypeCommon = Strings(picker?.Arr("common"));
+            s.TypeBuilders = (picker?.Arr("builders")?.Items ?? new List<JValue>()).Select(b => new TypeBuilder
+            {
+                Title = b.Str("title"), Type = b.Str("type"), Slots = Strings(b.Arr("slots")),
+                Counts = (b.Arr("counts")?.Items ?? new List<JValue>()).Where(c => c.Kind == JKind.Number).Select(c => (int)c.Number).ToArray(),
+            }).Where(b => b.Title != null && b.Type != null).ToArray();
+            var groups = picker?.Get("groups");
+            for (var i = 0; groups != null && groups.IsObject && i < groups.Keys.Count; i++) s.TypeGroups[groups.Keys[i]] = groups.Values[i].String;
+            foreach (var c in j.Arr("valueControls")?.Items ?? new List<JValue>())
+            {
+                foreach (var type in Strings(c.Arr("types"))) s.ValueControls[type] = (c.Str("control"), c.Str("help"));
+                if (c.Str("of") == "enum") s.ChoiceHelp = c.Str("help");
+            }
+            s.Rules = Strings(j.Arr("rules"));
             return s;
+        }
+
+        static void Infos(JValue o, Dictionary<string, Info> into)
+        {
+            for (var i = 0; o != null && o.IsObject && i < o.Keys.Count; i++)
+            {
+                var v = o.Values[i];
+                into[o.Keys[i]] = new Info { Label = v.Str("label") ?? o.Keys[i], Help = v.Str("help"), Advanced = v.Flag("advanced") };
+            }
         }
 
         // The element order of an item of a node (a case, an arm, an init): the one it names, else the one its key
@@ -280,6 +342,61 @@ namespace Tide.Editor
         public static string DeclTitle(string kind) => S.Decls.FirstOrDefault(d => d.Kind == kind)?.Title ?? kind;
         public static string DeclGroup(string kind) => S.Decls.FirstOrDefault(d => d.Kind == kind)?.Group;
         public static string MemberTitle(string kind) => S.Members.FirstOrDefault(d => d.Kind == kind)?.Title ?? kind;
+
+        // What a kind is, in a sentence, and whether it's one of the few offered first
+        public static string DeclSummary(string kind) => KindOf(kind, false)?.Summary;
+        public static string MemberSummary(string kind) => KindOf(kind, true)?.Summary;
+        public static bool IsCommon(string kind) => KindOf(kind, false)?.Common ?? false;
+        // How a kind of code's entry reads: "Every tick, for each entity with"
+        public static string Sentence(string kind, bool member) => KindOf(kind, member)?.Sentence;
+        // The kinds of member a kind of declaration can have, in the order they're offered
+        public static string[] MemberKindsOf(string declKind) => KindOf(declKind, false)?.MemberKinds ?? Array.Empty<string>();
+        // A member a declaration has at most one of
+        public static bool MemberOnce(string kind) => KindOf(kind, true)?.Once ?? false;
+        // Whether a kind's elements can have a key at all: no typeParams on a component, no returnType on a system
+        public static bool HasKey(string kind, bool member, string key) => Array.IndexOf(KindOf(kind, member)?.Keys ?? Array.Empty<string>(), key) >= 0;
+        public static bool Known(string kind, bool member) => KindOf(kind, member) != null;
+
+        // The groups the add menu lists kinds in
+        public static GroupSpec[] Groups => S.Groups;
+
+        static Info InfoOf(Dictionary<string, Info> all, string name) => name != null && all.TryGetValue(name, out var i) ? i : new Info { Label = name };
+        public static Info KeyInfo(string key) => InfoOf(S.KeyInfo, key);
+        public static Info ModifierInfo(string modifier) => InfoOf(S.ModifierInfo, modifier);
+        public static Info ParamModeInfo(string mode) => InfoOf(S.ParamModeInfo, mode);
+
+        // A node's own flags (mut, indexed...), its pins by their keys, and a property's accessors, in words: a
+        // flag is one the schema has words for, and a pin with none is shown by its key
+        public static bool IsFlag(string key) => key != null && S.FlagInfo.ContainsKey(key);
+        public static Info FlagInfo(string flag) => InfoOf(S.FlagInfo, flag);
+        public static string PortLabel(string key) => key != null && S.PortInfo.TryGetValue(key, out var i) ? i.Label : key;
+        public static Info AccessorInfo(string word) => InfoOf(S.AccessorInfo, word);
+
+        // The words of the last row of a kind's card or entry, which adds to it: "+ field", "+ needs…"
+        public static string AddRow(string kind, bool member) => KindOf(kind, member)?.AddRow;
+
+        // The control that edits a type's value (whole, decimal, tick, text, char, vector, colour), or null for a
+        // type with none of its own (an enum's is a choice of its members); and what the control takes, in words
+        public static string ValueControl(string type) => type != null && S.ValueControls.TryGetValue(type, out var c) ? c.control : null;
+        public static string ValueHelp(string type) => type != null && S.ValueControls.TryGetValue(type, out var c) ? c.help : null;
+        public static string ChoiceHelp => S.ChoiceHelp;
+
+        // The type picker's headings: common, file, game, builders, own, rest
+        public static string TypeGroup(string name) => S.TypeGroups.TryGetValue(name, out var title) ? title : GraphLook.UpperFirst(name);
+
+        // The types offered first, and the types made of others
+        public static string[] TypeCommon => S.TypeCommon;
+        public static TypeBuilder[] TypeBuilders => S.TypeBuilders;
+        public static string[] Rules => S.Rules;
+
+        // A node kind's operators, as the schema lists them under the kind's own name (binary, unary, assign, step):
+        // each with its title where it has one
+        public static (string op, string title)[] Ops(string k)
+        {
+            var list = k == null ? null : S.Json.Get("operators")?.Arr(k);
+            if (list == null) return Array.Empty<(string, string)>();
+            return list.Items.Select(o => o.Kind == JKind.String ? (o.String, (string)null) : (o.Str("op"), o.Str("title"))).Where(o => o.Item1 != null).ToArray();
+        }
 
         static KindSpec KindOf(string kind, bool member) => (member ? S.Members : S.Decls).FirstOrDefault(d => d.Kind == kind);
 
@@ -448,6 +565,11 @@ namespace Tide.Editor
         public string Label;
         public string Group;      // A list it's one of ("args", "items" ...), which grows and shrinks
         public int Index = -1;    // Its place in that list
+        // The board's pins that are no node's own output: what the frame's code takes by a name (a parameter's pin
+        // on the entry, Node the entry), and the local a node declares (Node the node that declares it)
+        public string Name;
+        public bool Local;
+        public bool IsRead => Name != null || Local;
     }
 
     // A node's ports, from the schema's: its single inputs, its lists and items of inputs, its named inputs, its exec

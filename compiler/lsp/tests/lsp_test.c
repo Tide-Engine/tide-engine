@@ -14312,9 +14312,12 @@ TIDE_TEST(lsp_graphs)
     TIDE_CHECK(has(request_at(uri, "tide/graphTypes", 0, 0, ""), "\"13\":\"int\""));
     // What a call's node calls with: a built-in's parameters by name, the game's with their types
     const char *calls = request_at(uri, "tide/graphCalls", 0, 0, "");
-    if (!has(calls, "\"19\"")) fprintf(stderr, "calls: %s\n", calls);
     TIDE_CHECK(has(calls, "\"19\":{\"params\":[\"a\",\"b\"],\"types\":[\"\",\"\"],\"args\":[0,1]}"));
     TIDE_CHECK(has(calls, "\"22\":{\"params\":[\"amount\",\"twice\"],\"types\":[\"int\",\"bool\"],\"args\":[0,1]}"));
+    // What the game itself declares: its singleton and its function, and nothing of the engine's
+    const char *names = request_at(uri, "tide/graphNames", 0, 0, "");
+    TIDE_CHECK(has(names, "\"Score\":\"singleton\"") && has(names, "\"Scaled\":\"function\"") && has(names, "\"packages\":{}"));
+    TIDE_CHECK(!has(names, "\"Random\"") && !has(names, "\"Add\""));
 
     if (points) {
         char extra[64];

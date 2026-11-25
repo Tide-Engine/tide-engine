@@ -402,6 +402,37 @@ layout through tidels (values left of their statement, undoable, the Tide unchan
 and an unread value. 28 of 28 Unity tests pass (GraphTests, GraphLanguageTests, GraphSchemaTests). The add menus
 still list kind names rather than the schema's titles and groups.
 
+**Rebuilt as one board (2026-11-25)**, to "The experience: one board" below. `GraphCanvas`, `GraphInspectorView`,
+`GraphOutlineView`, `GraphFields` and `GraphNodeFields` are gone; `GraphBoard` (+ `.uss`), `GraphCard`,
+`GraphFrame`, `GraphLook`, `GraphPanels`, `GraphPopups`, `GraphValues` are new; the window, the node view, the
+search popup and the catalog are rewritten. What a user meets is the web page's list above, in Unity's look: the
+start screen and the grouped Add menu (a right click or Space too), cards edited in place with Enter for the
+next row, the searched type picker fed by tidels, values by their type's control (a float refuses what isn't a
+number and says why), a card's menu with its kind's members and options alone, frames with the entry's
+sentence and "+ needs…", problems on their node and row refilled by every check, Contents (Ctrl+F), a far view of
+names and silhouettes, "View as Tide" and the rest in the board's "…" menu.
+
+- The error that stayed (the owner's report): the inspector's message was rebuilt on selection only, never on a
+  new check. Every check now refills each mark in place, cards' rows too. Two more found by driving a real
+  pointer: a list row that came under a still pointer became the current one (Enter took it, not the first
+  match); a closing window could reopen its document in tidels and keep the server alive.
+- Its picks that differ from the spec then written: rows reorder by a menu (Move up / down), not by dragging;
+  attributes, namespace, using, "Replaces" and type-parameter names are short text prompts; a lambda's
+  parameters are small name nodes; a value's graph floats beside its card while open (no place in the file); a
+  card taller than tidec's estimate pushes what's below it on screen only; declarations copy as `"decls"` in the
+  same `tidegraphClip` object as the web page's.
+- Pictures: `GraphShots.cs` (the Sample's tests) walks the story and saves a PNG per step when
+  `TIDE_GRAPH_SHOTS` names a folder. **A batch-mode Unity with a graphics device shows its EditorWindows on the
+  desktop it's started on** (the first picture runs put them on the owner's and took focus for moments, which
+  AGENTS.md forbids): a run with a graphics device is started on a Win32 desktop of its own
+  (`hidden-desktop.ps1`, kept with the pictures), and tests otherwise run with `-batchmode -nographics`, under
+  which Unity lays nothing out (the pointer test is skipped there and passes on the hidden desktop).
+- Tests (2026-11-25, `-batchmode -nographics`, the three graph fixtures): 36 passed, 1 skipped (the pointer
+  test), 1 failed for a stale `tide.exe` in the build tree (the schema test compares `tide graph --schema`).
+- Not there: valid attributes per kind, the namespaces that exist, what an `override` can replace (text
+  prompts); which ways of taking a parameter a kind allows come from completion's keywords, so without tidels
+  every way is offered.
+
 ## The IDE editor (2026-11-24, later)
 
 One page, `tools/tide-graph/` (its README says how it's laid out and run): classic scripts on
@@ -595,6 +626,12 @@ them. A statement reads as a sentence on one node: **Set** `wobble.phase` `+=` `
 (`call_param_names`, as inlay hints have them: the game's function's or command's, or the built-in form the call
 took), their types where the game declares them (empty for a built-in's), and the parameter each written argument
 goes to. Calls with no names to show (`Spawn(...)`) aren't in it.
+
+**`tide/graphNames`** (2026-11-25): `{"game": {"Ball": "component", "Heal": "function"}, "packages": {...}}`,
+what the game itself declares (and its packages), by name as the document writes it (`name_for`), with its
+keyword. Completion doesn't say whose a type is, so the pickers' "In this game" listed ViewTime and Random; what's
+offered and isn't in this is the engine's. Systems, views, handlers, shaders, methods and generics' instances
+aren't in it.
 
 **More of the wording in the schema** (2026-11-25, what the web page had made up, so the Unity window says the
 same): `flagInfo` (a node's own flags: label, help, advanced), `portInfo` (what an input or an exec output is
