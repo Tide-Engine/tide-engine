@@ -1,5 +1,12 @@
 # The docs site
 
+## Discord navigation (2026-11-25)
+
+The shared site header links to the Tide Discord invite in both desktop
+navigation and the mobile menu. The production docs build passed on Node
+24.22.1 with the expected unstaged-example 404s. The prerendered home and
+guide pages both contain the invite URL.
+
 ## Graph playground (2026-11-24)
 
 The owner asked for visual scripting on the docs as a playground. `/guide/graph-playground` (Get started, after
@@ -2131,7 +2138,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - `server.js` permanently redirects www and the Fly hostname (`tide-website.fly.dev`), plus HTTP requests for the public apex, to the same HTTPS origin, preserving paths and queries. Case and explicit ports on these hostnames are recognized; local previews stay local. It sends `X-Robots-Tag: noindex` on raw playable HTML (`examples/<id>`, `samples/<id>`, Sand, Duel, Towers and Sumo, with their directory and `index.html` forms). Search results should land on the gallery or explanatory docs rather than a canvas with a generic title. These pages remain crawlable so the header can be read; assets and thumbnails are unaffected. SEO tests require the home `WebSite` node and check redirects and the raw-page headers using tiny deployment fixtures, without compiled games.
   - Validation passed on Windows with Node 24.19: `npm run check` (no errors or warnings), `npm run build`, all three SEO tests, and the production access-form and admin HTTP tests. Host probes use `node:http` to send the desired Host explicitly; static fixtures are registered in the temporary deployment's adapter-node asset table, since it serves the closed set recorded at build time.
 - The site doesn't present Tide as C#-like (the owner, 2026-10-06: "we are our own language"): it's about how people find Tide, who shouldn't expect a C# clone and then see a different language. So nothing that says what Tide is calls it C#-like or measures it against C#: the home page, the introduction, a page's opening, the README, an editor extension's description. Saying what inspired it is fine, and so is a rule that names C# where it follows it, as `docs/spec.md`'s do. The pages for users state such rules themselves (operators' precedence, what a shift does), which reads better to someone who doesn't know C#.
-- The header links Docs (`docs` in `docs/src/lib/nav.ts`) to the guide and Console to https://console.tide-engine.dev/. Both appear in the desktop and mobile menus; documentation categories belong in the sidebar.
+- The header links Docs (`docs` in `docs/src/lib/nav.ts`) to the guide, Console to https://console.tide-engine.dev/ and Discord to the community invite. All three appear in the desktop and mobile menus; documentation categories belong in the sidebar.
 - A page is in the folder of its subject, and the sidebar's groups follow the folders (`spec.md`, beside them, is its Reference):
   - `guide/` (Get started): what a newcomer reads first, and the demos.
   - `game/`: what a game is made of, in two groups: Simulation, the match (components, systems and their schedule, events, scenes, tasks, input), and Presentation, what one machine shows of it (views and the six other pages about drawing, below, then frags and verts, audio, local state, files, the GUI).

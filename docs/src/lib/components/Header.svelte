@@ -6,6 +6,7 @@
     let { onsearch }: { onsearch: () => void } = $props();
 
     let menu = $state(false);
+    const discordInvite = 'https://discord.gg/3raG36aQAw';
 
     // The link lights up on every page of the docs.
     const inDocs = $derived(slugs.has(page.url.pathname.slice(1)));
@@ -26,6 +27,7 @@
         <nav class="links" aria-label="Main">
             <a href={docs.link} class:active={inDocs} aria-current={inDocs ? 'true' : undefined}>{docs.text}</a>
             <a href="https://console.tide-engine.dev/">Console</a>
+            <a href={discordInvite}>Discord</a>
         </nav>
 
         <button class="search" type="button" onclick={onsearch} aria-label="Search">
@@ -55,6 +57,7 @@
         <nav id="mobile-nav" class="mobile" aria-label="Main">
             <a href={docs.link} class:active={inDocs}>{docs.text}</a>
             <a href="https://console.tide-engine.dev/">Console</a>
+            <a href={discordInvite}>Discord</a>
             <div class="row">
                 <button type="button" onclick={toggleTheme}>{theme.dark ? 'Light theme' : 'Dark theme'}</button>
             </div>
