@@ -22,7 +22,8 @@ namespace Tide.Editor
             View = view;
             Port = port;
             AddToClassList("tg-port");
-            tooltip = port.Label ?? "";
+            if (port.Input && !port.Exec) AddToClassList("tg-port--in");
+            Retip();
             generateVisualContent += Draw;
             RegisterCallback<PointerEnterEvent>(_ =>
             {
@@ -36,10 +37,34 @@ namespace Tide.Editor
             });
             RegisterCallback<PointerDownEvent>(e =>
             {
+                if (e.button == 1)
+                {
+                    // Its own menu: break its links, pick what goes in it, work it out
+                    GraphMenu.Open(Frame.Window, GraphMenu.ForPin(this), this, e.position);
+                    e.StopPropagation();
+                    return;
+                }
                 if (e.button != 0) return;
                 View.Frame.Board.BeginWire(this, e);
                 e.StopPropagation();
             });
+        }
+
+        // What a pin under the pointer says: what it is, its type, and what can be done with it
+        void Retip()
+        {
+            var what = string.IsNullOrEmpty(Port.Label) ? Port.Exec ? Port.Input ? "Where this step is reached from" : "What happens next" : Port.Input ? "An input" : "Its value" : Port.Label;
+            var type = string.IsNullOrEmpty(Type) ? "" : ": " + Type;
+            tooltip = $"{what}{type}\nDrag to connect. Alt+click breaks its links; right-click for more.";
+        }
+
+        // While a wire is dragged: whether it can end here (lit), or can't (dimmed); neither when none is
+        public void Mark(bool? can)
+        {
+            EnableInClassList("tg-port--can", can == true);
+            EnableInClassList("tg-port--cannot", can == false);
+            parent?.EnableInClassList("tg-port-row--can", can == true && Port.Input && !Port.Exec);
+            MarkDirtyRepaint();
         }
 
         public GraphFrame Frame => View.Frame;
@@ -71,6 +96,15 @@ namespace Tide.Editor
             else p.Arc(c, 4.5f, 0, 360);
             if (Connected || hover) p.Fill();
             p.Stroke();
+            // Where a dragged wire can end: a ring around it
+            if (ClassListContains("tg-port--can"))
+            {
+                p.lineWidth = 1.4f;
+                p.strokeColor = new Color(tint.r, tint.g, tint.b, 0.8f);
+                p.BeginPath();
+                p.Arc(c, 7f, 0, 360);
+                p.Stroke();
+            }
         }
 
         // Where wires join it, in another element's space
@@ -80,7 +114,7 @@ namespace Tide.Editor
         {
             if (Port.Exec || type == Type) return;
             Type = type;
-            tooltip = string.IsNullOrEmpty(type) ? Port.Label ?? "" : string.IsNullOrEmpty(Port.Label) ? type : $"{Port.Label}: {type}";
+            Retip();
             MarkDirtyRepaint();
         }
     }
@@ -518,21 +552,14 @@ namespace Tide.Editor
         void Title(JValue shown, string k, GraphSchema.NodeSpec spec)
         {
             void Words(string text) => Head.Add(GraphLook.Text(text, "tg-node-title"));
-            TextField Named(string key, bool dotted = false)
+            // Its name: a click on it drags the node, a double click (or F2) renames it
+            GraphName Named(string key, bool dotted = false)
             {
                 var order = GraphSchema.NodeOrder(k);
-                var f = GraphLook.Inline(shown.Str(key), typed =>
-                {
-                    var name = dotted ? GraphLook.DottedName(typed) : GraphLook.Identifier(typed);
-                    if (name.Length == 0)
-                    {
-                        Frame.Refresh();
-                        return;
-                    }
-                    Frame.Edit("Rename", () => shown.Set(key, JValue.Of(name), order));
-                }, "name");
-                f.name = "title";
-                f.style.flexGrow = 1;
+                void Commit(string name) => Frame.Edit("Rename", () => shown.Set(key, JValue.Of(name), order));
+                var f = dotted ? GraphLook.DottedNameField(shown.Str(key), Commit, "name") : GraphLook.Name(shown.Str(key), Commit, "name");
+                f.Named("title");
+                f.AddToClassList("tg-node-name");
                 Head.Add(f);
                 return f;
             }
@@ -542,6 +569,7 @@ namespace Tide.Editor
                 case "call":
                     if (shown.Flag("local")) Head.Add(GraphLook.Text("local", "tg-port-label"));
                     Named("name");
+                    Head.Add(new VisualElement { style = { flexGrow = 1 }, pickingMode = PickingMode.Ignore });
                     break;
                 case "method":
                 case "member":
@@ -558,6 +586,7 @@ namespace Tide.Editor
                     if (titled == shown) dot.AddToClassList("tg-node-dot--after");
                     Head.Add(dot);
                     Named(k == "member" ? "member" : "name");
+                    Head.Add(new VisualElement { style = { flexGrow = 1 }, pickingMode = PickingMode.Ignore });
                     if (!shown.Flag("shorthand"))
                     {
                         var id = shown.Wire("id");
@@ -567,6 +596,7 @@ namespace Tide.Editor
                 }
                 case "name":
                     Named("name", true);
+                    Head.Add(new VisualElement { style = { flexGrow = 1 }, pickingMode = PickingMode.Ignore });
                     break;
                 case "local":
                 {
@@ -797,10 +827,10 @@ namespace Tide.Editor
             var row = GraphLook.Row("tg-port-row");
             var from = p.Path.Get(owner);
             var shown = Frame.ShownIn(from);
+            // Its pin is always there, at its left: hollow when it's empty, filled when something's in it (a value,
+            // a chip, a wire); a simple value stays in the input beside it
             var pin = Pin(p);
-            pin.Connected = from != 0 && shown == null;
-            // A pin is where a wire ends: an input with its value in it shows none, until a wire is dragged
-            pin.EnableInClassList("tg-port--quiet", !pin.Connected);
+            pin.Connected = from != 0;
             row.Add(pin);
             row.name = "in:" + p.Path;
 
@@ -816,12 +846,7 @@ namespace Tide.Editor
                 var order = items.Element != null ? GraphSchema.Element(items.Element) : null;
                 var key = items.Label;
                 label = item.Str(key);
-                var name = GraphLook.Inline(item.Str(key), typed =>
-                {
-                    var clean = GraphLook.Identifier(typed);
-                    if (clean.Length == 0) Frame.Refresh();
-                    else Frame.Edit("Rename", () => item.Set(key, JValue.Of(clean), order));
-                }, "field");
+                var name = GraphLook.Name(item.Str(key), clean => Frame.Edit("Rename", () => item.Set(key, JValue.Of(clean), order)), "field");
                 name.style.maxWidth = 110;
                 row.Add(name);
             }
@@ -830,11 +855,10 @@ namespace Tide.Editor
                 // A named input of a text or code node: its name is what stands for it in the text
                 var at = p.Index;
                 label = p.Label;
-                var name = GraphLook.Inline(p.Label, typed =>
+                var name = GraphLook.Name(p.Label, clean =>
                 {
-                    var clean = GraphLook.Identifier(typed);
                     var map = owner.Get(spec.Map);
-                    if (clean.Length == 0 || map.Keys.Contains(clean)) Frame.Refresh();
+                    if (map.Keys.Contains(clean)) Frame.Refresh();
                     else Frame.Edit("Rename input", () => map.Keys[at] = clean);
                 }, "name");
                 name.style.maxWidth = 110;
@@ -901,27 +925,34 @@ namespace Tide.Editor
             var k = n.Str("k");
             var spec = GraphSchema.Spec(k);
             if (spec == null) return;
-            var order = GraphSchema.NodeOrder(k);
-            Button Grow(string what, Action add)
+            foreach (var (what, add, key) in GrowersOf(n, spec))
             {
-                var b = GraphLook.Labelled("plus", what, () => Frame.Edit("Add " + what, add), "tg-add-row", "tg-node-add");
+                var b = GraphLook.Labelled("plus", what, () => Frame.Edit("Add " + what, add), "tg-add-row", "tg-add-row--compact", "tg-node-add");
                 b.name = "add:" + what;
                 Body.Add(b);
-                return b;
+                if (key == "args" && (k == "call" || k == "method")) argGrowers.Add((b, n, what));
             }
+        }
+
+        // What can be added to a node's lists: another argument, item, case, field, input; and the list it's of
+        static List<(string what, Action add, string key)> GrowersOf(JValue n, GraphSchema.NodeSpec spec)
+        {
+            var growers = new List<(string, Action, string)>();
+            var k = n.Str("k");
+            var order = GraphSchema.NodeOrder(k);
+            void Grow(string what, Action add, string key = null) => growers.Add((what, add, key));
             foreach (var list in spec.Lists)
             {
                 if (k == "interp") continue; // Its {} make its values
                 var l = list;
                 if (k == "index" && (n.Arr(l.Key)?.Items.Count ?? 0) >= 3) continue;
-                var grower = Grow(l.Label, () =>
+                Grow(l.Label, () =>
                 {
                     var a = n.Arr(l.Key);
                     if (a == null) n.Set(l.Key, a = JValue.NewArray(), order);
                     a.Items.Add(JValue.Null());
                     if (l.Names != null) n.Arr(l.Names)?.Items.Add(JValue.Of(""));
-                });
-                if (l.Key == "args" && (k == "call" || k == "method")) argGrowers.Add((grower, n, l.Label));
+                }, l.Key);
             }
             foreach (var items in spec.Items)
             {
@@ -961,6 +992,7 @@ namespace Tide.Editor
                     p.Set("name", JValue.Of(GraphDocument.UniqueIn(list, "x")));
                     list.Items.Add(p);
                 });
+            return growers;
         }
 
         // The local a node declares: its name, typed here, and the pin it's read from
@@ -972,13 +1004,9 @@ namespace Tide.Editor
             var optional = k == "is";
             var row = GraphLook.Row("tg-port-row", "tg-port-row--out");
             row.Add(GraphLook.Text(optional ? "as" : "named", "tg-port-label"));
-            var name = GraphLook.Inline(n.Str(key), typed =>
-            {
-                var clean = GraphLook.Identifier(typed);
-                if (clean.Length == 0 && !optional) Frame.Refresh();
-                else Frame.Edit("Rename", () => n.SetString(key, clean, order));
-            }, optional ? "no name" : "name");
-            name.name = "local";
+            var name = GraphLook.Name(n.Str(key), clean => Frame.Edit("Rename", () => n.SetString(key, clean, order)), optional ? "no name" : "name");
+            name.AllowEmpty = optional;
+            name.Named("local");
             name.style.maxWidth = 120;
             row.Add(name);
             if (!string.IsNullOrEmpty(n.Str(key)))
@@ -999,57 +1027,29 @@ namespace Tide.Editor
         // ---------------------------------------------------------------------------------------------------------
         // Its menu: what's rare for its kind, a note, copy, duplicate, delete
 
-        internal List<GraphOption> MenuOptions()
+        // Its menu: the board's one menu for a node (GraphMenu). Its flags, type arguments and argument names are
+        // in Details.
+        internal List<GraphOption> MenuOptions() => GraphMenu.ForNode(this);
+
+        // What its menu offers to add: another of each of its lists (an argument, an item, a case)
+        internal IEnumerable<(string title, Action add)> Adds()
         {
-            var options = new List<GraphOption>();
             foreach (var v in Call != null ? new[] { Call, Node } : new[] { Node })
             {
+                if (v == null) continue;
                 var k = v.Str("k");
                 var spec = GraphSchema.Spec(k);
                 if (spec == null) continue;
-                var order = GraphSchema.NodeOrder(k);
-                // Its own flags, in the schema's words (flagInfo): the rare ones under "More"
-                foreach (var key in spec.Keys)
-                {
-                    if (!GraphSchema.IsFlag(key)) continue;
-                    var flag = key;
-                    var target = v;
-                    var words = GraphSchema.FlagInfo(key);
-                    options.Add(new GraphOption
-                    {
-                        Title = words.Label, Detail = words.Help, Tall = words.Help != null, Section = words.Advanced ? "More" : null, Checked = v.Flag(key), Data = key,
-                        Pick = () => Frame.Edit(words.Label, () => target.SetFlag(flag, !target.Flag(flag), order)),
-                    });
-                }
-                if (k == "call" || k == "method")
-                {
-                    var target = v;
-                    options.Add(new GraphOption
-                    {
-                        Title = "Add a type argument…", Detail = "For a call that names its types: Get<Health>()", Tall = true,
-                        Pick = () => Frame.Board.PickType(new GraphTypeRequest { Title = "Type argument", Generic = Doc.TypeParamsAt(Frame.Slot.Owner) }, this, type => Frame.Edit("Type argument", () =>
-                        {
-                            var args = GraphLists.Strings(target.Arr("typeArgs")).ToList();
-                            args.Add(type);
-                            target.Set("typeArgs", JValue.Strings(args), order);
-                        })),
-                    });
-                    if ((target.Arr("args")?.Items.Count ?? 0) > 0)
-                        options.Add(new GraphOption { Title = "Name its arguments…", Detail = "A call that says which input is which: crit: true", Tall = true, Pick = () => Frame.AskArgNames(this, target) });
-                }
+                foreach (var (what, add, _) in GrowersOf(v, spec)) yield return (GraphMenu.AddA(what), () => Frame.Edit(GraphMenu.AddA(what), add));
             }
-            if (options.Count > 0) options.Add(new GraphOption { Separator = true });
-            var noted = Call ?? Node;
+        }
+
+        // A note on it, asked for
+        internal void AskNote(JValue noted)
+        {
             var info = GraphSchema.KeyInfo("comment");
-            options.Add(new GraphOption
-            {
-                Title = info.Label + "…", Pick = () => Window.Open(new GraphPrompt(info.Label, info.Help, noted.Str("comment"), true, text =>
-                    Frame.Edit(info.Label, () => noted.SetString("comment", text.TrimEnd(), GraphSchema.NodeOrder(noted.Str("k"))))), this, true),
-            });
-            options.Add(new GraphOption { Title = "Copy", Detail = "Ctrl+C", Pick = () => Frame.Board.CopySelection() });
-            options.Add(new GraphOption { Title = "Duplicate", Detail = "Ctrl+D", Pick = () => Frame.Board.DuplicateSelection() });
-            options.Add(new GraphOption { Title = "Delete", Detail = "Del", Pick = () => Frame.Board.DeleteSelection() });
-            return options;
+            Window.Open(new GraphPrompt(info.Label, info.Help, noted.Str("comment"), true, text =>
+                Frame.Edit(info.Label, () => noted.SetString("comment", text.TrimEnd(), GraphSchema.NodeOrder(noted.Str("k"))))), this, true);
         }
 
         // ---------------------------------------------------------------------------------------------------------
@@ -1321,7 +1321,7 @@ namespace Tide.Editor
             {
                 for (var i = 0; payload != null && i < payload.Items.Count; i++) Payload(e, payload, payload.Items[i]);
                 var info = GraphSchema.KeyInfo("payload");
-                var add = GraphLook.Labelled("plus", "a value it's called with…", () => AddPayload(null), "tg-add-row");
+                var add = GraphLook.Labelled("plus", "a value it's called with…", () => AddPayload(null), "tg-add-row", "tg-add-row--compact");
                 add.name = "add-payload";
                 add.tooltip = info.Label;
                 Body.Add(add);
@@ -1336,7 +1336,7 @@ namespace Tide.Editor
                 if ((parameters?.Items.Count ?? 0) == 0 && kind != "handler" && kind != "command")
                     Body.Add(GraphLook.Text(function ? "It takes nothing yet." : "Nothing yet. Add what it needs: its code uses each by its name.", "tg-empty"));
                 Button needs = null;
-                needs = GraphLook.Labelled("plus", RowWords(addRow) ?? RowWords(GraphSchema.AddRow("function", false)), () => Frame.OpenNeeds(needs, parameters, sample), "tg-add-row");
+                needs = GraphLook.Labelled("plus", RowWords(addRow) ?? RowWords(GraphSchema.AddRow("function", false)), () => Frame.OpenNeeds(needs, parameters, sample), "tg-add-row", "tg-add-row--compact");
                 needs.name = "needs";
                 needs.tooltip = function ? "Something it's given when it's called" : "A component each entity must have, the world, the time, a filter";
                 Body.Add(needs);
@@ -1389,9 +1389,8 @@ namespace Tide.Editor
                 row.Add(chip);
             }
             row.Add(GraphLook.Text("as", "tg-port-label"));
-            var name = GraphLook.Inline(t?.Str("name"), typed =>
+            var name = GraphLook.Name(t?.Str("name"), clean =>
             {
-                var clean = GraphLook.Identifier(typed);
                 Frame.Edit("Rename", () =>
                 {
                     var made = Made();
@@ -1405,20 +1404,11 @@ namespace Tide.Editor
                     if (clean.Length > 0) made.Set("name", JValue.Of(clean), GraphSchema.TriggerOrder);
                 });
             }, "no name");
-            name.tooltip = "The name its code reads the event by";
+            name.AllowEmpty = true;
+            name.Named("trigger-name");
+            name.tooltip = "The name its code reads the event by. Double-click to rename.";
             row.Add(name);
-            var more = GraphLook.IconButton("more", "More for the event", null, "tg-on-hover");
-            more.clicked += () =>
-            {
-                var options = new List<GraphOption>();
-                var verified = GraphSchema.KeyInfo("verified");
-                options.Add(new GraphOption { Title = verified.Label, Detail = verified.Help, Checked = t?.Flag("verified") ?? false, Pick = () => Frame.Edit(verified.Label, () => Made().SetFlag("verified", !(t?.Flag("verified") ?? false), GraphSchema.TriggerOrder)) });
-                options.Add(new GraphOption { Title = "A field's change, not an event", Detail = "Hears a component's field changing: Changed<Health.current>", Tall = true, Checked = changed, Pick = () => Frame.Edit("Change", () => Made().SetFlag("changed", !changed, GraphSchema.TriggerOrder)) });
-                var menu = new GraphOptionList(null, null, null, 300);
-                menu.Set(options);
-                Window.Open(menu, more);
-            };
-            row.Add(more);
+            row.Add(new VisualElement { style = { flexGrow = 1 }, pickingMode = PickingMode.Ignore });
             if (!string.IsNullOrEmpty(t?.Str("name")))
             {
                 var pin = Pin(new GraphPort { Node = GraphFrame.EntryId, Input = false, Exec = false, Name = t.Str("name"), Label = t.Str("name") });
@@ -1435,11 +1425,15 @@ namespace Tide.Editor
             var id = p.Wire("id");
             var row = GraphLook.Row("tg-entry-row");
             row.name = "row" + id;
+            row.userData = id;
             var type = p.Str("type");
             row.Add(new GraphTypeChip(type, null, Frame.Board.Light, from => Frame.Board.PickType(new GraphTypeRequest { Title = "Type of " + p.Str("name"), Current = type, Place = new GraphTypePlace { Element = id, Find = type } },
                 from, picked => Frame.Edit("Set type", () => p.Set("type", JValue.Of(picked), GraphSchema.PayloadOrder)))));
             row.Add(NameOf(list, p, GraphSchema.PayloadOrder));
-            row.Add(GraphLook.IconButton("close", "Take this away", () => Frame.Edit("Remove", () => list.Items.Remove(p)), "tg-on-hover"));
+            row.Add(new VisualElement { style = { flexGrow = 1 }, pickingMode = PickingMode.Ignore });
+            var more = GraphLook.IconButton("more", "Rename, copy, delete (or right-click)", null, "tg-on-hover");
+            more.clicked += () => GraphMenu.Open(Window, GraphMenu.ForRow(Frame, id), more);
+            row.Add(more);
             var pin = Pin(new GraphPort { Node = GraphFrame.EntryId, Input = false, Exec = false, Name = p.Str("name"), Label = p.Str("name") });
             pin.Connected = Frame.NameIsRead(p.Str("name"));
             pin.SetType(type);
@@ -1469,7 +1463,7 @@ namespace Tide.Editor
             return made?.Wire("id") ?? 0;
         }
 
-        TextField NameOf(JValue list, JValue p, IList<string> order)
+        GraphName NameOf(JValue list, JValue p, IList<string> order)
         {
             var r = Routine;
             var name = GraphLook.Name(p.Str("name"), typed =>
@@ -1488,7 +1482,7 @@ namespace Tide.Editor
                     p.Set("name", JValue.Of(typed), order);
                 });
             }, "name");
-            name.name = "name" + p.Wire("id");
+            name.Named("name" + p.Wire("id"));
             return name;
         }
 
@@ -1500,6 +1494,7 @@ namespace Tide.Editor
             var filter = mode == "with" || mode == "without";
             var row = GraphLook.Row("tg-entry-row");
             row.name = "row" + id;
+            row.userData = id;
             row.style.paddingLeft = 6 + depth * 14;
             if (!sample)
             {
@@ -1534,9 +1529,9 @@ namespace Tide.Editor
                 if (p.Str("role") != null) row.Add(GraphLook.Text(p.Str("role"), "tg-tag"));
             }
             if (!filter) row.Add(NameOf(list, p, order));
-            else row.Add(new VisualElement { style = { flexGrow = 1 } });
-            var more = GraphLook.IconButton("more", "More for this", null, "tg-on-hover");
-            more.clicked += () => Frame.OpenParamMenu(more, list, p, sample);
+            row.Add(new VisualElement { style = { flexGrow = 1 }, pickingMode = PickingMode.Ignore });
+            var more = GraphLook.IconButton("more", "Rename, copy, delete (or right-click)", null, "tg-on-hover");
+            more.clicked += () => GraphMenu.Open(Window, GraphMenu.ForRow(Frame, id), more);
             row.Add(more);
             if (!filter && !string.IsNullOrEmpty(p.Str("name")) && depth == 0)
             {
@@ -1560,7 +1555,7 @@ namespace Tide.Editor
             var query = p.Arr("query");
             for (var i = 0; query != null && i < query.Items.Count; i++) Param(query, query.Items[i], depth + 1, false);
             Button add = null;
-            add = GraphLook.Labelled("plus", "the query needs…", () => Frame.OpenNeeds(add, p.Arr("query"), false, p), "tg-add-row");
+            add = GraphLook.Labelled("plus", "the query needs…", () => Frame.OpenNeeds(add, p.Arr("query"), false, p), "tg-add-row", "tg-add-row--compact");
             add.style.paddingLeft = 8 + (depth + 1) * 14;
             Body.Add(add);
         }

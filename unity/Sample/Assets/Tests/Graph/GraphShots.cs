@@ -133,6 +133,36 @@ static class GraphShots
         }
     }
 
+    // A double click on an element, as the pointer sends it: a name opens to be typed over
+    public static void DoubleClick(VisualElement element)
+    {
+        var at = element.worldBound;
+        var position = float.IsNaN(at.x) ? Vector2.zero : at.center;
+        for (var click = 1; click <= 2; click++)
+        {
+            using (var down = PointerDownEvent.GetPooled(new Event { type = EventType.MouseDown, button = 0, clickCount = click, mousePosition = position }))
+            {
+                down.target = element;
+                element.SendEvent(down);
+            }
+            using (var up = PointerUpEvent.GetPooled(new Event { type = EventType.MouseUp, button = 0, clickCount = click, mousePosition = position }))
+            {
+                up.target = element;
+                element.SendEvent(up);
+            }
+        }
+    }
+
+    // A double click through the window, at a place of it
+    public static void DoubleClick(TideGraphWindow window, Vector2 at)
+    {
+        Mouse(window, EventType.MouseMove, at);
+        Mouse(window, EventType.MouseDown, at);
+        Mouse(window, EventType.MouseUp, at);
+        window.SendEvent(new Event { type = EventType.MouseDown, mousePosition = at, button = 0, clickCount = 2 });
+        window.SendEvent(new Event { type = EventType.MouseUp, mousePosition = at, button = 0, clickCount = 2 });
+    }
+
     // Types into a text field and leaves it: what's typed is kept as Enter or a click elsewhere keeps it
     public static void Enter(TextField field, string text) => field.value = text;
 

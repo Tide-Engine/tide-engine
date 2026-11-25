@@ -122,22 +122,14 @@ namespace Tide.Editor
             return f;
         }
 
-        // A name: what's typed is made a name Tide takes (letters, digits and _), and nothing typed leaves it as it was
-        public static TextField Name(string value, Action<string> commit, string placeholder = null, params string[] classes)
-        {
-            TextField f = null;
-            f = Inline(value, typed =>
-            {
-                var name = Identifier(typed);
-                if (name.Length == 0 || name == value)
-                {
-                    f.SetValueWithoutNotify(value ?? "");
-                    return;
-                }
-                commit(name);
-            }, placeholder, classes);
-            return f;
-        }
+        // A name that's renamed by a double click, F2 or Rename in its menu (GraphName): a click on it selects and
+        // drags what it's the name of. `commit` gets what was typed, made a name Tide takes; nothing typed leaves it.
+        public static GraphName Name(string value, Action<string> commit, string placeholder = null, params string[] classes)
+            => new GraphName(value, commit, placeholder, Identifier, classes);
+
+        // The same, for a name with dots in it (a namespace's)
+        public static GraphName DottedNameField(string value, Action<string> commit, string placeholder = null, params string[] classes)
+            => new GraphName(value, commit, placeholder, DottedName, classes);
 
         // What's typed as a name of Tide's: "my speed" is mySpeed, "2nd" is _2nd
         public static string Identifier(string text)
@@ -189,6 +181,39 @@ namespace Tide.Editor
             return s.Length > most ? s.Substring(0, most - 1) + "…" : s;
         }
 
+        // The place nearest to `near` where a box of `size` lies on none of `taken` (with a gap around each):
+        // what the editor places goes into free space, never on top of what's there
+        public static Vector2 FreeSpot(Vector2 near, Vector2 size, IList<Rect> taken, float gap = 16, float step = 24)
+        {
+            bool Free(Vector2 at)
+            {
+                var r = new Rect(at.x - gap, at.y - gap, size.x + 2 * gap, size.y + 2 * gap);
+                for (var i = 0; i < taken.Count; i++) if (taken[i].Overlaps(r)) return false;
+                return true;
+            }
+            if (Free(near)) return near;
+            // Rings around it, nearest first: below and to the right before above and to the left
+            for (var ring = 1; ring < 400; ring++)
+            {
+                Vector2? best = null;
+                var bestD = float.MaxValue;
+                for (var i = -ring; i <= ring; i++)
+                {
+                    foreach (var (dx, dy) in new[] { (i, ring), (ring, i), (i, -ring), (-ring, i) })
+                    {
+                        var at = near + new Vector2(dx, dy) * step;
+                        // Below or right first, at a tie
+                        var d = new Vector2(dx, dy).sqrMagnitude + (dy < 0 ? 0.5f : 0) + (dx < 0 ? 0.25f : 0);
+                        if (d >= bestD || !Free(at)) continue;
+                        bestD = d;
+                        best = at;
+                    }
+                }
+                if (best != null) return best.Value;
+            }
+            return near;
+        }
+
         // The element under a pointer event's target that is of a type, or null
         public static T Up<T>(VisualElement e) where T : VisualElement
         {
@@ -203,6 +228,119 @@ namespace Tide.Editor
             for (; e != null && e != within; e = e.parent)
                 if (e is TextField || e is Toggle || e is Button || e is BasePopupField<string, string> || e is UnityEditor.UIElements.ColorField || e is PortView) return true;
             return false;
+        }
+    }
+
+    // A name drawn as its text (notes/visual-scripting.md, "Round three"): a click on it is a click on what it names,
+    // which selects it and starts a drag; a double click, F2 or Rename in its menu makes it a field to type in. Enter
+    // or a click elsewhere keeps what's typed, Escape takes it back. Something just made starts with it open.
+    sealed class GraphName : VisualElement
+    {
+        readonly Label label;
+        public readonly TextField Field;
+        readonly Func<string, string> clean;
+        readonly Action<string> commit;
+        readonly string placeholder;
+        string value;
+        double lastDown = -1;
+
+        public GraphName(string value, Action<string> commit, string placeholder, Func<string, string> clean, string[] classes)
+        {
+            this.value = value ?? "";
+            this.commit = commit;
+            this.clean = clean;
+            this.placeholder = placeholder;
+            AddToClassList("tg-name");
+            foreach (var c in classes) if (!string.IsNullOrEmpty(c)) AddToClassList(c);
+            label = new Label { pickingMode = PickingMode.Position };
+            label.AddToClassList("tg-name-text");
+            Add(label);
+            Field = new TextField { value = this.value, isDelayed = true };
+            Field.AddToClassList("tg-inline");
+            foreach (var c in classes) if (!string.IsNullOrEmpty(c)) Field.AddToClassList(c);
+            if (placeholder != null) Field.textEdition.placeholder = placeholder;
+            Field.style.display = DisplayStyle.None;
+            Field.RegisterValueChangedCallback(e =>
+            {
+                e.StopPropagation();
+                Done(e.newValue);
+            });
+            Field.RegisterCallback<FocusOutEvent>(_ => Show(false));
+            Field.RegisterCallback<KeyDownEvent>(e =>
+            {
+                if (e.keyCode != KeyCode.Escape) return;
+                Field.SetValueWithoutNotify(this.value);
+                Show(false);
+                e.StopPropagation();
+            });
+            Add(Field);
+            // A double click: the system's count of clicks, or two presses close together on it
+            label.RegisterCallback<PointerDownEvent>(e =>
+            {
+                if (e.button != 0) return;
+                var now = EditorApplication.timeSinceStartup;
+                var twice = e.clickCount >= 2 || now - lastDown < 0.45;
+                lastDown = twice ? -1 : now;
+                if (!twice) return;
+                // Not taken by what it names (a drag), and the keyboard stays with the field it opens
+                label.focusController?.IgnoreEvent(e);
+                e.StopImmediatePropagation();
+                Edit();
+            });
+            tooltip = "Double-click to rename (F2)";
+            Show(false);
+        }
+
+        public string Value => value;
+        public bool AllowEmpty; // Nothing typed takes the name away (an `is`'s name, an event's)
+        public bool Editing => Field.style.display == DisplayStyle.Flex;
+
+        // What's typed in it now, kept or not
+        public string text => Field.text;
+
+        // Its name and its field's, so either is found by it
+        public void Named(string n)
+        {
+            name = n;
+            Field.name = n;
+        }
+
+        // Opens it to type a new name, with the old one selected
+        public void Edit()
+        {
+            Field.SetValueWithoutNotify(value);
+            Show(true);
+            Field.Focus();
+            Field.schedule.Execute(() =>
+            {
+                Field.Focus();
+                Field.SelectAll();
+            });
+        }
+
+        void Show(bool editing)
+        {
+            Field.style.display = editing ? DisplayStyle.Flex : DisplayStyle.None;
+            label.style.display = editing ? DisplayStyle.None : DisplayStyle.Flex;
+            label.text = value.Length > 0 ? value : placeholder ?? "";
+            EnableInClassList("tg-name--empty", value.Length == 0);
+        }
+
+        // A name typed elsewhere (Details), kept as if typed here
+        public void Commit(string typed) => Done(typed);
+
+        void Done(string typed)
+        {
+            var name = clean(typed ?? "");
+            Show(false);
+            if ((name.Length == 0 && !AllowEmpty) || name == value)
+            {
+                Field.SetValueWithoutNotify(value);
+                return;
+            }
+            value = name;
+            Show(false);
+            commit(name);
         }
     }
 

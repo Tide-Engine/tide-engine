@@ -742,3 +742,35 @@ error on its line (`mut var _graphC = _graphA;` then `_graphC op= _graphB;`, `_g
 A Set whose value isn't picked yet asks without `other`; with one, `=` is there only if the value fits (`float3`
 with a `float`: `+=`, `-=`, `*=`, `/=`, no `=`). A component (`Score`) gets `=` alone, with a `float` nothing. A graph
 that doesn't parse isn't checked, so then everything is said to fit.
+
+**Round three built** (2026-11-25, both editors). As above, with these details and picks:
+
+- Why the owner's `transform.localScale` floated over the Set, unwired: in both editors a node made from a pin's
+  drop (or a search) went exactly under the pointer, and a wire dropped on a node's body counted as empty space.
+  In Unity the Set's "what" picker also only offered what fitted the type already in it, so once it held
+  `transform`, `localScale` (a float3) was hidden behind "Show what doesn't fit too". Now every placement looks
+  for free space near where it was asked for (`freeSpot`), a wire dropped on a node goes to its nearest input
+  that fits, and a Set's target has no wanted type. The exact clicks that left the owner's path unwired weren't
+  reproduced.
+- A Set's "What does it change?" lists what's taken as "changes" (`mut`, `out`), locals declared `mut` and their
+  fields; what's only read is listed greyed under "Only read here", with how to make it changeable; a read-only
+  pin dropped on it is refused with that reason. When a value is picked that the current operator can't take
+  and others can (a float into a float3 that "becomes"), the operator menu opens by itself once a check has the
+  value's type (at most three checks; never on a check of the file from before the pick).
+- The web page renames what the file says of a declaration with it (a field's type, a need, a call); the Unity
+  window doesn't yet (the check says where). A problem's words under a still pointer go when the next check
+  doesn't have it (web: `markProblems`; Unity: through `TooltipView.Close`).
+- The schema says `advanced` on `modifierInfo.virtual` and `override` (Details put them among the main ticks).
+- Tests: `tide_graph_editor` 29 (model and browser: moving with undo, rename by double click, nothing placed on
+  top, every menu's sections in order with no options, Details, My game, the owner's system with tidels and the
+  operator menu opening by itself); the Sample's graph fixtures 47 (46 passed and the pointer test skipped under
+  `-nographics`; on the hidden desktop the pointer test passes); tide-vscode 38; JetBrains 18 (`TidelsServer`
+  now passes `graphCalls`, `graphNames` and `graphOperators`); the docs playground 8.
+- Wanted of the schema, said by both: the menus' words (`menu.<key>.{label, keys}`: rename, cut, copy, paste,
+  duplicate, delete, break links, pick a value, work it out, add next/before), an "add" label per member kind,
+  the panels' words (My game, Details, Advanced, This file, Uses, What this code can change, Only read here),
+  `trigger.changed`'s words, and which parameter modes can be changed (`paramModeInfo.<mode>.changes`); until then
+  each editor has these words, the same in both.
+- Not there: wires can't be selected in Unity (Alt+click a pin); rows reorder from Details (Earlier/Later), not by
+  dragging; Paste is always listed on the web (the clipboard can't be read without asking); My game's drag-out
+  has no Unity test.

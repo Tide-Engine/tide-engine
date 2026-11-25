@@ -34,117 +34,6 @@ namespace Tide.Editor
         }
     }
 
-    // Contents: the file's declarations by group, and a search that jumps to one. Picking one pans the board to it.
-    sealed class GraphContents : GraphSide
-    {
-        readonly TextField query;
-        readonly ScrollView list;
-        readonly List<(int id, string title)> shown = new List<(int, string)>();
-
-        public GraphContents(TideGraphWindow window) : base(window, "Contents", true)
-        {
-            query = new TextField();
-            query.AddToClassList("tg-search");
-            query.textEdition.placeholder = "Jump to…";
-            query.RegisterValueChangedCallback(e =>
-            {
-                e.StopPropagation();
-                Fill();
-            });
-            query.RegisterCallback<KeyDownEvent>(e =>
-            {
-                if (e.keyCode == KeyCode.Escape)
-                {
-                    Close();
-                    e.StopPropagation();
-                }
-                if (e.keyCode != KeyCode.Return && e.keyCode != KeyCode.KeypadEnter) return;
-                e.StopPropagation();
-                if (shown.Count > 0) Window.Reveal(shown[0].id);
-            }, TrickleDown.TrickleDown);
-            Body.Add(query);
-            list = new ScrollView { style = { flexGrow = 1 } };
-            Body.Add(list);
-            Fill();
-        }
-
-        public void FocusSearch() => query.schedule.Execute(() => query.Focus());
-
-        // What it lists now, in order: the tests' view of it
-        internal IReadOnlyList<(int id, string title)> Shown => shown;
-
-        internal void Type(string text) => query.value = text;
-
-        public void Fill()
-        {
-            list.Clear();
-            shown.Clear();
-            var doc = Window.Doc;
-            if (doc == null) return;
-            var typed = (query.value ?? "").Trim().ToLowerInvariant();
-            var rows = new List<(string group, int id, string title, string kind, int depth)>();
-            void Decls(JValue decls, string space)
-            {
-                if (decls == null) return;
-                foreach (var d in decls.Items)
-                {
-                    if (!d.IsObject) continue;
-                    var kind = d.Str("kind");
-                    var e = doc.Find(d.Wire("id"));
-                    if (e == null) continue;
-                    if (kind == "namespace")
-                    {
-                        Decls(d.Arr("decls"), (space.Length > 0 ? space + "." : "") + d.Str("name"));
-                        continue;
-                    }
-                    var group = GraphSchema.DeclGroup(kind) ?? "";
-                    rows.Add((group, e.Id, (space.Length > 0 ? space + "." : "") + doc.TitleOf(e), GraphSchema.DeclTitle(kind), 0));
-                    var members = d.Arr("members");
-                    if (members == null || kind == "enum") continue;
-                    foreach (var m in members.Items)
-                    {
-                        if (!m.IsObject) continue;
-                        var mk = m.Str("kind");
-                        if (GraphSchema.HasBody(mk, true) && doc.Find(m.Wire("id")) is GraphElement me) rows.Add((group, me.Id, doc.TitleOf(me), GraphSchema.MemberTitle(mk), 1));
-                        var accessors = m.Arr("accessors");
-                        if (accessors == null) continue;
-                        foreach (var a in accessors.Items)
-                            if (doc.Find(a.Wire("id")) is GraphElement ae) rows.Add((group, ae.Id, doc.TitleOf(ae), GraphSchema.MemberTitle(mk), 1));
-                    }
-                }
-            }
-            Decls(doc.Root.Arr("decls"), "");
-            foreach (var group in GraphSchema.Groups)
-            {
-                var of = rows.Where(r => r.group == group.Name && (typed.Length == 0 || (r.title + " " + r.kind).ToLowerInvariant().Contains(typed))).ToList();
-                if (of.Count == 0) continue;
-                var heading = GraphLook.Row("tg-section");
-                heading.Add(GraphLook.Text(group.Title.ToUpperInvariant(), "tg-section-title"));
-                heading.Add(GraphLook.Text(group.Summary, "tg-section-summary"));
-                list.Add(heading);
-                foreach (var r in of)
-                {
-                    var id = r.id;
-                    var row = GraphLook.Row("tg-option");
-                    row.style.paddingLeft = 10 + r.depth * 14;
-                    row.Add(GraphLook.Text(r.title, "tg-option-title"));
-                    row.Add(GraphLook.Text(r.kind, "tg-option-detail"));
-                    var item = Window.Board?.Item(id);
-                    if (item != null && Window.Board.HasProblems(item)) row.Add(new GraphIcon("warn") { style = { color = new StyleColor(new Color(1f, 0.45f, 0.4f)), marginLeft = 6 }, tooltip = "It has a problem" });
-                    row.RegisterCallback<PointerDownEvent>(e =>
-                    {
-                        if (e.button != 0) return;
-                        e.StopPropagation();
-                        Window.Reveal(id);
-                    });
-                    list.Add(row);
-                    shown.Add((id, r.title));
-                }
-            }
-            if (shown.Count == 0) list.Add(GraphLook.Text(typed.Length > 0 ? $"Nothing here is called '{query.value.Trim()}'." : "Nothing here yet.", "tg-empty"));
-        }
-    }
-
     // The Tide the file stands for: off the screen unless it's asked for
     sealed class GraphTideView : GraphSide
     {
@@ -261,14 +150,18 @@ namespace Tide.Editor
             Add(GraphLook.Text("How the board works", "tg-popup-head"));
             foreach (var (keys, what) in new[]
             {
-                ("Right-click, or Space", "Add: on the empty board, something new; in a frame, a node"),
-                ("Drag from a pin", "Make a wire. Dropped on nothing, it asks what to add"),
+                ("Drag anything", "Moves it: a card, a frame or a node, by its title, its name or the space around its rows"),
+                ("Drag on the empty board", "Selects what's in the box; Shift or Ctrl adds to what's selected"),
+                ("Double-click a name, or F2", "Renames it"),
+                ("Right-click a thing, or its …", "Its menu: add, rename, cut, copy, paste, duplicate, delete, note"),
+                ("Right-click empty space, or Space", "Add: on the empty board, something new; in a frame, a node"),
+                ("Drag from a pin", "Make a wire: where it can go is lit. Dropped on nothing, it asks what to add"),
                 ("Type on an input", "A number, a text in quotes, true or false"),
-                ("Alt+click a pin", "Take its wires off"),
+                ("Alt+click a pin", "Break its links"),
                 ("Middle button, or Alt+drag", "Move around"),
                 ("Wheel", "Zoom, about the pointer"),
                 ("F", "Fit what's selected, or everything"),
-                ("Ctrl+F", "Contents: jump to anything by name"),
+                ("Ctrl+F", "My game: find anything by name"),
                 ("Del", "Delete what's selected"),
                 ("Ctrl+C, Ctrl+V, Ctrl+D", "Copy, paste, duplicate"),
                 ("Ctrl+Z, Ctrl+Y", "Undo, redo"),

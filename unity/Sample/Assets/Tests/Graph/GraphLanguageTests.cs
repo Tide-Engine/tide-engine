@@ -859,7 +859,8 @@ public class GraphLanguageTests
         Assert.AreEqual(".Wild", frame.TextOf(frame.ShownIn(33)), "a choice of what's expected");
         Assert.AreEqual("+=", frame.Views[12].Q("in:value").Q<Button>("op").text);
         Assert.IsTrue(frame.Views[12].Input("value").Connected, "what's worked out is wired in");
-        Assert.IsFalse(frame.Views[12].Input("target").Connected);
+        Assert.IsTrue(frame.Views[12].Input("target").Connected, "its pin is filled: something's in it");
+        Assert.IsNull(frame.SourcePin(frame.Views[12].Node.Wire("target")), "and no wire comes to it");
         // A call's arguments are named by its callee's parameters, and take their types
         var twice = frame.Views[15];
         Assert.AreEqual("amount", twice.Q("in:args.0").Q<Label>(className: "tg-port-label").text);
@@ -942,7 +943,7 @@ public class GraphLanguageTests
         // A vector made of numbers alone is in the input, as a box for each number; a colour as its field
         Assert.IsTrue(frame.Hidden.Contains(153) && frame.Hidden.Contains(156) && frame.Hidden.Contains(163));
         var axis = frame.Views[150].Q("in:value");
-        Assert.IsFalse(frame.Views[150].Input("value").Connected, "no wire");
+        Assert.IsNull(frame.SourcePin(frame.Views[150].Node.Wire("value")), "no wire");
         CollectionAssert.AreEqual(new[] { "0", "1.5", "-2" }, axis.Q("numbers").Query<TextField>().ToList().Select(f => f.value).ToList());
         CollectionAssert.AreEqual(new[] { "x", "y", "z" }, axis.Q("numbers").Query<TextField>().ToList().Select(f => f.tooltip).ToList(), "each box is its part, by the type's own names");
         var tint = frame.Views[160].Q("in:value").Q<UnityEditor.UIElements.ColorField>("colour");
@@ -1004,6 +1005,215 @@ public class GraphLanguageTests
         Assert.AreEqual("-2", body.Views[43].Q("in:rhs").Q<TextField>("typed").value);
         Assert.AreEqual("amount", body.Views[43].Q("in:lhs").Q("chip").Q<Button>("part0").text);
         window.Close();
+    }
+
+    // The owner's system (notes/visual-scripting.md, "Round three"), from an empty file: a component TestFromGraph
+    // with a float frequency, a system over it and Transform that multiplies transform.localScale by frequency. A
+    // Set's "what" offers only what can be changed; its operator only those the checker takes for what it changes
+    // and what it's given (tide/graphOperators), so "*=" on the Transform itself is never offered. Then the
+    // board's gestures: moving, renaming, the one menu, Details, My game.
+    [UnityTest]
+    public IEnumerator TheOwnersSystem() => OwnersSystem(false);
+
+    [UnityTest]
+    public IEnumerator TheOwnersSystemInTheLightTheme() => OwnersSystem(true);
+
+    IEnumerator OwnersSystem(bool light)
+    {
+        NeedTidels();
+        var game = GameIn(light ? "GraphOwnerLight" : "GraphOwner");
+        foreach (var old in Directory.GetFiles(game, "*.tidegraph")) File.Delete(old);
+        // The game's scene, as a game has one: the file being made is its first code
+        File.WriteAllText(Path.Combine(game, "main.tide"), "scene Main {\n}\n\nevent(Spawned) Setup(with Main)\n{\n    Spawn(TestFromGraph, Transform);\n}\n");
+        var path = Path.Combine(game, "Scale.tidegraph");
+        File.WriteAllText(path, TideGraphImporter.EmptyText, new UTF8Encoding(false));
+        using var logged = new Logged();
+        var window = TideGraphWindow.Open(path);
+        window.ShowMyGame(true);
+        window.ShowDetails(true);
+        GraphShots.Size(window);
+        if (light) window.ForceTheme(true);
+        yield return Checked(window);
+        var board = window.Board;
+        yield return GraphShots.Take(window, "50-an-empty-file");
+
+        // A component, named as it's made; its field by the + in its title bar
+        GraphShots.Click(board.Q<Button>("start:component"));
+        var component = window.Doc.Decls.Items.Single().Wire("id");
+        var name = board.Card(component).Q<GraphName>("name");
+        Assert.IsTrue(name.Editing, "a new card starts with its name being typed");
+        name.Field.SetValueWithoutNotify("TestFromGraph");
+        GraphShots.Key(name.Field, KeyCode.Return);
+        var field = window.Doc.Get(component).Arr("members").Items.Single();
+        GraphShots.Enter(board.Card(component).Q<GraphName>("name" + field.Wire("id")).Field, "frequency");
+        GraphShots.Click(board.Card(component).Q<GraphTypeChip>("type" + field.Wire("id")));
+        var types = (GraphTypePicker)window.Popup;
+        Assert.IsTrue(types.Choose("float"));
+        Assert.AreEqual("TestFromGraph", window.Doc.Get(component).Str("name"));
+        Assert.IsNull(board.Card(component).Q<Button>(className: "tg-add-row"), "no row under the last one to hit by accident");
+        Assert.IsNotNull(board.Card(component).Q(className: "tg-card-head").Q<Button>("add"), "the + is in its title bar");
+        yield return GraphShots.Take(window, "51-a-component");
+
+        // A system over it and Transform, which it changes
+        var system = board.AddDeclaration("system");
+        GraphShots.Enter(board.Frame(system).Q<GraphName>("name").Field, "ScaleTest");
+        var frame = board.Frame(system);
+        frame.AddParam(window.Doc.Get(system).Arr("params"), "TestFromGraph", "read");
+        frame = board.Frame(system);
+        frame.AddParam(window.Doc.Get(system).Arr("params"), "Transform", "mut");
+        frame = board.Frame(system);
+        Assert.IsFalse(board.Card(component).World.Overlaps(frame.World), "a frame added goes beside what's there");
+        var search = board.OpenSearch(frame, frame.FreePlace(new Vector2(300, 60), new Vector2(200, 80)), frame.Entry.Ports.First(p => p.Port.Exec).Port);
+        yield return Answered(search);
+        search.Type("set");
+        Assert.IsTrue(search.PickCurrent());
+        frame = board.Frame(system);
+        var set = frame.Views.Values.Single(v => v.Node.Str("k") == "assign");
+        yield return CheckedAgain(window);
+
+        // What it changes: what it takes as "changes", and not what it only reads
+        frame = board.Frame(system);
+        set = frame.Views[set.Id];
+        GraphShots.Click(set.Q("in:target").Q<Button>("pick"));
+        var values = (GraphValuePicker)window.Popup;
+        yield return Until(() => !values.Asking, "tidels says what can go there");
+        Assert.AreEqual("What does it change?", values.Title);
+        Assert.AreEqual("What this code can change", values.Shown.First(o => o.Title == "transform").Section, Titles(values));
+        Assert.IsTrue(values.Shown.First(o => o.Title == "testFromGraph").Off, "what's only read is listed greyed, with why: " + Titles(values));
+        Assert.IsFalse(values.Shown.Any(o => o.Section == "Constants" || o.Section == "A value"), "nothing that can't be changed: " + Titles(values));
+        yield return GraphShots.Take(window, "52-what-can-be-changed");
+        Assert.IsTrue(values.Choose("transform"));
+        yield return Until(() => !values.Asking, "tidels says what a Transform has");
+        Assert.IsTrue(values.Shown.Any(o => o.Title == "localScale"), Titles(values));
+        Assert.IsFalse(values.Shown.Any(o => o.Title.Contains("(")), "a call's result is nothing to change: " + Titles(values));
+        yield return GraphShots.Take(window, "53-transform-opened");
+        // All of it, first: then its operators are only "=" (a component on its own)
+        Assert.IsTrue(values.Choose("transform"));
+        yield return CheckedAgain(window);
+        frame = board.Frame(system);
+        set = frame.Views[set.Id];
+        GraphShots.Click(set.Q("in:value").Q<Button>("op"));
+        var ops = (GraphOptionList)window.Popup;
+        yield return Until(() => string.IsNullOrEmpty(ops.Status), "tidels says which operators work");
+        CollectionAssert.AreEqual(new[] { "=" }, ops.Shown.Select(o => (string)o.Data), "only '=' for a Transform: " + Titles(ops));
+        yield return GraphShots.Take(window, "54-only-what-works-on-a-transform");
+        window.ClosePopup(ops);
+
+        // Its localScale, by a click on the chip's name, then frequency: "*=" is offered, "=" isn't
+        GraphShots.Click(set.Q("in:target").Q("chip").Q<Button>("part0"));
+        values = (GraphValuePicker)window.Popup;
+        yield return Until(() => !values.Asking, "tidels says what can go there");
+        Assert.IsTrue(values.Choose("transform"));
+        yield return Until(() => !values.Asking, "tidels says what a Transform has");
+        Assert.IsTrue(values.Choose("localScale"));
+        frame = board.Frame(system);
+        set = frame.Views[set.Id];
+        GraphShots.Click(set.Q("in:value").Q<Button>("pick"));
+        values = (GraphValuePicker)window.Popup;
+        yield return Until(() => !values.Asking, "tidels says what can go there");
+        values.Type("freq");
+        Assert.AreEqual("testFromGraph.frequency", values.Shown[0].Title, Titles(values));
+        Assert.IsTrue(values.PickCurrent());
+        // A float doesn't "become" a float3: the check says so, and how it's changed is asked next by itself, with
+        // only the ways a float3 can be changed by a float
+        yield return CheckedAgain(window);
+        var stale = window.Checked.Diagnostics.Select(d => d.Text).ToList();
+        Assert.IsNotEmpty(stale, "'=' of a float into a float3 is a problem");
+        yield return Until(() => window.Popup is GraphOptionList list && list.Title == "How is it changed?", "the operators open by themselves");
+        ops = (GraphOptionList)window.Popup;
+        yield return Until(() => string.IsNullOrEmpty(ops.Status), "tidels says which operators work");
+        var offered = ops.Shown.Select(o => (string)o.Data).ToList();
+        CollectionAssert.Contains(offered, "*=", Titles(ops));
+        CollectionAssert.DoesNotContain(offered, "=", "a float isn't a float3: " + Titles(ops));
+        yield return GraphShots.Take(window, "55-a-float3-by-a-float");
+        Assert.IsTrue(ops.Pick("*="));
+        yield return CheckedAgain(window);
+        Assert.AreEqual("Checked", window.ChipText, string.Join("; ", window.Checked.Diagnostics.Select(d => d.Message)));
+        StringAssert.Contains("transform.localScale *= testFromGraph.frequency;", window.Checked.Text);
+        // What was said of it before is said nowhere now, its hover text neither
+        var said = board.Query<VisualElement>().ToList().Select(e => (e is Label l ? l.text + "\n" : "") + (e.tooltip ?? "")).ToList();
+        foreach (var old in stale) Assert.IsFalse(said.Any(s => s.Contains(GraphLook.FirstLine(old))), "gone with its cause: " + old);
+        frame = board.Frame(system);
+        Assert.AreEqual(1, frame.Views.Count, "one node: the Set, its values in its inputs");
+        yield return GraphShots.Take(window, "56-the-system");
+
+        // A node asked for where the Set is goes beside it, not on it
+        frame = board.Frame(system);
+        set = frame.Views[set.Id];
+        search = board.OpenSearch(frame, set.Shown + new Vector2(20, 20), null);
+        yield return Answered(search);
+        search.Type("break");
+        Assert.IsTrue(search.PickCurrent());
+        frame = board.Frame(system);
+        var placed = frame.Views.Values.Single(v => v.Node.Str("k") == "break");
+        Assert.IsFalse(new Rect(placed.Shown, placed.SizeNow).Overlaps(new Rect(frame.Views[set.Id].Shown, frame.Views[set.Id].SizeNow)), "never on the Set");
+        // Selected, its Details are its own; deleted from its menu
+        Assert.AreEqual("node:" + placed.Id, window.Details.Showing);
+        yield return GraphShots.Take(window, "57-placed-beside-it");
+        var menu = GraphMenu.Open(window, GraphMenu.ForNode(placed), placed);
+        yield return GraphShots.Take(window, "58-a-nodes-menu");
+        Assert.IsTrue(menu.Pick(GraphMenu.DeleteWord));
+        Assert.IsFalse(board.Frame(system).Views.Values.Any(v => v.Node.Str("k") == "break"));
+
+        // The card moved, and renamed by a double click
+        var at = board.Card(component).At;
+        board.MoveItemsBy(new GraphItem[] { board.Card(component) }, new Vector2(0, 160));
+        Assert.AreEqual(at + new Vector2(0, 160), GraphDocument.PlaceOf(window.Doc.Get(component)));
+        window.Reveal(component);
+        yield return GraphShots.Settle(3);
+        board.SelectItem(board.Card(component), false);
+        GraphMenu.Open(window, GraphMenu.ForItem(board.Card(component)), board.Card(component).Q<Button>("more"));
+        yield return GraphShots.Take(window, "59-a-cards-menu");
+        window.ClosePopup(window.Popup);
+        window.Reveal(system);
+        yield return GraphShots.Settle(3);
+        board.SelectItem(board.Frame(system), false);
+        GraphMenu.Open(window, GraphMenu.ForItem(board.Frame(system)), board.Frame(system).Q<Button>("more"));
+        yield return GraphShots.Take(window, "60-a-frames-menu");
+        window.ClosePopup(window.Popup);
+        GraphMenu.Open(window, GraphMenu.ForPin(board.Frame(system).Views[set.Id].Input("target")), board.Frame(system).Views[set.Id].Input("target"));
+        yield return GraphShots.Take(window, "61-a-pins-menu");
+        window.ClosePopup(window.Popup);
+        board.SelectRow(board.Card(component), field.Wire("id"));
+        yield return GraphShots.Take(window, "62-a-fields-details");
+        board.SelectItem(board.Frame(system), false);
+        yield return GraphShots.Take(window, "63-a-systems-details");
+        board.ClearSelection();
+        yield return GraphShots.Take(window, "64-the-files-details");
+        var rename = board.Frame(system).Q<GraphName>("name");
+        GraphShots.DoubleClick(rename.Q<Label>());
+        Assert.IsTrue(rename.Editing);
+        yield return GraphShots.Take(window, "65-renamed-by-a-double-click");
+        GraphShots.Enter(rename.Field, "ScaleIt");
+        Assert.AreEqual("ScaleIt", window.Doc.Get(system).Str("name"));
+        yield return CheckedAgain(window);
+        Assert.AreEqual("Checked", window.ChipText, string.Join("; ", window.Checked.Diagnostics.Select(d => d.Message)));
+        window.Save();
+        window.Close();
+        File.Delete(path);
+
+        // A big converted file, found with My game
+        var converted = GameIn(light ? "GraphOwnerArenaLight" : "GraphOwnerArena");
+        foreach (var old in Directory.GetFiles(converted, "*.tidegraph")) File.Delete(old);
+        var arena = Path.Combine(converted, "Arena.tidegraph");
+        Assert.IsNull(TideGraphCommand.Convert(Path.Combine(Repository, "examples", "sumo", "arena.tide"), arena));
+        window = TideGraphWindow.Open(arena);
+        window.ShowMyGame(true);
+        window.ShowDetails(true);
+        GraphShots.Size(window);
+        if (light) window.ForceTheme(true);
+        board = window.Board;
+        yield return GraphShots.Settle(4);
+        yield return GraphShots.Take(window, "66-a-big-file-with-my-game");
+        window.MyGame.Type("stand");
+        var found = window.MyGame.Shown.First(r => r.title == "Stands");
+        window.Reveal(found.id);
+        Assert.IsTrue(board.Chosen.Contains(found.id));
+        Assert.AreEqual("item:" + found.id, window.Details.Showing, "picked, its Details are shown");
+        yield return GraphShots.Take(window, "67-found-with-my-game");
+        Assert.IsFalse(window.Dirty, "looking changes nothing");
+        window.Close();
+        File.Delete(arena);
     }
 
     [UnityTest]
@@ -1140,9 +1350,9 @@ public class GraphLanguageTests
         GraphShots.Click(set.Q("in:target").Q<Button>("pick"));
         var values = (GraphValuePicker)window.Popup;
         yield return Until(() => !values.Asking, "tidels says what can go there");
-        Assert.AreEqual("What goes in 'what'?", values.Title);
+        Assert.AreEqual("What does it change?", values.Title);
         var offered = values.Shown.First(o => o.Title == "wobble");
-        Assert.AreEqual("What this code has", offered.Section, Titles(values));
+        Assert.AreEqual("What this code can change", offered.Section, Titles(values));
         Assert.IsTrue(values.Shown.Any(o => o.Title == "Work it out…"), Titles(values));
         yield return GraphShots.Take(window, "10-what-goes-in-what");
         Assert.IsTrue(values.Choose("wobble"));
@@ -1335,15 +1545,17 @@ public class GraphLanguageTests
         yield return GraphShots.Settle(4);
         Assert.Less(board.NodesDrawn, 400, "what's on screen is drawn, of over a thousand nodes");
         yield return GraphShots.Take(window, "33-a-big-file");
-        window.ShowContents(true);
-        Assert.IsNotNull(window.Contents);
-        window.Contents.Type("sta");
-        var found = window.Contents.Shown.First(r => r.title == "Stands");
-        yield return GraphShots.Take(window, "34-contents-searched");
+        // My game lists it by the schema's groups, and finds one by name
+        window.ShowMyGame(true, true);
+        Assert.IsNotNull(window.MyGame);
+        CollectionAssert.AreEqual(GraphSchema.Groups.Select(g => g.Title.ToUpperInvariant()), window.MyGame.Groups, "by the schema's groups");
+        window.MyGame.Type("sta");
+        var found = window.MyGame.Shown.First(r => r.title == "Stands");
+        yield return GraphShots.Take(window, "34-my-game-searched");
         window.Reveal(found.id);
         Assert.AreEqual(GraphLevel.Near, board.Frame(found.id).Level, "picked, it's brought on screen");
         Assert.IsTrue(board.Chosen.Contains(found.id));
-        window.ShowContents(false);
+        window.MyGame.Type("");
         yield return GraphShots.Take(window, "35-jumped-to");
         board.ZoomAbout(new Vector2(640, 380), 0.3f);
         Assert.AreEqual(0, board.NodesDrawn, "from far away, names");

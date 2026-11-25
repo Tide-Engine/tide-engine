@@ -245,6 +245,18 @@ namespace Tide.Editor
             return ViewOf(id);
         }
 
+        // Whether a Set can change what a name or a local is: a parameter taken as "changes" (or "makes"), a local
+        // made to be changed; a field of one of those too. What's only read can't be.
+        internal bool Changeable(string name, int local)
+        {
+            if (local != 0) return ById.TryGetValue(local, out var d) && d.Flag("mut");
+            if (name == null || !Reads.TryGetValue(name, out var read) || read.Source == null) return false;
+            var mode = read.Source.Str("mode");
+            return mode == "mut" || mode == "out";
+        }
+
+        internal bool Changeable(GraphPort read) => Changeable(read.Local ? null : read.Name, read.Local ? read.Node : 0);
+
         // What's wired into an input, and wiring it: a node's input, or a value frame's value (no owner)
         internal int WireAt(JValue owner, WirePath path) => owner != null ? path.Get(owner) : Graph?.Wire("root") ?? 0;
 
@@ -267,6 +279,8 @@ namespace Tide.Editor
                 var target = TypeAt(owner.Wire("target"));
                 if (target != null) return target;
             }
+            // What a Set changes can be of any type: what's in it now says nothing of what's wanted
+            else if (k == "assign" && key == "target" && path.Parts.Length == 1) return null;
             else if (key == "cond") return "bool";
             else if (k == "return" && key == "value")
             {
@@ -592,7 +606,7 @@ namespace Tide.Editor
                 if (v.Str("name") != null && kind != "operator")
                 {
                     var name = GraphLook.Name(v.Str("name"), Rename, "name", "tg-inline--title");
-                    name.name = "name";
+                    name.Named("name");
                     name.RegisterCallback<KeyDownEvent>(ev =>
                     {
                         if (ev.keyCode != KeyCode.Return && ev.keyCode != KeyCode.KeypadEnter) return;
@@ -637,15 +651,41 @@ namespace Tide.Editor
                 said.style.whiteSpace = WhiteSpace.NoWrap;
                 head.Add(said);
             }
-            head.Add(new VisualElement { style = { flexGrow = 1 } });
+            head.Add(new VisualElement { style = { flexGrow = 1 }, pickingMode = PickingMode.Ignore });
             // What the compiler says of the routine itself, in its title
             AddProblems(head, Id);
-            if (Graph != null) head.Add(GraphLook.IconButton("plus", "Add a node here (Space, or right-click in the frame)", () => Board.OpenSearch(this, origin + new Vector2(40, 120), null), "tg-on-hover"));
-            var more = GraphLook.IconButton("more", "More for this", null);
-            more.clicked += () => OpenMenu(more);
+            if (Graph != null)
+            {
+                var add = GraphLook.IconButton("plus", "Add a node (Space, or right-click in the frame)", () => Board.OpenSearch(this, FreePlace(new Vector2(40, 0), new Vector2(200, 80)), null));
+                add.name = "add";
+                head.Add(add);
+            }
+            var more = GraphLook.IconButton("more", "Add, rename, copy, delete (or right-click)", null);
+            more.clicked += () => GraphMenu.Open(Window, MenuOptions(), more);
             more.name = "more";
             head.Add(more);
         }
+
+        // Where something new of a size goes in the frame, as near a place (in the frame, as a node's is drawn) as
+        // there's room: not on a node, not on the entry. Its place as the file has it is this less Origin.
+        internal Vector2 FreePlace(Vector2 near, Vector2 size)
+        {
+            var taken = new List<Rect>();
+            foreach (var v in Views.Values) taken.Add(new Rect(v.Shown, v.SizeNow));
+            foreach (var n in Notes.Values) taken.Add(new Rect(n.Shown, n.Extent));
+            if (Result != null) taken.Add(new Rect(Result.Shown, Result.SizeNow));
+            // Not drawn (far away): the file's places, from where they'd be drawn
+            if (Views.Count == 0)
+            {
+                Classify();
+                foreach (var id in Visible())
+                    taken.Add(new Rect(origin + GraphDocument.PlaceOf(ById[id]), GraphNodeView.EstimateOf(ById[id], CallOf(id), this)));
+            }
+            return GraphLook.FreeSpot(near, size, taken);
+        }
+
+        // A node's place in the file, from where it would be drawn
+        internal Vector2 PlaceOfShown(Vector2 shown) => shown - origin;
 
         void Rename(string name)
         {
@@ -659,26 +699,8 @@ namespace Tide.Editor
             Edit("Rename", () => e.Value.Set("name", JValue.Of(name), GraphDocument.OrderOf(e)));
         }
 
-        internal List<GraphOption> MenuOptions()
-        {
-            var e = Owner;
-            var options = new List<GraphOption>();
-            if (Graph != null)
-            {
-                options.Add(new GraphOption { Title = "Add a node…", Detail = "Space", Pick = () => Board.OpenSearch(this, origin + new Vector2(40, 120), null) });
-                options.Add(new GraphOption { Title = "Tidy up its nodes", Detail = "Lays them out again", Pick = () => Board.Tidy(this) });
-                options.Add(new GraphOption { Separator = true });
-            }
-            CommonOptions(e, options);
-            return options;
-        }
-
-        void OpenMenu(VisualElement from)
-        {
-            var list = new GraphOptionList(null, null, null, 300);
-            list.Set(MenuOptions());
-            Window.Open(list, from);
-        }
+        // Its menu: the board's one menu, as for every frame (GraphMenu)
+        internal List<GraphOption> MenuOptions() => GraphMenu.ForItem(this);
 
         public override void ShowProblems()
         {
@@ -705,9 +727,8 @@ namespace Tide.Editor
                     if (n == null) continue;
                     if (port.Path != null)
                     {
-                        var from = port.Path.Get(n);
-                        // What's shown in the input has no wire
-                        p.Connected = from != 0 && !Hidden.Contains(from);
+                        // Filled when something's in it: a value, a chip or a wire
+                        p.Connected = port.Path.Get(n) != 0;
                     }
                     else if (port.Exec) p.Connected = g.Wire("entry") == port.Node || GraphDocument.ExecSourceOf(g, port.Node).node != 0;
                     else p.Connected = Readers.TryGetValue(port.Node, out var readers) && readers.Count > 0;
@@ -818,7 +839,9 @@ namespace Tide.Editor
         {
             if (owner == null) return Vector2.zero;
             var view = ReaderOf(owner.Wire("id")) ?? ViewOf(owner.Wire("id"));
-            return view != null && view.Node != null ? GraphDocument.PlaceOf(view.Node) + new Vector2(0, 136) : GraphDocument.PlaceOf(owner);
+            // Below what reads it, where nothing is: shown in the input, it takes no room, and should it ever be
+            // drawn as a node of its own (read by nothing, or by two), it's on nothing else
+            return view != null && view.Node != null ? PlaceOfShown(FreePlace(view.Shown + new Vector2(0, view.SizeNow.y + 30), new Vector2(200, 60))) : GraphDocument.PlaceOf(owner);
         }
 
         // Wires two pins, whichever way round they were dragged: false, with why, when they can't be
@@ -1141,17 +1164,45 @@ namespace Tide.Editor
             });
         }
 
-        internal void PickOperator(GraphNodeView view, JValue n, VisualElement from)
+        // The operators a node can have: for a Set, only those the checker takes for what it changes and the value
+        // it's given (tide/graphOperators); for an operator node, those it takes for its first value. All of them
+        // while it's asked, and when that isn't known.
+        internal GraphOptionList PickOperator(GraphNodeView view, JValue n, VisualElement from)
         {
             var k = n.Str("k");
             var list = new GraphOptionList(k == "assign" ? "How is it changed?" : GraphSchema.Spec(k)?.Title, null, "Search", k == "assign" ? 260 : 220);
-            list.Set(GraphSchema.Ops(k).Select(o => new GraphOption
+            HashSet<string> valid = null;
+            string type = null;
+            void Fill()
             {
-                // A Set's sign with what it does in words beside it (the schema's assignInfo)
-                Title = o.title ?? o.op, Detail = o.title != null ? o.op : k == "assign" ? GraphSchema.AssignWord(o.op) : null, Keywords = o.op, Checked = o.op == n.Str("op"),
-                Pick = () => Edit("Operator", () => n.Set("op", JValue.Of(o.op), GraphSchema.NodeOrder(k))),
-            }));
+                list.Set(GraphSchema.Ops(k).Where(o => valid == null || valid.Contains(o.op)).Select(o => new GraphOption
+                {
+                    // A Set's sign with what it does in words beside it (the schema's assignInfo)
+                    Title = o.title ?? o.op, Detail = o.title != null ? o.op : k == "assign" ? GraphSchema.AssignWord(o.op) : null, Keywords = o.op, Checked = o.op == n.Str("op"), Data = o.op,
+                    Pick = () => Edit("Operator", () => n.Set("op", JValue.Of(o.op), GraphSchema.NodeOrder(k))),
+                }), true);
+                list.HelpText = valid != null && type != null ? $"Those that work on a {type}." : null;
+            }
+            Fill();
             Window.Open(list, from);
+            // What it works on: what a Set changes and what it's given, an operator's first value and its second
+            var first = k == "assign" ? n.Wire("target") : k == "binary" ? n.Wire("lhs") : k == "unary" ? n.Wire("value") : k == "step" ? n.Wire("target") : 0;
+            var second = k == "assign" ? n.Wire("value") : k == "binary" ? n.Wire("rhs") : 0;
+            type = first != 0 ? TypeAt(first) : null;
+            var other = second != 0 ? TypeAt(second) : null;
+            if (type == null) return list;
+            list.Status = "Asking which work here…";
+            TideGraphLanguage.Operators(Window, type, other, (ops, why) =>
+            {
+                if (list.WasClosed) return;
+                list.Status = null;
+                if (ops == null) return;
+                valid = new HashSet<string>();
+                foreach (var group in k == "assign" ? new[] { "assign", "step" } : k == "binary" ? new[] { "binary" } : k == "step" ? new[] { "step" } : new[] { "unary" })
+                    foreach (var op in GraphLists.Strings(ops.Arr(group))) valid.Add(op);
+                Fill();
+            });
+            return list;
         }
 
         internal void AskArgNames(GraphNodeView view, JValue call)
@@ -1174,10 +1225,8 @@ namespace Tide.Editor
 
         internal void OpenNodeMenu(GraphNodeView view, VisualElement from)
         {
-            Board.SelectNode(this, view.Id, false);
-            var list = new GraphOptionList(null, null, null, 300);
-            list.Set(view.MenuOptions());
-            Window.Open(list, from);
+            if (!(Board.Active == this && Board.Nodes.Contains(view.Id))) Board.SelectNode(this, view.Id, false);
+            GraphMenu.Open(Window, GraphMenu.ForNode(view), from);
         }
 
         // ---------------------------------------------------------------------------------------------------------
@@ -1385,50 +1434,7 @@ namespace Tide.Editor
             }
         }
 
-        internal void OpenParamMenu(VisualElement from, JValue list, JValue p, bool sample)
-        {
-            var o = sample ? GraphSchema.SampleParamOrder : GraphSchema.ParamOrder;
-            var mode = p.Str("mode") ?? "read";
-            var filter = mode == "with" || mode == "without";
-            var options = new List<GraphOption>();
-            if (!sample)
-            {
-                foreach (var flag in new[] { "local", "verified", "previous" })
-                {
-                    var f = flag;
-                    var info = GraphSchema.KeyInfo(flag);
-                    options.Add(new GraphOption { Title = info.Label, Detail = info.Help, Tall = info.Help != null, Checked = p.Flag(flag), Pick = () => Edit(info.Label, () => p.SetFlag(f, !p.Flag(f), o)) });
-                }
-                if (filter)
-                    options.Add(new GraphOption
-                    {
-                        Title = "Owning it, not having a component", Detail = "Only (or never) the entities this machine's player owns", Tall = true, Checked = p.Flag("ownership"),
-                        Pick = () => Edit("Ownership", () =>
-                        {
-                            var on = !p.Flag("ownership");
-                            p.SetFlag("ownership", on, o);
-                            if (on) p.Remove("type");
-                            else if (p.Str("type") == null) p.Set("type", JValue.Of("Transform"), o);
-                        }),
-                    });
-                else if (mode != "query")
-                {
-                    if (p.Get("default") == null)
-                        options.Add(new GraphOption { Title = "A value for when it isn't given…", Detail = GraphSchema.KeyInfo("default").Label, Pick = () => Edit("Default", () => p.Set("default", Doc.ValueGraph(GraphValues.IsFraction(p.Str("type")) ? "float" : p.Str("type") == "bool" ? "bool" : p.Str("type") == "string" ? "string" : "int", p.Str("type") == "bool" ? "false" : p.Str("type") == "string" ? "" : GraphValues.IsFraction(p.Str("type")) ? "0.0" : "0"), o)) });
-                    else options.Add(new GraphOption { Title = "Always given: no value of its own", Pick = () => Edit("Default", () => p.Remove("default")) });
-                }
-                options.Add(new GraphOption { Separator = true });
-            }
-            var at = list.Items.IndexOf(p);
-            options.Add(new GraphOption { Title = "Move up", Off = at <= 0, Pick = () => Edit("Move up", () => Swap(list, at, at - 1)) });
-            options.Add(new GraphOption { Title = "Move down", Off = at >= list.Items.Count - 1, Pick = () => Edit("Move down", () => Swap(list, at, at + 1)) });
-            options.Add(new GraphOption { Title = "Take it away", Pick = () => RemoveParam(list, p) });
-            var menu = new GraphOptionList(null, null, null, 300);
-            menu.Set(options);
-            Window.Open(menu, from);
-        }
-
-        static void Swap(JValue list, int a, int b)
+        internal static void Swap(JValue list, int a, int b)
         {
             if (a < 0 || b < 0 || a >= list.Items.Count || b >= list.Items.Count) return;
             var item = list.Items[a];

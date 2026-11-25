@@ -165,8 +165,8 @@
     "worker": {"label": "Runs on a worker thread", "help": "A long calculation, awaited by local code"},
     "build": {"label": "Runs while the game builds", "help": "Makes assets and constants ahead of time"},
     "cached": {"label": "Remembers its results", "help": "The same inputs give the kept result"},
-    "virtual": {"label": "Packages can replace it"},
-    "override": {"label": "Replaces another", "help": "Takes the place of a virtual declaration of a package"},
+    "virtual": {"label": "Packages can replace it", "help": "A package or a mod can put its own in its place", "advanced": true},
+    "override": {"label": "Replaces another", "help": "Takes the place of a virtual declaration of a package", "advanced": true},
     "tweak": {"label": "Tunable while running", "help": "A .tweaks file can change it in dev builds"}
   },
   "paramModeInfo": {

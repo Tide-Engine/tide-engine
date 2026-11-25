@@ -16,7 +16,6 @@
 
     // Options that are for packages and the like: the schema's modifierInfo doesn't say which (yet), so these go
     // under Advanced by name
-    const ADVANCED_MODIFIERS = new Set(['virtual', 'override']);
 
     // ---------------------------------------------------------------------------------------------------------------
     // My game
@@ -293,7 +292,7 @@
                 const ordered = s.allModifiers.filter(x => next.has(x));
                 set(v, 'modifiers', ordered.length ? ordered : undefined, keys);
             }), 'mod-' + m);
-            for (const m of mods) (ADVANCED_MODIFIERS.has(m) ? later : options).push(modTick(m));
+            for (const m of mods) (s.modifierAdvanced(m) ? later : options).push(modTick(m));
             const flag = k => this.tick(s.keyLabel(k), s.keyHelp(k), v[k], on => edit(() => set(v, k, on ? true : undefined, keys)), k);
             for (const k of ['mut', 'local']) if (has(k)) (s.keyAdvanced(k) ? later : options).push(flag(k));
             if (options.length) this.section(body, s.keyLabel('modifiers'), options);

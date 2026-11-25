@@ -88,6 +88,7 @@
         modeLabel(mode) { return this.paramModeInfo[mode]?.label || mode; }
         modeHelp(mode) { return this.paramModeInfo[mode]?.help || ''; }
         modeAdvanced(mode) { return !!this.paramModeInfo[mode]?.advanced; }
+        modifierAdvanced(m) { return !!this.modifierInfo[m]?.advanced; }
         // A parameter taken this way is a filter: it has no value to wire (only with, without)
         modeIsFilter(mode) { return mode === 'with' || mode === 'without'; }
 

@@ -938,16 +938,22 @@ public class GraphTests
             var card = board.Card(id);
             Assert.IsNotNull(card, kind + " is a card");
             var allowed = (d.Arr("memberKinds")?.Items ?? new List<JValue>()).Select(m => m.String).ToList();
-            var offered = card.MenuOptions().Where(o => o.Section == "Add").Select(o => (string)o.Data).ToList();
-            CollectionAssert.AreEqual(allowed.Where(m => m != "field"), offered, $"a {kind}'s menu adds its kind's members");
-            // (An enum's last row adds a choice, the settings' a setting)
-            if (kind != "enum" && kind != "settings") Assert.AreEqual(allowed.Contains("field"), card.Q<Button>("add") != null, $"a {kind} has a row that adds a field iff it can have fields");
-            // Its options are its kind's modifiers, by their labels
-            var options = card.MenuOptions().Where(o => o.Section == GraphSchema.KeyInfo("modifiers").Label).Select(o => o.Title).ToList();
-            CollectionAssert.AreEqual((d.Arr("modifiers")?.Items ?? new List<JValue>()).Select(m => GraphSchema.ModifierInfo(m.String).Label), options, kind);
+            // Its menu adds what its kind can have: its rows (a field, a choice, a setting), each other kind of member
+            var adds = card.MenuOptions().Where(o => (o.Data as string) == GraphMenu.Add).Select(o => o.Title).ToList();
+            var expected = allowed.Where(m => m != "field").Select(GraphMenu.AddMember).ToList();
+            if (card.RowAdd() != null) expected.Insert(0, card.RowAdd().Value.title);
+            CollectionAssert.AreEqual(expected, adds, $"a {kind}'s menu adds its kind's members");
+            // Its title bar's "+" adds a field (an enum's a choice, the settings' a setting)
+            if (kind != "enum" && kind != "settings") Assert.AreEqual(allowed.Contains("field"), card.Q<Button>("add") != null, $"a {kind} has a + that adds a field iff it can have fields");
+            Assert.IsFalse(card.MenuOptions().Any(o => o.Checked != null), "no options in a menu: they're in Details");
+            // Its options are its kind's modifiers, by their labels, as ticks in Details
+            board.SelectItem(card, false);
+            window.ShowDetails(true);
+            var ticks = window.Details.Query<Toggle>().ToList().Where(t => t.name.StartsWith("tick:")).Select(t => t.name.Substring(5)).ToList();
+            CollectionAssert.AreEquivalent((d.Arr("modifiers")?.Items ?? new List<JValue>()).Select(m => m.String), ticks, kind);
             // "Generic over" only where the kind has type parameters
             var keys = d.Arr("keys").Items.Select(k => k.String).ToList();
-            Assert.AreEqual(keys.Contains("typeParams"), card.MenuOptions().Any(o => o.Title.StartsWith(GraphSchema.KeyInfo("typeParams").Label)), kind);
+            Assert.AreEqual(keys.Contains("typeParams"), window.Details.Query<Label>().ToList().Any(l => l.text == GraphSchema.KeyInfo("typeParams").Label), kind);
         }
         // Sample is an input's alone, and once
         var component = board.Card(window.Doc.Decls.Items.First(x => x.Str("kind") == "component").Wire("id"));
@@ -961,7 +967,7 @@ public class GraphTests
         Assert.AreEqual("Input.Sample", board.Frame(sample).Title);
         input = board.Card(input.Id);
         CollectionAssert.DoesNotContain(input.OfferedMembers(), "sample", "one Sample: not offered again");
-        Assert.IsFalse(input.MenuOptions().Any(o => (o.Data as string) == "sample"));
+        Assert.IsFalse(input.MenuOptions().Any(o => o.Title == GraphMenu.AddMember("sample")));
         Assert.AreEqual(0, input.AddMember("sample"));
         // An operator is a struct's alone
         var schemaStruct = window.Doc.Decls.Items.First(x => x.Str("kind") == "struct").Wire("id");
@@ -985,9 +991,9 @@ public class GraphTests
         GraphShots.Enter(board.Card(id).Q<TextField>("name"), "Wobble");
         var decl = window.Doc.Get(id);
         Assert.AreEqual("Wobble", decl.Str("name"));
-        Assert.AreEqual("A value every one of these has", board.Card(id).Q<Label>(className: "tg-empty")?.text, "an empty card says what goes in it");
+        StringAssert.StartsWith("A value every one of these has", board.Card(id).Q<Label>(className: "tg-empty")?.text, "an empty card says what goes in it");
 
-        // The last row adds a field, of the first of the common types
+        // The + in its title adds a field, of the first of the common types
         GraphShots.Click(board.Card(id).Q<Button>("add"));
         var frequency = decl.Arr("members").Items.Single();
         Assert.AreEqual("field", frequency.Str("kind"));
@@ -1305,6 +1311,10 @@ public class GraphTests
         b.Node(print).Set("y", JValue.Of(160));
         var other = b.Doc.NewDecl("function", "Other");
         b.Doc.Decls.Items.Add(other);
+        var ball = b.Doc.NewDecl("component", "Ball");
+        var hits = b.Doc.NewMember("field", "hits");
+        ball.Arr("members").Items.Add(hits);
+        b.Doc.Decls.Items.Add(ball);
         b.Doc.Reindex();
         var path = Write("Mouse.tidegraph", b.Doc.Text);
         using var logged = new Logged();
@@ -1312,6 +1322,9 @@ public class GraphTests
         GraphShots.Size(window);
         yield return GraphShots.Settle(6);
         var board = window.Board;
+        // The board alone, the panels as they're left
+        window.ShowPanels(false);
+        yield return GraphShots.Settle(4);
         if (float.IsNaN(board.layout.width) || board.layout.width <= 0)
         {
             window.Close();
@@ -1476,6 +1489,384 @@ public class GraphTests
             GraphShots.Press(window, KeyCode.Return);
             Assert.AreEqual("bool", window.Doc.Get(f).Str("returnType"), "Enter takes the first match");
         }
+
+        // A wire being dragged lights where it can go, and dims the rest
+        window.Reveal(f);
+        yield return GraphShots.Settle(4);
+        frame = board.Frame(f);
+        var countPin = GraphShots.Middle(frame.Entry.ReadPin("count"));
+        GraphShots.Mouse(window, EventType.MouseMove, countPin);
+        GraphShots.Mouse(window, EventType.MouseDown, countPin);
+        GraphShots.Mouse(window, EventType.MouseDrag, countPin + new Vector2(30, 10));
+        Assert.IsTrue(frame.Views[print].Input("args.0").ClassListContains("tg-port--can"), "an input it can fill is lit");
+        Assert.IsTrue(frame.Views[print].ExecIn.ClassListContains("tg-port--cannot"), "a step's arrow is dimmed");
+        GraphShots.Mouse(window, EventType.MouseUp, countPin + new Vector2(30, 10));
+        Assert.IsFalse(frame.Views[print].Input("args.0").ClassListContains("tg-port--can"), "and back as it was once it's dropped");
+        if (window.Popup != null) GraphShots.Press(window, KeyCode.Escape);
+        yield return GraphShots.Settle(2);
+
+        // A card is dragged by its name, and renamed by a double click on it
+        var cardId = ball.Wire("id");
+        window.Reveal(cardId);
+        yield return GraphShots.Settle(4);
+        GraphShots.Click(window, empty);
+        var nameText = board.Card(cardId).Q<GraphName>("name").Q<Label>();
+        var cardWas = board.Card(cardId).At;
+        var zoomNow = board.Zoom;
+        GraphShots.Drag(window, GraphShots.Middle(nameText), GraphShots.Middle(nameText) + new Vector2(60, 30));
+        var moved = GraphDocument.PlaceOf(window.Doc.Get(cardId)) - cardWas;
+        Assert.Less((moved - new Vector2(60, 30) / zoomNow).magnitude, 1.5f, "a drag on its name moves the card: " + moved);
+        yield return GraphShots.Settle(3);
+        nameText = board.Card(cardId).Q<GraphName>("name").Q<Label>();
+        GraphShots.DoubleClick(window, GraphShots.Middle(nameText));
+        Assert.IsTrue(board.Card(cardId).Q<GraphName>("name").Editing, "a double click on its name opens it");
+        GraphShots.Press(window, KeyCode.Escape);
+        yield return GraphShots.Settle(2);
+        // A drag on the space beside a row moves the card too; a click there selects the row
+        var row = board.Card(cardId).Q("row" + hits.Wire("id"));
+        var fieldName = row.Q<GraphName>("name" + hits.Wire("id")).Q<Label>();
+        var beside = new Vector2(fieldName.worldBound.xMax + 14, row.worldBound.center.y);
+        GraphShots.Click(window, beside);
+        Assert.AreEqual(hits.Wire("id"), board.Row, "a click on a row selects it");
+        cardWas = GraphDocument.PlaceOf(window.Doc.Get(cardId));
+        GraphShots.Drag(window, beside, beside + new Vector2(0, 40));
+        Assert.Greater(GraphDocument.PlaceOf(window.Doc.Get(cardId)).y, cardWas.y + 10, "a drag on a row's space moves its card");
+        yield return GraphShots.Settle(3);
+        // A right click on it: its menu, the one every card has
+        var cardHead = board.Card(cardId).Q(className: "tg-card-head");
+        GraphShots.Click(window, new Vector2(cardHead.worldBound.x + cardHead.worldBound.width * 0.6f, cardHead.worldBound.center.y), 1);
+        var cardMenu = window.Popup as GraphOptionList;
+        Assert.IsNotNull(cardMenu, "a right click on a card opens its menu");
+        Assert.AreEqual(GraphMenu.AddA(GraphSchema.MemberTitle("field")), cardMenu.Shown[0].Title);
+        GraphShots.Press(window, KeyCode.Escape);
+        // A box dragged on the empty board selects the cards and frames in it
+        GraphShots.Click(window, empty);
+        var box = board.Card(cardId).worldBound;
+        GraphShots.Drag(window, new Vector2(box.xMin - 20, box.yMin - 20), new Vector2(box.xMax + 10, box.yMax + 10));
+        Assert.IsTrue(board.Chosen.Contains(cardId), "a box selects what's in it");
+        window.ShowPanels(true);
+        window.Close();
+    }
+
+    // ---------------------------------------------------------------------------------------------------------
+    // Round three: like Blueprint (notes/visual-scripting.md, "Round three")
+
+    // The owner's file: a component with a float, and a system over it and Transform with a Set in it, and a local
+    // that can be changed
+    static GraphDocument ScaleFile(out int component, out int field, out int system, out int param, out int set, out int local)
+    {
+        var doc = GraphDocument.Empty();
+        var c = doc.NewDecl("component", "TestFromGraph");
+        c.Set("x", JValue.Of(0), GraphSchema.DeclOrder("component"));
+        c.Set("y", JValue.Of(0), GraphSchema.DeclOrder("component"));
+        var f = doc.NewMember("field", "frequency");
+        f.Set("type", JValue.Of("float"), GraphSchema.MemberOrder("field"));
+        c.Arr("members").Items.Add(f);
+        doc.Decls.Items.Add(c);
+        var s = doc.NewDecl("system", "ScaleTest");
+        s.Set("x", JValue.Of(380), GraphSchema.DeclOrder("system"));
+        s.Set("y", JValue.Of(0), GraphSchema.DeclOrder("system"));
+        s.Arr("params").Items.Add(doc.NewParam("TestFromGraph", "testFromGraph"));
+        var mut = doc.NewParam("Transform", "transform");
+        mut.Set("mode", JValue.Of("mut"));
+        s.Arr("params").Items.Add(mut);
+        doc.Decls.Items.Add(s);
+        doc.Reindex();
+        var body = s.Get("body");
+        var v = doc.AddNode(body, "var", 0, 0);
+        var vo = GraphSchema.NodeOrder("var");
+        v.SetFlag("mut", true, vo);
+        v.Set("type", JValue.Of("float"), vo);
+        v.Set("name", JValue.Of("scale"), vo);
+        var a = doc.AddNode(body, "assign", 300, 0);
+        var ao = GraphSchema.NodeOrder("assign");
+        a.Set("op", JValue.Of("="), ao);
+        a.Set("target", JValue.Null(), ao);
+        a.Set("value", JValue.Null(), ao);
+        v.Set("next", JValue.Of(a.Wire("id")), vo);
+        body.Set("entry", JValue.Of(v.Wire("id")), GraphSchema.BodyOrder);
+        doc.Reindex();
+        component = c.Wire("id");
+        field = f.Wire("id");
+        system = s.Wire("id");
+        param = mut.Wire("id");
+        set = a.Wire("id");
+        local = v.Wire("id");
+        return doc;
+    }
+
+    static List<string> Ticks(VisualElement details) => details.Query<Toggle>().ToList().Where(t => t.name.StartsWith("tick:")).Select(t => t.name.Substring(5)).ToList();
+
+    // A card, a frame and a node are moved by dragging them: where each is is the file's, and Undo's
+    [Test]
+    public void MovingACardOrANodeIsAnEditThatUndoes()
+    {
+        var doc = ScaleFile(out var component, out _, out var system, out _, out var set, out _);
+        var path = Write("Move.tidegraph", doc.Text);
+        using var logged = new Logged();
+        var window = TideGraphWindow.Open(path);
+        var board = window.Board;
+        var was = GraphDocument.PlaceOf(window.Doc.Get(component));
+        board.MoveItemsBy(new GraphItem[] { board.Card(component) }, new Vector2(120, 60));
+        Assert.AreEqual(was + new Vector2(120, 60), GraphDocument.PlaceOf(window.Doc.Get(component)), "where it's dropped is written");
+        Assert.AreEqual(was + new Vector2(120, 60), board.Card(component).At);
+        Undo.PerformUndo();
+        Assert.AreEqual(was, GraphDocument.PlaceOf(window.Doc.Get(component)), "and undone");
+        // What's selected moves together
+        var frameWas = GraphDocument.PlaceOf(window.Doc.Get(system));
+        board.MoveItemsBy(new GraphItem[] { board.Card(component), board.Frame(system) }, new Vector2(0, 200));
+        Assert.AreEqual(was + new Vector2(0, 200), GraphDocument.PlaceOf(window.Doc.Get(component)));
+        Assert.AreEqual(frameWas + new Vector2(0, 200), GraphDocument.PlaceOf(window.Doc.Get(system)));
+        Undo.PerformUndo();
+        Assert.AreEqual(frameWas, GraphDocument.PlaceOf(window.Doc.Get(system)));
+        // A node, in its frame
+        var frame = board.Frame(system);
+        Assert.AreEqual(GraphLevel.Near, frame.Level);
+        var nodeWas = GraphDocument.PlaceOf(GraphDocument.NodeIn(frame.Graph, set));
+        board.MoveNodesBy(frame, new[] { set }, new Vector2(30, 40));
+        frame = board.Frame(system);
+        Assert.AreEqual(nodeWas + new Vector2(30, 40), GraphDocument.PlaceOf(GraphDocument.NodeIn(frame.Graph, set)));
+        Undo.PerformUndo();
+        frame = board.Frame(system);
+        Assert.AreEqual(nodeWas, GraphDocument.PlaceOf(GraphDocument.NodeIn(frame.Graph, set)));
+        // A click on a name doesn't take it: a name is its text, which drags what it names
+        var name = board.Card(component).Q<GraphName>("name");
+        Assert.IsFalse(GraphLook.TakesClicks(name.Q<Label>(), board.Card(component)), "a name's text drags its card");
+        Assert.IsFalse(name.Editing);
+        window.Close();
+    }
+
+    // Names are renamed by a double click, by F2 and by Rename in the menu: a card's, a field's, a frame's, a
+    // parameter's, a local's
+    [Test]
+    public void NamesAreRenamedByADoubleClick()
+    {
+        var doc = ScaleFile(out var component, out var field, out var system, out var param, out _, out var local);
+        var path = Write("Rename.tidegraph", doc.Text);
+        using var logged = new Logged();
+        var window = TideGraphWindow.Open(path);
+        var board = window.Board;
+        var name = board.Card(component).Q<GraphName>("name");
+        GraphShots.DoubleClick(name.Q<Label>());
+        Assert.IsTrue(name.Editing, "a double click opens the card's name");
+        GraphShots.Enter(name.Field, "Wobbly");
+        Assert.AreEqual("Wobbly", window.Doc.Get(component).Str("name"));
+        Undo.PerformUndo();
+        Assert.AreEqual("TestFromGraph", window.Doc.Get(component).Str("name"));
+        // F2 opens the selected card's
+        board.SelectItem(board.Card(component), false);
+        board.RenameSelection();
+        Assert.IsTrue(board.Card(component).Q<GraphName>("name").Editing, "F2 opens the selected card's name");
+        // A field's, by its row's menu
+        GraphMenu.ForRow(board.Card(component), field).First(o => o.Title == GraphMenu.RenameWord).Pick();
+        var fieldName = board.Card(component).Q<GraphName>("name" + field);
+        Assert.IsTrue(fieldName.Editing, "Rename in a row's menu opens its name");
+        GraphShots.Enter(fieldName.Field, "speed");
+        Assert.AreEqual("speed", window.Doc.Get(field).Str("name"));
+        // A frame's, and a parameter's: its reads follow it
+        GraphShots.DoubleClick(board.Frame(system).Q<GraphName>("name").Q<Label>());
+        Assert.IsTrue(board.Frame(system).Q<GraphName>("name").Editing);
+        var paramName = board.Frame(system).Entry.Q<GraphName>("name" + param);
+        GraphShots.DoubleClick(paramName.Q<Label>());
+        Assert.IsTrue(paramName.Editing);
+        GraphShots.Enter(paramName.Field, "body");
+        Assert.AreEqual("body", window.Doc.Get(param).Str("name"));
+        // A local's, on the node that makes it, by F2 with the node selected
+        var frame = board.Frame(system);
+        board.SelectNode(frame, local, false);
+        board.RenameSelection();
+        var localName = board.Frame(system).Views[local].Q<GraphName>("local");
+        Assert.IsTrue(localName.Editing, "F2 opens a selected node's name");
+        GraphShots.Enter(localName.Field, "size");
+        Assert.AreEqual("size", GraphDocument.NodeIn(board.Frame(system).Graph, local).Str("name"));
+        window.Close();
+    }
+
+    // What the editor places goes into free space: a node asked for on a node, a node pasted or duplicated, a card
+    // added where a card is
+    [Test]
+    public void WhatIsPlacedNeverLiesOnWhatsThere()
+    {
+        var doc = ScaleFile(out var component, out _, out var system, out _, out var set, out _);
+        var path = Write("Free.tidegraph", doc.Text);
+        using var logged = new Logged();
+        var window = TideGraphWindow.Open(path);
+        var board = window.Board;
+        var frame = board.Frame(system);
+        void NoneOverlap(string what)
+        {
+            frame = board.Frame(system);
+            var rects = frame.Views.Values.Select(v => (v.Id, rect: new Rect(v.Shown, v.SizeNow))).ToList();
+            foreach (var a in rects)
+                foreach (var b in rects)
+                    if (a.Id < b.Id) Assert.IsFalse(a.rect.Overlaps(b.rect), $"{what}: node {a.Id} at {a.rect} lies on {b.Id} at {b.rect}");
+        }
+        // Where the owner dropped a wire: on the Set
+        var entry = new GraphSearchEntry { Title = "Break", Statement = true, Make = (d, g, at) => d.AddNode(g, "break", at.x, at.y) };
+        var made = board.Insert(frame, entry, frame.Views[set].Shown + new Vector2(10, 10), null);
+        Assert.IsNotNull(made);
+        NoneOverlap("a node asked for on a node");
+        // A copy of it, and one pasted where it is
+        board.SelectNode(board.Frame(system), set, false);
+        board.DuplicateSelection();
+        NoneOverlap("a duplicate");
+        board.SelectNode(board.Frame(system), set, false);
+        board.CopySelection();
+        frame = board.Frame(system);
+        board.Paste(board.ToBoard(frame.At + frame.Views[set].Shown + new Vector2(5, 5)));
+        NoneOverlap("a paste");
+        // A card added where a card is
+        var added = board.AddDeclaration("component", board.Card(component).At + new Vector2(10, 10));
+        Assert.IsFalse(board.Card(added).World.Overlaps(board.Card(component).World), "a card added on a card goes beside it");
+        Assert.IsFalse(board.Card(added).World.Overlaps(board.Frame(system).World));
+        window.Close();
+    }
+
+    // One menu for every kind of thing: the same sections in the same order, the same words and keys, no options
+    [Test]
+    public void EveryThingsMenuIsTheSameMenu()
+    {
+        var doc = ScaleFile(out var component, out var field, out var system, out var param, out var set, out _);
+        var path = Write("Menus.tidegraph", doc.Text);
+        using var logged = new Logged();
+        var window = TideGraphWindow.Open(path);
+        var board = window.Board;
+        var frame = board.Frame(system);
+        var menus = new Dictionary<string, List<GraphOption>>
+        {
+            ["a card"] = GraphMenu.ForItem(board.Card(component)),
+            ["a frame"] = GraphMenu.ForItem(frame),
+            ["a node"] = GraphMenu.ForNode(frame.Views[set]),
+            ["a field"] = GraphMenu.ForRow(board.Card(component), field),
+            ["a parameter"] = GraphMenu.ForRow(frame, param),
+        };
+        string Clip(List<GraphOption> menu) => string.Join(", ", menu.Where(o => (o.Data as string) == GraphMenu.Clipboard).Select(o => o.Title + " " + o.Detail));
+        foreach (var pair in menus)
+        {
+            var sections = pair.Value.Where(o => !o.Separator).Select(o => (string)o.Data).Distinct().Select(s => Array.IndexOf(GraphMenu.Sections, s)).ToList();
+            Assert.IsTrue(sections.All(i => i >= 0), pair.Key);
+            CollectionAssert.IsOrdered(sections, $"{pair.Key}'s menu: added, Rename, the clipboard, Note, in that order");
+            Assert.IsFalse(pair.Value.Any(o => o.Checked != null), $"{pair.Key}'s menu has no options: they're in Details");
+            Assert.IsFalse(pair.Value.Any(o => !o.Separator && (o.Title.StartsWith("Remove") || o.Title.StartsWith("Take it away"))), $"{pair.Key}: Delete, never Remove");
+            Assert.AreEqual("Cut Ctrl+X, Copy Ctrl+C, Paste Ctrl+V, Duplicate Ctrl+D, Delete Del", Clip(pair.Value), pair.Key);
+            Assert.AreEqual(GraphSchema.KeyInfo("comment").Label + "…", pair.Value.Last().Title, $"{pair.Key}'s ends with its note");
+        }
+        foreach (var named in new[] { "a card", "a frame", "a field", "a parameter" })
+            Assert.AreEqual("F2", menus[named].First(o => o.Title == GraphMenu.RenameWord).Detail, named);
+        Assert.IsFalse(menus["a node"].Any(o => o.Title == GraphMenu.RenameWord), "a Set has no name to change");
+        Assert.AreEqual(GraphMenu.AddA(GraphSchema.MemberTitle("field")), menus["a card"][0].Title, "a card's first: its rows");
+        Assert.IsTrue(menus["a card"].Any(o => o.Title == GraphMenu.AddMember("method")));
+        CollectionAssert.AreEqual(new[] { "Add a node…", "Add a note box", "Add what it needs…" }, menus["a frame"].Where(o => (o.Data as string) == GraphMenu.Add).Select(o => o.Title), "a system's adds");
+        Assert.AreEqual("Space", menus["a frame"][0].Detail);
+        // A pin's own: break its links, pick what goes in it, work it out
+        CollectionAssert.AreEqual(new[] { "Break links", "Pick a value…", "Work it out…" }, GraphMenu.ForPin(frame.Views[set].Input("target")).Where(o => !o.Separator).Select(o => o.Title));
+        CollectionAssert.AreEqual(new[] { "Break links", "Add what happens next…" }, GraphMenu.ForPin(frame.Views[set].Output("next")).Where(o => !o.Separator).Select(o => o.Title));
+        // Copy and paste a field onto the card: another of it, named for itself; Delete from the menu takes it away
+        menus["a field"].First(o => o.Title == "Copy").Pick();
+        GraphMenu.ForItem(board.Card(component)).First(o => o.Title == "Paste").Pick();
+        var members = window.Doc.Get(component).Arr("members").Items;
+        CollectionAssert.AreEqual(new[] { "frequency", "frequency2" }, members.Select(m => m.Str("name")));
+        GraphMenu.ForRow(board.Card(component), members[1].Wire("id")).First(o => o.Title == GraphMenu.DeleteWord).Pick();
+        Assert.AreEqual(1, window.Doc.Get(component).Arr("members").Items.Count);
+        // Deleting the card from its menu, and back
+        GraphMenu.ForItem(board.Card(component)).First(o => o.Title == GraphMenu.DeleteWord).Pick();
+        Assert.IsNull(window.Doc.Find(component));
+        Undo.PerformUndo();
+        Assert.IsNotNull(window.Doc.Find(component));
+        window.Close();
+    }
+
+    // Details shows what's selected, and of it only its kind's options: as ticks with their help, the rare ones in
+    // Advanced (closed); a field's name, type and starting value; a node's own flags; the file's own with nothing
+    [Test]
+    public void DetailsShowOnlyTheKindsOptions()
+    {
+        var doc = ScaleFile(out var component, out var field, out var system, out var param, out _, out var local);
+        var path = Write("Details.tidegraph", doc.Text);
+        using var logged = new Logged();
+        var window = TideGraphWindow.Open(path);
+        var board = window.Board;
+        window.ShowDetails(true);
+        board.ClearSelection();
+        Assert.AreEqual("file", window.Details.Showing);
+        Assert.IsNotNull(window.Details.Q<TextField>("namespace"), "with nothing selected, the file's own");
+        // A system: its kind's options, and nothing else
+        board.SelectItem(board.Frame(system), false);
+        Assert.AreEqual("item:" + system, window.Details.Showing);
+        var expected = GraphSchema.Modifiers("system", false).Concat(new[] { "mut", "extern" }.Where(k => GraphSchema.HasKey("system", false, k))).ToList();
+        CollectionAssert.AreEquivalent(expected, Ticks(window.Details));
+        Assert.IsFalse(window.Details.Q<Foldout>("advanced").value, "Advanced is closed");
+        Assert.IsTrue(window.Details.Query<Label>(className: "tg-details-help").ToList().Any(l => l.text == GraphSchema.ModifierInfo("dev").Help), "each option with its help under it");
+        // Ticking one is an edit
+        window.Details.Q<Toggle>("tick:dev").value = true;
+        CollectionAssert.Contains(GraphLists.Strings(window.Doc.Get(system).Arr("modifiers")).ToList(), "dev");
+        Undo.PerformUndo();
+        Assert.IsNull(window.Doc.Get(system).Arr("modifiers"));
+        // A component: its own
+        board.SelectItem(board.Card(component), false);
+        CollectionAssert.AreEquivalent(GraphSchema.Modifiers("component", false), Ticks(window.Details));
+        // A field: its name, type, starting value (typed or worked out), This machine only
+        board.SelectRow(board.Card(component), field);
+        Assert.AreEqual("row:" + field, window.Details.Showing);
+        CollectionAssert.AreEquivalent(new[] { "local" }, Ticks(window.Details));
+        Assert.AreEqual("frequency", window.Details.Q<TextField>("name").value);
+        Assert.IsNotNull(window.Details.Q<Button>("work-out"), "its starting value can be worked out");
+        window.Details.Q<TextField>("name").value = "speed";
+        Assert.AreEqual("speed", window.Doc.Get(field).Str("name"), "renamed from Details");
+        // A parameter: how it's taken, and its own options
+        board.SelectRow(board.Frame(system), param);
+        Assert.AreEqual("row:" + param, window.Details.Showing);
+        CollectionAssert.AreEquivalent(new[] { "local", "verified", "previous" }, Ticks(window.Details));
+        // A node: its own flags alone, and its note
+        board.SelectNode(board.Frame(system), local, false);
+        Assert.AreEqual("node:" + local, window.Details.Showing);
+        CollectionAssert.AreEquivalent(GraphSchema.Spec("var").Keys.Where(GraphSchema.IsFlag), Ticks(window.Details));
+        window.Details.Q<TextField>("note").value = "How big";
+        Assert.AreEqual("How big", GraphDocument.NodeIn(board.Frame(system).Graph, local).Str("comment"));
+        // Closed, it stays closed for the next window
+        window.ShowDetails(false);
+        Assert.IsNull(window.Details);
+        window.Close();
+        window = TideGraphWindow.Open(path);
+        Assert.IsNull(window.Details, "it stays as it was left");
+        window.ShowDetails(true);
+        window.Close();
+    }
+
+    // My game lists the file by the schema's groups, finds by name, renames, and adds one of a group's kinds
+    [Test]
+    public void MyGameListsTheFileByGroups()
+    {
+        var doc = ScaleFile(out var component, out _, out var system, out _, out _, out _);
+        var speed = doc.NewDecl("const", "Speed");
+        doc.Decls.Items.Add(speed);
+        doc.Reindex();
+        var path = Write("Mine.tidegraph", doc.Text);
+        using var logged = new Logged();
+        var window = TideGraphWindow.Open(path);
+        window.ShowMyGame(true);
+        var mine = window.MyGame;
+        Assert.IsNotNull(mine);
+        CollectionAssert.AreEqual(GraphSchema.Groups.Select(g => g.Title.ToUpperInvariant()), mine.Groups, "by the schema's groups");
+        var titles = mine.Shown.Select(s => s.title).ToList();
+        Assert.Less(titles.IndexOf("TestFromGraph"), titles.IndexOf("ScaleTest"), "in the groups' order");
+        Assert.Less(titles.IndexOf("ScaleTest"), titles.IndexOf("Speed"));
+        // Found by name
+        mine.Type("scale");
+        CollectionAssert.AreEqual(new[] { "ScaleTest" }, mine.Shown.Select(s => s.title));
+        mine.Type("");
+        // Renamed there, as on the board
+        mine.Q<GraphName>("name" + component).Commit("Wobble");
+        Assert.AreEqual("Wobble", window.Doc.Get(component).Str("name"));
+        // Its group's "+" offers the group's kinds, and adds one
+        GraphShots.Click(window.MyGame.Q<Button>("add:Data"));
+        var kinds = window.Popup as GraphOptionList;
+        Assert.IsNotNull(kinds);
+        CollectionAssert.AreEqual(GraphSchema.DeclKinds.Where(k => GraphSchema.DeclGroup(k) == "Data").Select(GraphSchema.DeclTitle), kinds.Shown.Select(o => o.Title));
+        var count = window.Doc.Decls.Items.Count;
+        Assert.IsTrue(kinds.Pick(GraphSchema.DeclTitle("event")));
+        Assert.AreEqual(count + 1, window.Doc.Decls.Items.Count);
+        Assert.IsTrue(window.MyGame.Shown.Any(s => s.title == window.Doc.Decls.Items.Last().Str("name")), "and it's listed");
         window.Close();
     }
 

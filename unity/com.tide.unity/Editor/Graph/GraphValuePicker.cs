@@ -118,8 +118,10 @@ namespace Tide.Editor
                         Fill(true);
                     },
                 });
-            Title = parts.Count == 0 ? $"What goes in '{label}'?" : PathText + ": which of it?";
-            HelpText = parts.Count > 0 ? null : wanted != null ? $"It takes a value of type {wanted}." : null;
+            Title = parts.Count == 0 ? Changing ? "What does it change?" : $"What goes in '{label}'?" : PathText + ": which of it?";
+            // Nothing typed is what a Set changes: it's found
+            if (Changing) Placeholder = "Search what it can change";
+            HelpText = parts.Count > 0 ? null : Changing ? "What this code takes to change, a local that can be changed, or a field of one." : wanted != null ? $"It takes a value of type {wanted}." : null;
             Status = asking > 0 ? "Asking what can go here…" : null;
             Set(options, keep);
         }
@@ -151,7 +153,8 @@ namespace Tide.Editor
             }
             members.TryGetValue(type, out var has);
             var fields = has?.Where(m => !m.Callable && m.Kind != TideGraphLanguage.KindKeyword && m.Kind != TideGraphLanguage.KindSnippet).ToList();
-            var exact = wanted != null && GraphValues.Fits(type, wanted);
+            // What a Set changes: a vector or a colour is a value to change as it is; a struct opens to its fields
+            var exact = wanted != null ? GraphValues.Fits(type, wanted) : Changing && GraphSchema.ValueControl(type) != null;
             var opens = has == null || has.Count > 0;
             if (!exact && wanted != null && !everything && fields != null && !fields.Any(f => Fits(f.Type) || !Simple(f.Type)) && !has.Any(m => m.Callable && Fits(m.Result)))
             {
@@ -178,16 +181,73 @@ namespace Tide.Editor
             }
         }
 
+        // What a Set changes: only what can be changed is offered (a parameter taken as "changes", a local that can
+        // be changed, a field of one of those), and what's only read is listed greyed, with why
+        bool Changing => owner?.Str("k") == "assign" && path.Parts.Length == 1 && path.Key == "target";
+
+        void Changeable(List<GraphOption> options)
+        {
+            const string has = "What this code can change", read = "Only read here";
+            // What can be changed first; what's only read after it, greyed
+            var only = new List<GraphOption>();
+            foreach (var r in frame.Reads.Values)
+            {
+                var part = new GraphFrame.Part { Kind = "name", Name = r.Name, Type = r.Type };
+                if (frame.Changeable(r.Name, 0))
+                {
+                    var hiddenNone = 0;
+                    Offer(options, ref hiddenNone, part, has, 3);
+                    continue;
+                }
+                only.Add(new GraphOption
+                {
+                    Title = r.Name, Detail = r.Type, Section = read, Off = true, Dot = TideGraphTypes.ColorOf(r.Type, Light),
+                    Help = $"It's taken to be read. To change it, make its row in the entry \"{GraphSchema.ParamModeInfo("mut").Label}\".",
+                });
+            }
+            foreach (var local in GraphDocument.Locals(frame.Graph).Where(l => l != owner))
+            {
+                var name = GraphSchema.LocalName(local);
+                if (frame.Reads.ContainsKey(name)) continue;
+                var type = local.Str("type");
+                AskType(type, false);
+                if (frame.Changeable(null, local.Wire("id")))
+                {
+                    var hiddenNone = 0;
+                    Offer(options, ref hiddenNone, new GraphFrame.Part { Kind = "local", Ref = local.Wire("id"), Name = name, Type = type }, has, 3);
+                    continue;
+                }
+                only.Add(new GraphOption
+                {
+                    Title = name, Detail = type, Section = read, Off = true, Dot = TideGraphTypes.ColorOf(type, Light),
+                    Help = $"A local that can't be changed. Tick \"{GraphSchema.FlagInfo("mut").Label}\" in its Details to change it.",
+                });
+            }
+            options.AddRange(only);
+            options.Add(new GraphOption
+            {
+                Title = "Work it out…", Detail = "An element of a list, a field of a call's result: a node wired in", Section = "Something else", Pinned = true, Keywords = "node index element",
+                Pick = () => board.WorkOut(frame, owner, path, From, Query.Trim()),
+            });
+            if (frame.WireAt(owner, path) != 0)
+                options.Add(new GraphOption { Title = "Nothing", Detail = "Empties it", Section = "Something else", Pick = () => frame.Edit("Clear " + label, () => frame.SetWire(owner, path, 0, out _)) });
+        }
+
         void Top(List<GraphOption> options, ref int hidden)
         {
             const string value = "A value", has = "What this code has", constants = "Constants", functions = "Functions (a node wired in)", engine = "The engine's", other = "Something else";
+            if (Changing)
+            {
+                Changeable(options);
+                return;
+            }
             options.AddRange(typed);
             var control = GraphSchema.ValueControl(wanted);
             if (control == "tick")
                 foreach (var tick in new[] { "true", "false" })
                 {
                     var t = tick;
-                    options.Add(new GraphOption { Title = t, Section = value, Priority = 4, Pick = () => frame.PutLiteral(owner, path, "bool", t, label) });
+                    options.Add(new GraphOption { Title = t, Section = value, Priority = 4, Pick = () => Literal("bool", t) });
                 }
             // An enum's choices: this file's own, or what the language server says the type's name has; and a
             // type's own constants (Color.white)
@@ -314,6 +374,8 @@ namespace Tide.Editor
             {
                 if (m.Callable)
                 {
+                    // A call's result is worked out, and is nothing a Set can change
+                    if (Changing) continue;
                     if (m.Result == "void") continue;
                     if (!Fits(m.Result))
                     {
@@ -360,7 +422,7 @@ namespace Tide.Editor
         protected override void Typed(string text)
         {
             typed.Clear();
-            if (parts.Count == 0 && text.Length > 0)
+            if (parts.Count == 0 && text.Length > 0 && !Changing)
             {
                 var control = GraphSchema.ValueControl(wanted);
                 var known = Simple(wanted) ? wanted : null;
@@ -368,13 +430,13 @@ namespace Tide.Editor
                     typed.Add(new GraphOption
                     {
                         Title = k == "string" ? "\"" + literal + "\"" : literal, Detail = GraphSchema.Spec(k)?.Help, Section = "A value", Keywords = text, Priority = 5, Data = "typed",
-                        Pick = () => frame.PutLiteral(owner, path, k, literal, label),
+                        Pick = () => Literal(k, literal),
                     });
                 else if (control == null && wanted == null && !text.Contains("\""))
                     typed.Add(new GraphOption
                     {
                         Title = "\"" + text + "\"", Detail = "As a text", Section = "A value", Keywords = text, Priority = -1, Data = "typed",
-                        Pick = () => frame.PutLiteral(owner, path, "string", text, label),
+                        Pick = () => Literal("string", text),
                     });
             }
             Fill(true);
@@ -387,6 +449,14 @@ namespace Tide.Editor
         {
             Close();
             frame.PutPath(owner, path, picked, label);
+            board.WatchOperator(owner, path);
+        }
+
+        // A value typed or ticked: put in, and a Set's operator looked at once it's checked
+        void Literal(string k, string text)
+        {
+            frame.PutLiteral(owner, path, k, text, label);
+            board.WatchOperator(owner, path);
         }
 
         // A call wired in: a function of the game's, or a method of the path picked (shown in its title: Math.Clamp)
@@ -400,7 +470,8 @@ namespace Tide.Editor
             {
                 frame.Classify();
                 var reader = owner != null ? frame.ReaderOf(owner.Wire("id")) ?? frame.ViewOf(owner.Wire("id")) : null;
-                var at = reader != null && reader.Node != null ? GraphDocument.PlaceOf(reader.Node) + new Vector2(-260, 110) : Vector2.zero;
+                // Below and left of what reads it, where nothing is
+                var at = reader != null && reader.Node != null ? frame.PlaceOfShown(frame.FreePlace(reader.Shown + new Vector2(-240, reader.SizeNow.y + 30), new Vector2(220, 90))) : Vector2.zero;
                 var k = of != null ? "method" : "call";
                 var order = GraphSchema.NodeOrder(k);
                 var call = Doc.AddNode(g, k, at.x, at.y);
@@ -411,6 +482,7 @@ namespace Tide.Editor
                 frame.SetWire(owner, path, call.Wire("id"), out why);
             });
             if (why != null) Window.Say(GraphLook.UpperFirst(why), true);
+            else board.WatchOperator(owner, path);
         }
 
         // Picks by a title, as a click on its row does (the story's tests)

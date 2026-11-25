@@ -630,6 +630,38 @@ namespace Tide.Editor
             });
         }
 
+        // Which of the schema's operators the checker takes for a value of `type` with one of `other` on the right
+        // (tide/graphOperators): {"assign", "step", "binary", "unary"}, each a list. Null when that isn't known (no
+        // language server, a type it doesn't know): then every operator is offered.
+        public static void Operators(TideGraphWindow window, string type, string other, Action<JValue, string> done)
+        {
+            var client = ClientOf(window);
+            if (client == null || string.IsNullOrEmpty(type))
+            {
+                done(null, "the language server isn't checking this file");
+                return;
+            }
+            var uri = UriOf(window.Path);
+            var text = window.Doc.Text;
+            client.Operate(finish =>
+            {
+                if (window == null || !client.SetText(uri, text))
+                {
+                    finish();
+                    done(null, "the window closed");
+                    return;
+                }
+                var parameters = JValue.NewObject();
+                parameters.Set("type", JValue.Of(type));
+                if (!string.IsNullOrEmpty(other)) parameters.Set("other", JValue.Of(other));
+                client.Ask("tide/graphOperators", uri, parameters, (ops, why) =>
+                {
+                    finish();
+                    done(ops != null && ops.IsObject ? ops : null, why);
+                });
+            });
+        }
+
         // Moves a graph's nodes where a layout puts them, and nothing else: how many it moved
         public static int Place(JValue graph, JValue layout)
         {

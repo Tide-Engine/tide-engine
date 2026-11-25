@@ -237,7 +237,8 @@ namespace Tide.Editor
                 for (var j = 0; j < i; j++)
                 {
                     var above = sorted[j];
-                    if (above.At.x >= item.At.x + item.Size.x || item.At.x >= above.At.x + above.Size.x) continue;
+                    // In a column of tidec's layout (the same x): what a user put somewhere stays where it was put
+                    if (Mathf.Abs(above.At.x - item.At.x) > 0.5f) continue;
                     var bottom = above.At.y + above.Size.y + 16;
                     if (item.At.y < bottom && item.At.y + item.Size.y > above.At.y) item.At = new Vector2(item.At.x, bottom);
                 }
@@ -309,14 +310,17 @@ namespace Tide.Editor
         {
             Sync();
             if (owners == null || owners.Length == 0)
-            {
                 foreach (var item in items.Values.Concat(values.Values).ToList()) Again(item);
-                return;
+            else
+            {
+                var done = new HashSet<GraphItem>();
+                foreach (var owner in owners)
+                    foreach (var item in ItemsFor(owner))
+                        if (done.Add(item)) Again(item);
             }
-            var done = new HashSet<GraphItem>();
-            foreach (var owner in owners)
-                foreach (var item in ItemsFor(owner))
-                    if (done.Add(item)) Again(item);
+            // What was built again shows what's selected
+            selectionShown = null;
+            ShowSelection();
         }
 
         static void Again(GraphItem item)
@@ -356,6 +360,8 @@ namespace Tide.Editor
             Sync();
             foreach (var item in items.Values.Concat(values.Values).ToList()) item.Rebuild();
             if (problemsById.Count > 0) SetProblems(shownProblems);
+            selectionShown = null;
+            ShowSelection();
         }
 
         // Draws what's on screen, and nothing else: all of an item near, its name alone from far away
@@ -389,7 +395,7 @@ namespace Tide.Editor
         void ShowStart()
         {
             var empty = Doc != null && (Doc.Root.Arr("decls")?.Items.Count ?? 0) == 0;
-            hint.text = empty ? "" : "Right-click or Space: add   ·   Drag from a pin: wire   ·   Middle button or Alt+drag: move around   ·   F: fit";
+            hint.text = empty ? "" : "Drag: move  ·  Double-click a name: rename  ·  Right-click: menu  ·  Drag a pin: wire  ·  F: fit";
             if (!empty)
             {
                 start?.RemoveFromHierarchy();
@@ -466,7 +472,9 @@ namespace Tide.Editor
                 KeepPlaces();
                 var name = Doc.UniqueName(GraphLook.Identifier(GraphSchema.DeclTitle(kind)));
                 made = Doc.NewDecl(kind, name);
-                var where = at ?? FreeSpot(IsCode(kind, false));
+                // Where it was asked for, or as near as there's room: never on a card or a frame
+                var code = IsCode(kind, false);
+                var where = at != null ? GraphLook.FreeSpot(at.Value, code ? new Vector2(560, 220) : new Vector2(GraphLook.CardWidth, 120), items.Values.Select(i => i.World).ToList(), 24, 40) : FreeSpot(code);
                 var order = GraphSchema.DeclOrder(kind);
                 if (order.Contains("x"))
                 {
@@ -553,6 +561,10 @@ namespace Tide.Editor
         }
 
         public Vector2 ToWorld(Vector2 boardPoint) => (boardPoint - pan) / zoom;
+
+        // A point of the board in a frame, as the frame's nodes are drawn: by the board's own pan and zoom, so it's
+        // right before anything is laid out
+        public Vector2 FrameLocal(GraphFrame frame, Vector2 boardPoint) => ToWorld(boardPoint) - frame.At;
         public Vector2 ToBoard(Vector2 world) => world * zoom + pan;
 
         void DrawGrid(MeshGenerationContext ctx)
@@ -744,10 +756,21 @@ namespace Tide.Editor
         // Puts the keyboard on a named part of an item, once it's built: the name of what was just made
         public void FocusLater(int item, string name)
         {
+            // A name opens to be typed over now, when it's there; anything else is focused once it's built
+            if (Item(item)?.Q<VisualElement>(name) is GraphName now)
+            {
+                now.Edit();
+                return;
+            }
             schedule.Execute(() =>
             {
                 var found = Item(item)?.Q<VisualElement>(name);
                 if (found == null) return;
+                if (found is GraphName named)
+                {
+                    named.Edit();
+                    return;
+                }
                 found.Focus();
                 if (found is TextField field) field.schedule.Execute(field.SelectAll);
             });
@@ -756,8 +779,46 @@ namespace Tide.Editor
         // ---------------------------------------------------------------------------------------------------------
         // Selecting
 
+        // A row selected on its card or its frame's entry: a field, a choice, a parameter (Details shows it)
+        public int Row { get; private set; }
+        string selectionShown;
+
+        // The row a pointer's target is on, by the element it's of (rows carry their element's id)
+        static int RowAt(VisualElement target, GraphItem item)
+        {
+            if (item == null) return 0;
+            for (var e = target; e != null && e != item; e = e.parent)
+            {
+                if (e is GraphNodeView && !(e is GraphEntryView)) return 0;
+                if (e.userData is int id && (e.ClassListContains("tg-row") || e.ClassListContains("tg-entry-row"))) return id;
+            }
+            return 0;
+        }
+
+        public void SelectRow(GraphItem item, int id)
+        {
+            Nodes.Clear();
+            Chosen.Clear();
+            Active = item as GraphFrame;
+            if (items.TryGetValue(item.Id, out var same) && same == item) Chosen.Add(item.Id);
+            Row = id;
+            Window.Selected(id);
+            ShowSelection();
+        }
+
         void ShowSelection()
         {
+            if (Row != 0 && (Chosen.Count != 1 || Nodes.Count > 0 || Doc?.Find(Row) == null)) Row = 0;
+            // What's selected, said once when it changes: the row lit, Details shown
+            var now = $"{Row}|{Active?.Id}|{string.Join(",", Nodes)}|{string.Join(",", Chosen)}";
+            if (now != selectionShown)
+            {
+                selectionShown = now;
+                foreach (var row in this.Query<VisualElement>(className: "tg-row--selected").ToList()) row.RemoveFromClassList("tg-row--selected");
+                if (Row != 0 && Chosen.Count == 1 && items.TryGetValue(Chosen.First(), out var holder))
+                    holder.Query<VisualElement>().Where(v => v.userData is int id && id == Row && (v.ClassListContains("tg-row") || v.ClassListContains("tg-entry-row"))).ForEach(v => v.AddToClassList("tg-row--selected"));
+                Window.SelectionChanged();
+            }
             foreach (var item in items.Values.Concat(values.Values))
             {
                 item.Selected = Chosen.Contains(item.Id) && items.TryGetValue(item.Id, out var same) && same == item || item == Active && Nodes.Count == 0 && Chosen.Count == 0 && item is GraphFrame f && f.IsValue;
@@ -770,6 +831,7 @@ namespace Tide.Editor
         public void ClearSelection()
         {
             Chosen.Clear();
+            Row = 0;
             Nodes.Clear();
             Active = null;
             ShowSelection();
@@ -778,6 +840,7 @@ namespace Tide.Editor
         public void SelectItem(GraphItem item, bool additive)
         {
             Nodes.Clear();
+            Row = 0;
             Active = item as GraphFrame;
             if (!additive) Chosen.Clear();
             if (items.ContainsKey(item.Id) && items[item.Id] == item)
@@ -791,6 +854,7 @@ namespace Tide.Editor
 
         public void SelectNode(GraphFrame frame, int id, bool additive)
         {
+            Row = 0;
             if (frame.Absorbed.TryGetValue(id, out var eval)) id = eval;
             if (Active != frame || !additive) Nodes.Clear();
             Chosen.Clear();
@@ -803,6 +867,7 @@ namespace Tide.Editor
 
         public void SelectAll()
         {
+            Row = 0;
             if (Active != null && Active.Level == GraphLevel.Near)
             {
                 Chosen.Clear();
@@ -877,21 +942,25 @@ namespace Tide.Editor
             var item = GraphLook.Up<GraphItem>(target);
             var frame = item as GraphFrame;
             rightDown = null;
+            var rowId = RowAt(target, item);
             if (e.button == 1)
             {
-                if (view != null && view.Id > 0)
+                // One menu, the same for every kind of thing (GraphMenu): a row's, a node's, a card's or a frame's
+                // title's; the empty board and the empty inside of a frame open what can be added there
+                if (rowId != 0)
+                {
+                    SelectRow(item, rowId);
+                    GraphMenu.Open(Window, GraphMenu.ForRow(item, rowId), null, e.position);
+                }
+                else if (view != null && view.Id > 0)
                 {
                     if (!(Active == view.Frame && Nodes.Contains(view.Id))) SelectNode(view.Frame, view.Id, false);
-                    var list = new GraphOptionList(null, null, null, 300);
-                    list.Set(view.MenuOptions());
-                    Window.Open(list, new Rect(e.position, Vector2.zero));
+                    GraphMenu.Open(Window, GraphMenu.ForNode(view), null, e.position);
                 }
-                else if (item is GraphCard card)
+                else if (item != null && (frame == null || view != null || mouse.y - ToBoard(item.At).y < GraphLook.FrameHead * zoom))
                 {
-                    SelectItem(card, false);
-                    var list = new GraphOptionList(null, null, null, 300);
-                    list.Set(card.MenuOptions());
-                    Window.Open(list, new Rect(e.position, Vector2.zero));
+                    if (!Chosen.Contains(item.Id) || Nodes.Count > 0) SelectItem(item, false);
+                    GraphMenu.Open(Window, GraphMenu.ForItem(item), null, e.position);
                 }
                 else rightDown = (frame, mouse, true);
                 e.StopPropagation();
@@ -899,6 +968,18 @@ namespace Tide.Editor
             }
             if (e.button != 0) return;
             e.StopPropagation();
+            if (rowId != 0 && !additive)
+            {
+                // A row of a card or of a frame's entry: selected (Details shows it), and dragged with its item
+                SelectRow(item, rowId);
+                drag = Drag.MoveItems;
+                moved = false;
+                dragStart = mouse;
+                itemStart.Clear();
+                if (items.TryGetValue(item.Id, out var rowItem) && rowItem == item) itemStart[item] = item.At;
+                Capture(e);
+                return;
+            }
             if (frame != null && (note != null || (view != null && view.Id > 0)))
             {
                 var id = note != null ? note.Id : view.Id;
@@ -1051,13 +1132,41 @@ namespace Tide.Editor
                     if (e.button == 1 && rightDown != null && (mouse - rightDown.Value.at).sqrMagnitude < 16)
                     {
                         var frame = rightDown.Value.frame;
-                        if (frame != null && frame.Graph != null && frame.Level == GraphLevel.Near) OpenSearch(frame, this.ChangeCoordinatesTo(frame, mouse), null);
+                        if (frame != null && frame.Graph != null && frame.Level == GraphLevel.Near) OpenSearch(frame, FrameLocal(frame, mouse), null);
                         else if (frame == null) OpenAdd(mouse);
                         else Window.Say(frame.Graph == null ? "Its code is written in C: there's nothing to add here." : "Zoom in to add to this frame.");
                     }
                     rightDown = null;
                     break;
             }
+        }
+
+        // Moves cards and frames by an amount, as a drag of them does: an edit, undone like any other
+        internal void MoveItemsBy(IEnumerable<GraphItem> moving, Vector2 by)
+        {
+            itemStart.Clear();
+            foreach (var i in moving)
+            {
+                itemStart[i] = i.At;
+                i.At += by;
+                i.Place();
+            }
+            CommitItemMove();
+        }
+
+        // Moves nodes of a frame by an amount, as a drag of them does
+        internal void MoveNodesBy(GraphFrame frame, IEnumerable<int> ids, Vector2 by)
+        {
+            Active = frame;
+            nodeStart.Clear();
+            foreach (var id in ids)
+            {
+                var v = frame.ViewOf(id);
+                if (v == null || nodeStart.ContainsKey(v.Id)) continue;
+                nodeStart[v.Id] = v.Shown;
+                v.MoveTo(v.Shown + by);
+            }
+            CommitNodeMove();
         }
 
         void CommitNodeMove()
@@ -1168,17 +1277,83 @@ namespace Tide.Editor
             WireEnd = mouse;
             Capture(e);
             frame.MarkWires();
-            // The inputs show where a wire can end
+            // The pins it can go to are lit, the others dimmed
             AddToClassList("tg-wiring");
+            MarkPins(wireFrom);
         }
 
-        PortView PortUnder(Vector2 panelPosition)
+        readonly List<PortView> marked = new List<PortView>();
+
+        // Every pin drawn, of every frame near enough to be drawn
+        IEnumerable<PortView> PinsDrawn()
+        {
+            foreach (var frame in items.Values.Concat(values.Values).OfType<GraphFrame>())
+            {
+                if (frame.Level != GraphLevel.Near) continue;
+                IEnumerable<GraphNodeView> views = frame.Views.Values;
+                if (frame.Entry != null) views = views.Append(frame.Entry);
+                if (frame.Result != null) views = views.Append(frame.Result);
+                foreach (var v in views)
+                    foreach (var p in v.Ports) yield return p;
+            }
+        }
+
+        void MarkPins(PortView from)
+        {
+            UnmarkPins();
+            foreach (var p in PinsDrawn())
+            {
+                if (p == from) continue;
+                p.Mark(CanJoin(from, p));
+                marked.Add(p);
+            }
+        }
+
+        void UnmarkPins()
+        {
+            foreach (var p in marked) p.Mark(null);
+            marked.Clear();
+        }
+
+        // Whether a wire from one pin can end at another: in its frame, an output to an input, a flow to a flow, and
+        // a value to where it fits (by type where both are known; an unknown fits)
+        internal static bool CanJoin(PortView from, PortView to)
+        {
+            if (to == null || from == null || to == from || to.Frame != from.Frame) return false;
+            var a = from.Port;
+            var b = to.Port;
+            if (a.Input == b.Input || a.Exec != b.Exec) return false;
+            if (a.Node == b.Node && a.Node > 0) return false;
+            if (a.Exec) return true;
+            var input = a.Input ? from : to;
+            var output = a.Input ? to : from;
+            if (input.Port.Path == null) return false;
+            var frame = from.Frame;
+            var owner = input.Port.Node == GraphFrame.ResultId ? null : frame.ById.TryGetValue(input.Port.Node, out var n) ? n : null;
+            if (owner == null && input.Port.Node != GraphFrame.ResultId) return false;
+            // A Set's "what" takes only what can be changed: a parameter taken as "changes", a local that can be
+            var k = owner?.Str("k");
+            if (k == "assign" && input.Port.Path.Parts.Length == 1 && input.Port.Path.Key == "target" && output.Port.IsRead)
+                return frame.Changeable(output.Port);
+            var wanted = frame.Wanted(owner, input.Port.Path);
+            return GraphValues.Fits(output.Type, wanted);
+        }
+
+        PortView PortUnder(Vector2 panelPosition, PortView from = null)
         {
             for (var e = panel?.Pick(panelPosition); e != null; e = e.parent)
             {
                 if (e is PortView p) return p;
-                // An input's row is the input: its pin shows only once it has a wire
+                // An input's row is the input
                 if (e.ClassListContains("tg-port-row") && e.Q<PortView>() is PortView of && of.Port.Input && !of.Port.Exec) return of;
+                // Dropped on a node, not on one of its rows: the pin of it it can go to nearest the pointer, so a
+                // wire dropped on a node is never a node made on top of it
+                if (e is GraphNodeView view && from != null)
+                {
+                    var can = view.Ports.Where(x => CanJoin(from, x)).OrderBy(x => Mathf.Abs(x.worldBound.center.y - panelPosition.y)).FirstOrDefault();
+                    if (can != null) return can;
+                    break;
+                }
             }
             // Near a pin is on it
             PortView best = null;
@@ -1216,9 +1391,10 @@ namespace Tide.Editor
             wireFrom = null;
             wireUndo = null;
             RemoveFromClassList("tg-wiring");
+            UnmarkPins();
             var frame = from.Frame;
             frame.MarkWires();
-            var target = PortUnder(panelPosition);
+            var target = PortUnder(panelPosition, from);
             if (target != null && target != from)
             {
                 if (target.Frame != frame)
@@ -1244,7 +1420,7 @@ namespace Tide.Editor
                 return;
             }
             if (target == from) return;
-            var local = this.ChangeCoordinatesTo(frame, this.WorldToLocal(panelPosition));
+            var local = FrameLocal(frame, this.WorldToLocal(panelPosition));
             if (local.x < 0 || local.y < 0 || local.x > frame.Size.x || local.y > frame.Size.y)
             {
                 Window.Say(WhyNotAcross(frame, null), true);
@@ -1304,9 +1480,8 @@ namespace Tide.Editor
             if (graph == null) return null;
             var port = new GraphPort { Node = owner != null ? owner.Wire("id") : GraphFrame.ResultId, Input = true, Path = path };
             var view = owner != null ? frame.ReaderOf(owner.Wire("id")) ?? frame.ViewOf(owner.Wire("id")) : frame.Result;
-            // Left of it and lower, where nothing is yet
-            var at = view != null ? view.Shown + new Vector2(-250, view.SizeNow.y + 24) : frame.Origin;
-            for (var tries = 0; tries < 12 && frame.Views.Values.Any(v => new Rect(v.Shown, v.SizeNow).Overlaps(new Rect(at, new Vector2(200, 80)))); tries++) at.y += 90;
+            // Below and left of it, off the line its flow runs along, where nothing is
+            var at = frame.FreePlace(view != null ? view.Shown + new Vector2(-240, view.SizeNow.y + 30) : frame.Origin, new Vector2(220, 90));
             var context = new GraphSearchContext { Doc = Doc, Graph = graph, Slot = frame.Slot, Window = Window, Pending = port, Frame = frame };
             var popup = new GraphSearchPopup(this, frame, context, at);
             if (from != null && from.panel != null) Window.Open(popup, from);
@@ -1339,14 +1514,17 @@ namespace Tide.Editor
         public JValue Insert(GraphFrame frame, GraphSearchEntry entry, Vector2 frameLocal, GraphPort pending)
         {
             var graph = frame.Graph;
-            // A node for an input goes left of its reader, which can be left of every node there is
-            var at = pending != null && pending.Input && !pending.Exec ? frameLocal - frame.Origin : Vector2.Max(frameLocal - frame.Origin, Vector2.zero);
+            // Where it was asked for, or as near as there's room: never on a node that's there. A node for an input
+            // goes left of its reader, which can be left of every node there is.
+            var at = frame.PlaceOfShown(frame.FreePlace(frameLocal, new Vector2(220, 90)));
             JValue made = null;
             Window.Edit("Add " + entry.Title, () =>
             {
                 made = entry.Make(Doc, graph, at);
                 if (made != null && pending != null) WireNew(frame, graph, made, pending);
             }, frame.Id);
+            // What works out a Set's value: its operator is looked at once it's checked
+            if (made != null && pending != null && pending.Input && !pending.Exec && frame.ById.TryGetValue(pending.Node, out var reader)) WatchOperator(reader, pending.Path);
             if (made != null && made.Has("k")) SelectNode(frame, made.Wire("id"), false);
             return made;
         }
@@ -1531,18 +1709,18 @@ namespace Tide.Editor
                     break;
                 case KeyCode.F when action:
                 case KeyCode.P when action:
-                    Window.ShowContents(true);
+                    Window.ShowMyGame(true, true);
                     break;
                 case KeyCode.F:
                     FrameSelectionOrAll();
                     break;
                 case KeyCode.F2:
-                    if (Chosen.Count == 1) FocusLater(Chosen.First(), "name");
+                    RenameSelection();
                     break;
                 case KeyCode.Space:
                 {
                     var frame = FrameAt(mouse) ?? (Active != null && Nodes.Count > 0 ? Active : null);
-                    if (frame != null && frame.Graph != null && frame.Level == GraphLevel.Near) OpenSearch(frame, this.ChangeCoordinatesTo(frame, mouse), null);
+                    if (frame != null && frame.Graph != null && frame.Level == GraphLevel.Near) OpenSearch(frame, FrameLocal(frame, mouse), null);
                     else OpenAdd(mouse);
                     break;
                 }
@@ -1562,8 +1740,38 @@ namespace Tide.Editor
             return values.Values.FirstOrDefault(f => f.World.Contains(world)) ?? items.Values.OfType<GraphFrame>().FirstOrDefault(f => f.World.Contains(world));
         }
 
+        // F2: the name of what's selected, opened to be typed over
+        public void RenameSelection()
+        {
+            if (Active != null && Nodes.Count == 1) RenameNode(Active, Nodes.First());
+            else if (Row != 0 && Chosen.Count == 1) Rename(Chosen.First(), "name" + Row);
+            else if (Chosen.Count == 1) Rename(Chosen.First(), null);
+        }
+
+        // Opens a name of an item to be typed over: its own (`name` null), or a row's ("name<id>")
+        public void Rename(int item, string name)
+        {
+            var found = Item(item)?.Q<GraphName>(name ?? "name");
+            if (found != null) found.Edit();
+            else if (name == null) Window.Say("This has no name of its own to change.");
+        }
+
+        // A node's name: a call's, a member's, a name's, the local it makes
+        public void RenameNode(GraphFrame frame, int id)
+        {
+            var view = frame.ViewOf(id);
+            var name = view?.Q<GraphName>("title") ?? view?.Q<GraphName>("local") ?? view?.Q<GraphName>();
+            if (name != null) name.Edit();
+            else Window.Say("This node has no name to change: what it does is its kind.");
+        }
+
         public void DeleteSelection()
         {
+            if (Row != 0 && Chosen.Count == 1 && Nodes.Count == 0)
+            {
+                Delete(Row);
+                return;
+            }
             if (Active != null && Nodes.Count > 0)
             {
                 var frame = Active;
@@ -1614,8 +1822,10 @@ namespace Tide.Editor
                 if (!string.IsNullOrEmpty(name)) copy.Set("name", JValue.Of(e.Role == GraphRole.Decl ? Doc.UniqueName(name) : GraphDocument.UniqueIn(e.List, name)));
                 if (GraphDocument.HasPlace(copy) && item != null)
                 {
-                    copy.Set("x", JValue.Of(Mathf.Round(item.At.x + 30)));
-                    copy.Set("y", JValue.Of(Mathf.Round(item.At.y + item.Size.y + 30)));
+                    // Below what it's a copy of, where there's room
+                    var at = GraphLook.FreeSpot(item.At + new Vector2(30, item.Size.y + 30), item.Size, items.Values.Select(i => i.World).ToList(), 24, 40);
+                    copy.Set("x", JValue.Of(Mathf.Round(at.x)));
+                    copy.Set("y", JValue.Of(Mathf.Round(at.y)));
                 }
                 if (e.Role == GraphRole.Decl) Relocate(copy);
                 e.List.Items.Insert(e.List.Items.IndexOf(e.Value) + 1, copy);
@@ -1627,6 +1837,11 @@ namespace Tide.Editor
 
         public void CopySelection()
         {
+            if (Row != 0 && Chosen.Count == 1 && Nodes.Count == 0)
+            {
+                CopyRow(Row);
+                return;
+            }
             if (Active != null && Nodes.Count > 0)
             {
                 var graph = Active.Graph;
@@ -1656,6 +1871,14 @@ namespace Tide.Editor
             var text = GraphBoard.Clipboard;
             if (!GraphDocument.IsClip(text)) return;
             var clip = GraphJson.Parse(text);
+            if (clip.Arr("rows") != null)
+            {
+                // A field, a choice, a parameter: after the row selected, or on the card selected
+                if (Row != 0 && CanPasteRows(Row, text)) PasteRows(Row);
+                else if (Chosen.Count == 1 && Item(Chosen.First()) is GraphItem into && CanPasteInto(into, text)) PasteInto(into);
+                else Window.Say("What's copied is a row: select a card (or a row of it) that can have it, then paste.");
+                return;
+            }
             if (clip.Arr("decls") != null && (clip.Arr("nodes")?.Items.Count ?? 0) == 0)
             {
                 PasteDeclarations(ToWorld(boardPoint));
@@ -1671,10 +1894,24 @@ namespace Tide.Editor
             // The copied nodes' top left goes where the pointer is
             var all = (clip.Arr("nodes")?.Items ?? new List<JValue>()).Concat(clip.Arr("notes")?.Items ?? new List<JValue>()).ToList();
             var min = all.Count == 0 ? Vector2.zero : new Vector2(all.Min(n => (float)(n.Get("x")?.Number ?? 0)), all.Min(n => (float)(n.Get("y")?.Number ?? 0)));
-            var at = frame.World.Contains(ToWorld(boardPoint)) ? Vector2.Max(this.ChangeCoordinatesTo(frame, boardPoint) - frame.Origin, Vector2.zero) : min + new Vector2(40, 40);
+            var at = frame.World.Contains(ToWorld(boardPoint)) ? FrameLocal(frame, boardPoint) - frame.Origin : min + new Vector2(40, 40);
+            // Where there's room for all of it
+            at = frame.PlaceOfShown(frame.FreePlace(at + frame.Origin, ClipSize(all, min)));
             List<int> made = null;
             Window.Edit("Paste", () => made = Doc.Paste(graph, text, at - min), frame.Id);
             SelectMade(frame, made);
+        }
+
+        // How much room copied nodes take, from their top left
+        static Vector2 ClipSize(List<JValue> all, Vector2 min)
+        {
+            var size = new Vector2(120, 60);
+            foreach (var n in all)
+            {
+                var r = GraphDocument.PlaceOf(n) - min + (n.Has("k") ? GraphNodeView.EstimateOf(n, null) : new Vector2((float)(n.Get("w")?.Number ?? 300), (float)(n.Get("h")?.Number ?? 120)));
+                size = Vector2.Max(size, r);
+            }
+            return size;
         }
 
         void SelectMade(GraphFrame frame, List<int> made)
@@ -1698,6 +1935,9 @@ namespace Tide.Editor
             var decls = GraphJson.Parse(text).Arr("decls");
             if (decls == null || decls.Items.Count == 0) return;
             var min = new Vector2(decls.Items.Min(d => (float)(d.Get("x")?.Number ?? 0)), decls.Items.Min(d => (float)(d.Get("y")?.Number ?? 0)));
+            // Where there's room for all of it: never on what's there
+            var size = new Vector2(decls.Items.Max(d => (float)(d.Get("x")?.Number ?? 0)) - min.x + 560, decls.Items.Max(d => (float)(d.Get("y")?.Number ?? 0)) - min.y + 220);
+            world = GraphLook.FreeSpot(world, size, items.Values.Select(i => i.World).ToList(), 24, 40);
             var made = new List<int>();
             Window.Edit("Paste", () =>
             {
@@ -1726,18 +1966,325 @@ namespace Tide.Editor
 
         public void DuplicateSelection()
         {
+            if (Row != 0 && Chosen.Count == 1 && Nodes.Count == 0)
+            {
+                Duplicate(Row);
+                return;
+            }
             if (Active != null && Nodes.Count > 0)
             {
                 var frame = Active;
                 var graph = frame.Graph;
                 if (graph == null) return;
                 var text = GraphDocument.Copy(graph, frame.With(Nodes), new HashSet<int>(Nodes.Where(frame.Notes.ContainsKey)));
+                // Beside what it's a copy of, where there's room for all of it
+                var clip = GraphJson.Parse(text);
+                var all = (clip.Arr("nodes")?.Items ?? new List<JValue>()).Concat(clip.Arr("notes")?.Items ?? new List<JValue>()).ToList();
+                var min = all.Count == 0 ? Vector2.zero : new Vector2(all.Min(n => (float)(n.Get("x")?.Number ?? 0)), all.Min(n => (float)(n.Get("y")?.Number ?? 0)));
+                var to = frame.PlaceOfShown(frame.FreePlace(min + frame.Origin + new Vector2(40, 40), ClipSize(all, min)));
                 List<int> made = null;
-                Window.Edit("Duplicate", () => made = Doc.Paste(graph, text, new Vector2(40, 40)), frame.Id);
+                Window.Edit("Duplicate", () => made = Doc.Paste(graph, text, to - min), frame.Id);
                 SelectMade(frame, made);
                 return;
             }
             foreach (var id in Chosen.ToList()) Duplicate(id);
+        }
+
+        // ---------------------------------------------------------------------------------------------------------
+        // Rows on the clipboard: a field, a choice, a parameter, copied in the same clip object as nodes are, under
+        // "rows", with the key of the list they're from
+
+        static JValue ClipOf(string text)
+        {
+            if (!GraphDocument.IsClip(text)) return null;
+            try
+            {
+                return GraphJson.Parse(text);
+            }
+            catch (GraphJson.ParseError)
+            {
+                return null;
+            }
+        }
+
+        // The key of the list an element is in, on what holds it: members, entries, params, payload, children
+        static string ListKey(GraphElement e)
+        {
+            var holder = e.Owner;
+            if (holder == null || e.List == null) return null;
+            for (var i = 0; i < holder.Keys.Count; i++)
+                if (holder.Values[i] == e.List) return holder.Keys[i];
+            return null;
+        }
+
+        public void CopyRow(int id)
+        {
+            var e = Doc.Find(id);
+            var key = e != null ? ListKey(e) : null;
+            if (key == null) return;
+            var clip = JValue.NewObject();
+            clip.Set("tidegraphClip", JValue.Of(1));
+            clip.Set("nodes", JValue.NewArray());
+            clip.Set("rowsOf", JValue.Of(key));
+            clip.Set("rows", JValue.ArrayOf(new[] { e.Value.Clone() }));
+            Clipboard = GraphJson.Write(clip);
+        }
+
+        // Whether copied rows can go after a row: into the same kind of list, of a kind that list can have
+        public bool CanPasteRows(int id, string text)
+        {
+            var e = Doc.Find(id);
+            var clip = ClipOf(text);
+            if (e == null || clip?.Arr("rows") == null || ListKey(e) != clip.Str("rowsOf")) return false;
+            if (e.Role != GraphRole.Member) return true;
+            var offered = GraphDocument.OfferedMemberKinds(e.Owner);
+            return clip.Arr("rows").Items.All(r => offered.Contains(r.Str("kind")) || r.Str("kind") == e.Value.Str("kind"));
+        }
+
+        // Copied rows after a row, each with an id and a name of its own there
+        public void PasteRows(int id)
+        {
+            var text = Clipboard;
+            if (!CanPasteRows(id, text)) return;
+            var e = Doc.Find(id);
+            var rows = ClipOf(text).Arr("rows").Items;
+            var owner = e.Owner?.Wire("id") ?? 0;
+            Window.Edit("Paste", () =>
+            {
+                var at = e.List.Items.IndexOf(e.Value) + 1;
+                foreach (var r in rows)
+                {
+                    var copy = Doc.Duplicate(r);
+                    if (!string.IsNullOrEmpty(copy.Str("name"))) copy.Set("name", JValue.Of(GraphDocument.UniqueIn(e.List, copy.Str("name"))));
+                    if (GraphDocument.HasPlace(copy)) PlaceNew(copy, GraphDocument.OrderOf(e));
+                    e.List.Items.Insert(at++, copy);
+                }
+            }, owner);
+        }
+
+        // Whether what's copied can be pasted into a card or a frame: rows into a card that can have them,
+        // declarations beside it, nodes into a frame
+        public bool CanPasteInto(GraphItem item, string text)
+        {
+            var clip = ClipOf(text);
+            if (clip == null) return false;
+            if (item is GraphFrame frame) return frame.Graph != null && (clip.Arr("nodes")?.Items.Count ?? 0) + (clip.Arr("notes")?.Items.Count ?? 0) > 0;
+            if (clip.Arr("decls") != null) return true;
+            var rows = clip.Arr("rows");
+            if (rows == null || item.Element == null) return false;
+            var key = clip.Str("rowsOf");
+            if (item.Element.Value.Arr(key) == null && !GraphSchema.HasKey(item.Element.Value.Str("kind"), false, key)) return false;
+            var offered = key == "members" ? GraphDocument.OfferedMemberKinds(item.Element.Value) : null;
+            return offered == null || rows.Items.All(r => offered.Contains(r.Str("kind")));
+        }
+
+        public void PasteInto(GraphItem item)
+        {
+            var text = Clipboard;
+            if (!CanPasteInto(item, text)) return;
+            var clip = ClipOf(text);
+            if (item is GraphFrame frame)
+            {
+                Paste(ToBoard(frame.At + frame.FreePlace(new Vector2(40, 0), new Vector2(220, 100))));
+                return;
+            }
+            if (clip.Arr("decls") != null)
+            {
+                PasteDeclarations(item.At + new Vector2(0, item.Size.y + GraphLook.CardGap));
+                return;
+            }
+            var d = item.Element.Value;
+            var key = clip.Str("rowsOf");
+            Window.Edit("Paste", () =>
+            {
+                var list = d.Arr(key);
+                if (list == null) d.Set(key, list = JValue.NewArray(), GraphDocument.OrderOf(item.Element));
+                foreach (var r in clip.Arr("rows").Items)
+                {
+                    var copy = Doc.Duplicate(r);
+                    if (!string.IsNullOrEmpty(copy.Str("name"))) copy.Set("name", JValue.Of(GraphDocument.UniqueIn(list, copy.Str("name"))));
+                    list.Items.Add(copy);
+                }
+            }, item.Id);
+        }
+
+        // A declaration dragged out of My game and dropped on the board: a component or a singleton on a frame's
+        // entry is something its code needs; a function in a frame, a call of it there; a constant on an input,
+        // what goes in it. Anywhere else, the board says what it can go on.
+        public void DropFromMyGame(int id, Vector2 panelPosition)
+        {
+            var d = Doc?.Find(id);
+            if (d == null || d.Role != GraphRole.Decl) return;
+            var kind = d.Value.Str("kind");
+            var name = d.Value.Str("name");
+            var picked = panel?.Pick(panelPosition);
+            var view = GraphLook.Up<GraphNodeView>(picked);
+            var frame = GraphLook.Up<GraphFrame>(picked);
+            switch (kind)
+            {
+                case "component":
+                case "singleton":
+                {
+                    if (frame == null || frame.IsValue || frame.Routine == null || !GraphSchema.HasParams(frame.Routine.Str("kind"), frame.Owner?.Role != GraphRole.Decl))
+                    {
+                        Window.Say($"{name} goes on a frame's entry (\"{GraphSchema.Sentence("system", false)}…\"): its code then needs it and reads it by name.", true);
+                        return;
+                    }
+                    if (GraphDocument.ReadsOf(frame.Routine).Any(r => r.Type == name))
+                    {
+                        Window.Say($"{frame.Title} needs a {name} already.");
+                        return;
+                    }
+                    frame.AddParam(frame.Routine.Arr("params"), name, "read");
+                    Reveal(frame.Id);
+                    return;
+                }
+                case "function":
+                {
+                    if (frame == null || frame.Graph == null || frame.Level != GraphLevel.Near)
+                    {
+                        Window.Say($"A call of {name} is made in a frame: drop it inside one.", true);
+                        return;
+                    }
+                    var count = d.Value.Arr("params")?.Items.Count ?? 0;
+                    var statement = frame.Slot.IsBody;
+                    var entry = new GraphSearchEntry
+                    {
+                        Title = name, Statement = statement,
+                        Make = (doc, graph, at) =>
+                        {
+                            var call = doc.AddNode(graph, "call", at.x - (statement ? 220 : 0), at.y + (statement ? 60 : 0));
+                            var order = GraphSchema.NodeOrder("call");
+                            call.Set("name", JValue.Of(name), order);
+                            if (count > 0) call.Set("args", JValue.ArrayOf(Enumerable.Range(0, count).Select(_ => JValue.Null())), order);
+                            if (!statement) return call;
+                            var eval = doc.AddNode(graph, "eval", at.x, at.y);
+                            eval.Set("value", JValue.Of(call.Wire("id")), GraphSchema.NodeOrder("eval"));
+                            return eval;
+                        },
+                    };
+                    Insert(frame, entry, FrameLocal(frame, this.WorldToLocal(panelPosition)), null);
+                    return;
+                }
+                case "const":
+                {
+                    PortView input = null;
+                    for (var e = picked; e != null && input == null; e = e.parent)
+                        if (e.ClassListContains("tg-port-row") && e.Q<PortView>() is PortView pin && pin.Port.Input && !pin.Port.Exec) input = pin;
+                    if (input == null || view == null)
+                    {
+                        Window.Say($"{name} goes in an input of a node: drop it on the input's row.", true);
+                        return;
+                    }
+                    var f = input.Frame;
+                    var owner = input.Port.Node == GraphFrame.ResultId ? null : f.ById.TryGetValue(input.Port.Node, out var n) ? n : null;
+                    if (owner == null && input.Port.Node != GraphFrame.ResultId) return;
+                    var label = GraphNodeView.LabelOf(Window.Checked, owner, input.Port.Path, input.Port.Label);
+                    f.PutPath(owner, input.Port.Path, new List<GraphFrame.Part> { new GraphFrame.Part { Kind = "name", Name = name, Type = d.Value.Str("type") } }, label);
+                    return;
+                }
+                default:
+                    Window.Say("Components and singletons go on a frame's entry, functions into a frame, constants onto an input.");
+                    return;
+            }
+        }
+
+        // A Set whose value was just picked (notes/visual-scripting.md, "Round three": only what's valid in a Set):
+        // once a check of the file as it is says the value's type, and the value doesn't work with the way the Set
+        // changes what it changes but works another way (a float into a float3 with "becomes"), its operators are
+        // asked next, offering only those. Up to three checks wait for the value's type.
+        int watchedSet, watchedChecks;
+
+        internal void WatchOperator(JValue owner, WirePath path)
+        {
+            if (owner?.Str("k") != "assign" || path == null || path.Parts.Length != 1 || path.Key != "value") return;
+            watchedSet = owner.Wire("id");
+            watchedChecks = 0;
+        }
+
+        // A check came back: the Set picked into, if its value now doesn't fit its operator
+        internal void AfterCheck()
+        {
+            var check = Window.Checked;
+            if (watchedSet == 0 || check == null || Doc == null || check.Json != Doc.Text) return;
+            var set = watchedSet;
+            var frame = FrameOf(set);
+            var n = frame?.Graph != null ? GraphDocument.NodeIn(frame.Graph, set) : null;
+            if (n == null || n.Wire("value") == 0)
+            {
+                watchedSet = 0;
+                return;
+            }
+            frame.Classify();
+            var value = frame.TypeAt(n.Wire("value"));
+            if (value == null && ++watchedChecks < 3) return;
+            watchedSet = 0;
+            var target = frame.TypeAt(n.Wire("target"));
+            if (value == null || target == null || value == target) return;
+            TideGraphLanguage.Operators(Window, target, value, (ops, why) =>
+            {
+                var ways = GraphLists.Strings(ops?.Arr("assign")).ToList();
+                var now = frame.Graph != null ? GraphDocument.NodeIn(frame.Graph, set) : null;
+                if (ways.Count == 0 || now == null || ways.Contains(now.Str("op") ?? "=") || Window.Popup != null) return;
+                var view = frame.ViewOf(set);
+                var op = view?.Q("in:value")?.Q<Button>("op");
+                frame.PickOperator(view, now, (VisualElement)op ?? (VisualElement)view ?? frame);
+            });
+        }
+
+        // A property's code for when it's read or set, as a frame of its own
+        public void AddAccessor(GraphElement property, string word)
+        {
+            var m = property.Value;
+            JValue made = null;
+            Window.Edit("Add " + word, () =>
+            {
+                var list = m.Arr("accessors");
+                if (list == null) m.Set("accessors", list = JValue.NewArray(), GraphSchema.MemberOrder("property"));
+                list.Items.Add(made = Doc.NewAccessor(word));
+                PlaceNew(made, GraphSchema.AccessorOrder);
+            });
+            if (made != null) Reveal(made.Wire("id"));
+        }
+
+        // Takes a pin's links off: an input's wire or what's in it, an output's wires, a parameter's or a local's
+        // reads, a step's flow
+        public void BreakLinks(PortView pin)
+        {
+            var frame = pin.Frame;
+            var g = frame.Graph;
+            if (g == null) return;
+            var p = pin.Port;
+            if (p.IsRead)
+            {
+                frame.Classify();
+                var reads = frame.ById.Values.Where(n => p.Local ? n.Str("k") == "local" && n.Wire("ref") == p.Node : n.Str("k") == "name" && !n.Flag("local") && n.Str("name") == p.Name).Select(n => n.Wire("id")).ToList();
+                if (reads.Count == 0) return;
+                Window.Edit("Break links", () =>
+                {
+                    // Every input that shows it, or a path from it, or has it wired, is emptied
+                    bool Reads(int v) => reads.Contains(v) || frame.ChainOf(v).Overlaps(reads);
+                    foreach (var n in GraphDocument.Nodes(g).Items.ToList())
+                        foreach (var port in GraphPorts.Of(n))
+                        {
+                            if (!port.Input || port.Exec || port.Path == null) continue;
+                            var v = port.Path.Get(n);
+                            // A path's own parts are emptied with the input that shows them
+                            if (v == 0 || frame.Hidden.Contains(n.Wire("id")) || reads.Contains(n.Wire("id")) || !Reads(v)) continue;
+                            port.Path.Set(n, 0);
+                            frame.DropUnread(g, v);
+                        }
+                    if (g.Wire("root") != 0 && Reads(g.Wire("root")))
+                    {
+                        var was = g.Wire("root");
+                        g.Set("root", JValue.Null());
+                        frame.DropUnread(g, was);
+                    }
+                    Doc.DeleteNodes(g, reads.Where(id => GraphDocument.NodeIn(g, id) != null && GraphDocument.Readers(g, id) == 0).ToList());
+                }, frame.Id);
+                return;
+            }
+            Window.Edit("Break links", () => frame.Unwire(p), frame.Id);
         }
 
         // ---------------------------------------------------------------------------------------------------------

@@ -22,6 +22,8 @@ namespace Tide.Editor
         readonly List<GraphSearchEntry> entries;
         readonly List<GraphSearchEntry> typed = new List<GraphSearchEntry>();
         int asking;
+        bool everything;               // What doesn't suit the wire is listed too
+        HashSet<string> validOps;      // The operators that work on the value wanted, as the checker says
 
         public GraphSearchPopup(GraphBoard board, GraphFrame frame, GraphSearchContext context, Vector2 at)
             : base(Heading(frame, context), null, context.Retarget != 0 ? "Search what it has" : "Search, or type a number or a text", 330, 420)
@@ -37,6 +39,25 @@ namespace Tide.Editor
             if (pending != null && pending.IsRead) entries.RemoveAll(e => e.Reads);
             Fill();
             AskLive();
+            AskOperators();
+        }
+
+        // For a value wanted of a known type, the operators that work on it (tide/graphOperators): others aren't
+        // offered. A condition takes comparisons of anything, so its operators aren't narrowed.
+        void AskOperators()
+        {
+            if (pending == null || !pending.Input || pending.Exec || pending.Path == null) return;
+            var owner = pending.Node == GraphFrame.ResultId ? null : frame.ById.TryGetValue(pending.Node, out var n) ? n : null;
+            var wanted = frame.Wanted(owner, pending.Path);
+            if (string.IsNullOrEmpty(wanted) || wanted == "bool") return;
+            asking++;
+            TideGraphLanguage.Operators(board.Window, wanted, null, (ops, why) =>
+            {
+                asking--;
+                if (WasClosed || ops == null) return;
+                validOps = new HashSet<string>(GraphLists.Strings(ops.Arr("binary")).Concat(GraphLists.Strings(ops.Arr("unary"))).Concat(GraphLists.Strings(ops.Arr("step"))));
+                Fill(true);
+            });
         }
 
         static string Heading(GraphFrame frame, GraphSearchContext c)
@@ -54,7 +75,22 @@ namespace Tide.Editor
             Pick = () => PickEntry(e),
         };
 
-        void Fill(bool keep = false) => Set(typed.Concat(entries).Select(Option), keep);
+        void Fill(bool keep = false)
+        {
+            var options = typed.Concat(entries).Select(Option).ToList();
+            // For a wire: what suits it, and a way to everything
+            if (pending != null && !everything)
+                options.Add(new GraphOption
+                {
+                    Title = "Show everything", Detail = "Not only what suits this wire", Section = "Something else", Pinned = true, KeepOpen = true, Data = "everything",
+                    Pick = () =>
+                    {
+                        everything = true;
+                        Fill(true);
+                    },
+                });
+            Set(options, keep);
+        }
 
         // What the language server's searches find, merged in as they come
         void AskLive()
@@ -108,7 +144,7 @@ namespace Tide.Editor
             if (pending != null) yield break;
             yield return new GraphSearchEntry { Group = "Board", Title = "Note", Keywords = "note comment box", Detail = "A box of text behind the nodes", Command = () => board.AddNote(frame, at) };
             if (GraphDocument.IsClip(GraphBoard.Clipboard))
-                yield return new GraphSearchEntry { Group = "Board", Title = "Paste", Keywords = "paste clipboard", Detail = "What was copied", Command = () => board.Paste(board.ChangeCoordinatesTo(board, frame.ChangeCoordinatesTo(board, at))) };
+                yield return new GraphSearchEntry { Group = "Board", Title = "Paste", Keywords = "paste clipboard", Detail = "What was copied", Command = () => board.Paste(board.ToBoard(frame.At + at)) };
         }
 
         // What's typed is itself a value, where a value goes: a number, true or false, or a text
@@ -150,7 +186,8 @@ namespace Tide.Editor
         {
             if (!(option.Data is GraphSearchEntry e)) return true;
             if (context.Retarget != 0) return e.Apply != null;
-            if (pending == null) return true;
+            if (pending == null || everything) return true;
+            if (validOps != null && e.Op != null && !validOps.Contains(e.Op)) return false;
             if (e.Command != null) return false;
             if (pending.Exec) return e.Statement;
             if (pending.Input) return !e.Statement;

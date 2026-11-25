@@ -27,6 +27,7 @@ namespace Tide.Editor
         [SerializeField] TideGraphState state;
         [SerializeField] int selected;            // The element last selected or shown
         [SerializeField] bool showTide;
+        [SerializeField] bool myGameClosed, detailsClosed;
 
         internal GraphDocument Doc;
         internal GraphBoard Board;
@@ -35,10 +36,11 @@ namespace Tide.Editor
         internal string Path => path;
         internal int SelectedElement => selected;
 
-        VisualElement shell, body, overlay, shade, chip;
+        VisualElement shell, body, overlay, shade, chip, row;
         Label titleLabel, chipLabel, toast;
         GraphPopup popup;
-        GraphContents contents;
+        GraphMyGame myGame;
+        GraphDetails details;
         GraphTideView tide;
         double checkAt = -1;
         bool checking, checkAgain, framed, gone;
@@ -51,7 +53,9 @@ namespace Tide.Editor
         // The editor's light theme, or one a test asks for
         internal bool Light => forcedLight ?? !EditorGUIUtility.isProSkin;
         internal GraphPopup Popup => popup;
-        internal GraphContents Contents => contents != null && contents.parent != null ? contents : null;
+        internal VisualElement Overlay => overlay;
+        internal GraphMyGame MyGame => myGame != null && myGame.parent != null ? myGame : null;
+        internal GraphDetails Details => details != null && details.parent != null ? details : null;
         internal GraphTideView TideView => tide != null && tide.parent != null ? tide : null;
         internal string LastSaid { get; private set; }
 
@@ -69,11 +73,16 @@ namespace Tide.Editor
             }
             var window = CreateWindow<TideGraphWindow>();
             window.path = assetPath;
+            // Its panels as the last window's were left
+            window.myGameClosed = !EditorPrefs.GetBool(MyGamePref, true);
+            window.detailsClosed = !EditorPrefs.GetBool(DetailsPref, true);
             window.minSize = new Vector2(640, 360);
             window.Load();
             window.Show();
             return window;
         }
+
+        const string MyGamePref = "Tide.GraphWindow.MyGame", DetailsPref = "Tide.GraphWindow.Details";
 
         void OnEnable()
         {
@@ -215,10 +224,14 @@ namespace Tide.Editor
             Doc.Reindex();
             state.json = Doc.Text;
             Board?.Changed(owners);
-            Contents?.Fill();
+            MyGame?.Fill();
+            Details?.Fill();
             UpdateTitle();
             CheckSoon();
         }
+
+        // What's selected changed: Details shows it
+        internal void SelectionChanged() => Details?.Fill();
 
         void UndoRedo()
         {
@@ -233,7 +246,8 @@ namespace Tide.Editor
             }
             ClosePopup(popup);
             Board?.Reload();
-            Contents?.Fill();
+            MyGame?.Fill();
+            Details?.Fill();
             UpdateTitle();
             CheckSoon();
         }
@@ -275,7 +289,8 @@ namespace Tide.Editor
             root.Clear();
             popup = null;
             shade = null;
-            contents = null;
+            myGame = null;
+            details = null;
             tide = null;
             shell = new VisualElement();
             shell.AddToClassList("tg-root");
@@ -330,10 +345,10 @@ namespace Tide.Editor
             add.name = "add";
             add.tooltip = "Something new on the board (or right-click the board, or press Space)";
             bar.Add(add);
-            var toContents = GraphLook.Labelled("list", "Contents", () => ShowContents(Contents == null), "tg-bar-button");
-            toContents.name = "contents";
-            toContents.tooltip = "Everything in this file, by name: pick one to go to it (Ctrl+F)";
-            bar.Add(toContents);
+            var toMine = GraphLook.Labelled("list", "My game", () => ShowMyGame(MyGame == null, MyGame == null), "tg-bar-button");
+            toMine.name = "my-game-button";
+            toMine.tooltip = "Everything in this file by group: click one to go to it, drag one onto the board (Ctrl+F finds one)";
+            bar.Add(toMine);
             titleLabel = GraphLook.Text("", "tg-title");
             bar.Add(titleLabel);
             Button chipButton = null;
@@ -345,6 +360,10 @@ namespace Tide.Editor
             chip = chipButton;
             bar.Add(chip);
             Button more = null;
+            var toDetails = GraphLook.Labelled(null, "Details", () => ShowDetails(Details == null), "tg-bar-button");
+            toDetails.name = "details-button";
+            toDetails.tooltip = "What's selected: its name, its options, its note";
+            bar.Add(toDetails);
             more = GraphLook.IconButton("more", "Save, tidy up, view as Tide, the file's namespace", () => OpenMenu(more), "tg-bar-button", "tg-bar-button--bare");
             more.name = "menu";
             bar.Add(more);
@@ -364,10 +383,16 @@ namespace Tide.Editor
                 return;
             }
 
-            body = new VisualElement { style = { flexGrow = 1 } };
-            s.Add(body);
+            // My game on the left, the board, Details on the right
+            row = GraphLook.Row("tg-body");
+            s.Add(row);
+            body = new VisualElement { style = { flexGrow = 1, flexShrink = 1 } };
+            body.AddToClassList("tg-board-area");
+            row.Add(body);
             Board = new GraphBoard(this);
             body.Add(Board);
+            if (!myGameClosed) ShowMyGame(true);
+            if (!detailsClosed) ShowDetails(true);
             overlay = new VisualElement { pickingMode = PickingMode.Ignore };
             overlay.AddToClassList("tg-fill");
             s.Add(overlay);
@@ -511,20 +536,44 @@ namespace Tide.Editor
             Open(list, from);
         }
 
-        internal void ShowContents(bool show)
+        // My game, docked on the left: opened (with the keyboard in its search, for Ctrl+F) or closed, and left so
+        internal void ShowMyGame(bool show, bool search = false)
         {
-            if (body == null) return;
+            myGameClosed = !show;
+            EditorPrefs.SetBool(MyGamePref, show);
+            if (row == null) return;
             if (!show)
             {
-                Contents?.Close();
+                MyGame?.RemoveFromHierarchy();
+                Board?.Focus();
                 return;
             }
-            if (Contents == null)
+            if (MyGame == null)
             {
-                contents = new GraphContents(this);
-                body.Add(contents);
+                myGame = new GraphMyGame(this);
+                row.Insert(0, myGame);
             }
-            contents.FocusSearch();
+            if (search) myGame.FocusSearch();
+        }
+
+        // Details, docked on the right
+        internal void ShowDetails(bool show)
+        {
+            detailsClosed = !show;
+            EditorPrefs.SetBool(DetailsPref, show);
+            if (row == null) return;
+            if (!show)
+            {
+                Details?.RemoveFromHierarchy();
+                Board?.Focus();
+                return;
+            }
+            if (Details == null)
+            {
+                details = new GraphDetails(this);
+                row.Add(details);
+            }
+            details.Fill();
         }
 
         internal void ShowTide(bool show)
@@ -616,10 +665,36 @@ namespace Tide.Editor
             if (Checked == null || Board == null) return;
             // A check of the file as it was before the last edit: the one of the file as it is comes next
             if (Checked.Json != null && Doc != null && Checked.Json != Doc.Text && CheckPending) return;
+            var before = new HashSet<string>(Board.ProblemsShown());
             Board.SetProblems(Checked.Diagnostics);
             foreach (var frame in Board.Items.OfType<GraphFrame>().Concat(Board.ValueFrames)) frame.ApplyTypes();
+            // A problem gone: its hover text, if it's showing, goes with it
+            if (before.Count > 0 && !before.IsSubsetOf(Board.ProblemsShown())) CloseTooltip();
+            Board.AfterCheck();
             TideView?.Show();
-            Contents?.Fill();
+            MyGame?.Fill();
+        }
+
+        // The editor's tooltip, if one is showing: Unity shows it until the pointer moves, whatever the element's
+        // tooltip has become since
+        static void CloseTooltip()
+        {
+            var view = typeof(EditorWindow).Assembly.GetType("UnityEditor.TooltipView");
+            view?.GetMethod("Close", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic, null, Type.EmptyTypes, null)?.Invoke(null, null);
+        }
+
+        // The panels taken off the board for a moment and put back as they were left, without changing how
+        // they're left (a test of the board's own gestures)
+        internal void ShowPanels(bool shown)
+        {
+            if (!shown)
+            {
+                MyGame?.RemoveFromHierarchy();
+                Details?.RemoveFromHierarchy();
+                return;
+            }
+            if (!myGameClosed) ShowMyGame(true);
+            if (!detailsClosed) ShowDetails(true);
         }
 
         // Which checked the graph: the language server, with the game's code, or tidec, which only reads the file

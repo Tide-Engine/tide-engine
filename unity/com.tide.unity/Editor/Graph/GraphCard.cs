@@ -161,7 +161,7 @@ namespace Tide.Editor
             return b;
         }
 
-        protected static IEnumerable<string> Strings(JValue a) => a == null ? Enumerable.Empty<string>() : a.Items.Where(i => i.Kind == JKind.String).Select(i => i.String);
+        internal static IEnumerable<string> Strings(JValue a) => a == null ? Enumerable.Empty<string>() : a.Items.Where(i => i.Kind == JKind.String).Select(i => i.String);
 
         public static string AttributeText(JValue a) => "[" + a.Str("name") + (a.Has("args") ? "(" + a.Str("args") + ")" : "") + "]";
 
@@ -176,14 +176,14 @@ namespace Tide.Editor
             return note;
         }
 
-        protected void AskNote(GraphElement e)
+        internal void AskNote(GraphElement e)
         {
             var info = GraphSchema.KeyInfo("comment");
             Window.Open(new GraphPrompt(info.Label, info.Help, e.Value.Str("comment"), true, text =>
                 Edit(info.Label, () => e.Value.SetString("comment", text.TrimEnd(), GraphDocument.OrderOf(e)))), this, true);
         }
 
-        void AskGeneric(GraphElement e)
+        internal void AskGeneric(GraphElement e)
         {
             var info = GraphSchema.KeyInfo("typeParams");
             Window.Open(new GraphPrompt(info.Label, (info.Help ?? "") + "\nNames, separated by commas. Leave it empty for none.", string.Join(", ", Strings(e.Value.Arr("typeParams"))), false, text =>
@@ -201,7 +201,7 @@ namespace Tide.Editor
             }), this, true);
         }
 
-        void AskRules(GraphElement e, JValue rule)
+        internal void AskRules(GraphElement e, JValue rule)
         {
             var info = GraphSchema.KeyInfo("where");
             var param = rule?.Str("param") ?? Strings(e.Value.Arr("typeParams")).FirstOrDefault() ?? "T";
@@ -229,7 +229,7 @@ namespace Tide.Editor
             }), this, true);
         }
 
-        void AskReplaces(GraphElement e)
+        internal void AskReplaces(GraphElement e)
         {
             var info = GraphSchema.KeyInfo("overrides");
             Window.Open(new GraphPrompt(info.Label, "The declaration of a package this takes the place of, with its namespace: Combat.Move", e.Value.Str("overrides"), false, text =>
@@ -237,7 +237,7 @@ namespace Tide.Editor
         }
 
         // An attribute, as Tide writes it between its brackets: `Stage(Phase.Move, 2)`. Nothing typed takes it away.
-        protected void AskAttribute(GraphElement e, JValue attribute)
+        internal void AskAttribute(GraphElement e, JValue attribute)
         {
             var info = GraphSchema.KeyInfo("attributes");
             var now = attribute == null ? "" : AttributeText(attribute).Trim('[', ']');
@@ -269,64 +269,7 @@ namespace Tide.Editor
             }), this, true);
         }
 
-        // The options every declaration's "..." menu ends with: its kind's options by their labels, what it's
-        // generic over where its kind can be, attributes, a note, duplicate and delete
-        protected void CommonOptions(GraphElement e, List<GraphOption> options)
-        {
-            var v = e.Value;
-            var member = e.Role == GraphRole.Member;
-            var kind = v.Str("kind");
-            if (e.Role == GraphRole.Decl || member)
-            {
-                var have = Strings(v.Arr("modifiers")).ToList();
-                var section = GraphSchema.KeyInfo("modifiers").Label;
-                foreach (var m in GraphSchema.AllModifiers.Where(m => GraphSchema.Modifiers(kind, member).Contains(m) || have.Contains(m)))
-                {
-                    var word = m;
-                    var info = GraphSchema.ModifierInfo(m);
-                    options.Add(new GraphOption
-                    {
-                        Title = info.Label, Detail = info.Help, Tall = info.Help != null, Section = section, Checked = have.Contains(m),
-                        Pick = () => Edit(info.Label, () => ToggleModifier(e, word)),
-                    });
-                }
-                foreach (var flag in new[] { "mut", "extern" })
-                {
-                    if (!GraphSchema.HasKey(kind, member, flag)) continue;
-                    var key = flag;
-                    var info = GraphSchema.KeyInfo(flag);
-                    options.Add(new GraphOption
-                    {
-                        Title = info.Label, Detail = info.Help, Tall = info.Help != null, Section = section, Checked = v.Flag(flag),
-                        Pick = () => Edit(info.Label, () => ToggleFlag(e, key)),
-                    });
-                }
-            }
-            const string more = "More";
-            void Key(string key, Action pick, string title = null)
-            {
-                if (!GraphSchema.HasKey(kind, member, key) && e.Role != GraphRole.Accessor) return;
-                var info = GraphSchema.KeyInfo(key);
-                options.Add(new GraphOption { Title = (title ?? info.Label) + "…", Detail = info.Help, Tall = info.Help != null, Section = more, Pick = pick });
-            }
-            if (e.Role == GraphRole.Decl || member)
-            {
-                Key("typeParams", () => AskGeneric(e));
-                if (Strings(v.Arr("typeParams")).Any()) Key("where", () => AskRules(e, null));
-                Key("backing", () => Board.PickType(new GraphTypeRequest { Title = GraphSchema.KeyInfo("backing").Label, Current = v.Str("backing"), Infer = "int (the usual)", NoBuilders = true, Only = t => GraphValues.IsWhole(t.Name) },
-                    this, type => Edit("Stored as", () => v.SetString("backing", type, GraphDocument.OrderOf(e)))));
-                Key("fails", () => Board.PickType(new GraphTypeRequest { Title = GraphSchema.KeyInfo("fails").Label, Current = v.Str("fails"), Infer = "It can't fail" },
-                    this, type => Edit("Can fail with", () => v.SetString("fails", type, GraphDocument.OrderOf(e)))));
-                Key("attributes", () => AskAttribute(e, null), "Add an attribute");
-            }
-            Key("comment", () => AskNote(e));
-            if (e.List != null && e.Role != GraphRole.Accessor)
-                options.Add(new GraphOption { Title = "Duplicate", Section = " ", Pick = () => Board.Duplicate(e.Id) });
-            if (e.List != null)
-                options.Add(new GraphOption { Title = "Delete", Section = " ", Pick = () => Board.Delete(e.Id) });
-        }
-
-        static void ToggleModifier(GraphElement e, string word)
+        internal static void ToggleModifier(GraphElement e, string word)
         {
             var list = Strings(e.Value.Arr("modifiers")).ToList();
             if (!list.Remove(word)) list.Add(word);
@@ -337,7 +280,7 @@ namespace Tide.Editor
             if (word == "override" && !list.Contains(word)) e.Value.Remove("overrides");
         }
 
-        static void ToggleFlag(GraphElement e, string key)
+        internal static void ToggleFlag(GraphElement e, string key)
         {
             var order = GraphDocument.OrderOf(e);
             var on = !e.Value.Flag(key);
@@ -512,7 +455,7 @@ namespace Tide.Editor
             if (d.Has("name") || GraphSchema.HasKey(kind, false, "name"))
             {
                 var name = GraphLook.Name(d.Str("name"), Rename, "name", "tg-inline--title");
-                name.name = "name";
+                name.Named("name");
                 name.RegisterCallback<KeyDownEvent>(ev =>
                 {
                     if (ev.keyCode != KeyCode.Return && ev.keyCode != KeyCode.KeypadEnter) return;
@@ -524,9 +467,17 @@ namespace Tide.Editor
                 }, TrickleDown.TrickleDown);
                 head.Add(name);
             }
-            else head.Add(new VisualElement { style = { flexGrow = 1 } });
-            var more = GraphLook.IconButton("more", "What else a " + GraphSchema.DeclTitle(kind).ToLowerInvariant() + " can have", null);
-            more.clicked += () => OpenMenu(more);
+            head.Add(new VisualElement { style = { flexGrow = 1 }, pickingMode = PickingMode.Ignore });
+            // Its rows are added from its title bar, not from a row under the last one that's hit by accident
+            var adds = RowAdd();
+            if (adds != null)
+            {
+                var add = GraphLook.IconButton("plus", adds.Value.title, adds.Value.add);
+                add.name = "add";
+                head.Add(add);
+            }
+            var more = GraphLook.IconButton("more", "Add, rename, copy, delete (or right-click)", null);
+            more.clicked += () => GraphMenu.Open(Window, MenuOptions(), more);
             more.name = "more";
             head.Add(more);
             Add(head);
@@ -649,11 +600,31 @@ namespace Tide.Editor
                 if (m.IsObject) Member(members, m, i == count - 1);
             }
             if (!CanAdd("field")) return;
-            if (count == 0) Add(GraphLook.Text(GraphSchema.MemberSummary("field"), "tg-empty"));
-            var add = GraphLook.Labelled("plus", RowWords(Kind) ?? GraphSchema.MemberTitle("field").ToLowerInvariant(), () => AddField(), "tg-add-row");
-            add.name = "add";
-            add.tooltip = GraphSchema.MemberSummary("field") ?? "";
-            Add(add);
+            // An empty card says what goes in it, and where the button is that adds one
+            if (count == 0) Add(GraphLook.Text($"{GraphSchema.MemberSummary("field")}. The + in its title adds one.", "tg-empty"));
+        }
+
+        // What its title bar's "+" adds: a field, a choice, a setting; null for a kind with no rows to add
+        internal (string title, Action add)? RowAdd()
+        {
+            var kind = Kind;
+            if (kind == "enum") return (GraphMenu.AddA(RowWords("enum") ?? "choice"), () => AddNamed("members", "Choice", null));
+            if (kind == "settings") return (GraphMenu.AddA(RowWords("settings") ?? "setting"), () => AddNamed("entries", "setting", "0"));
+            if (CanAdd("field")) return (GraphMenu.AddA(RowWords(kind) ?? GraphSchema.MemberTitle("field")), () => AddField());
+            return null;
+        }
+
+        // What its menu offers to add: its rows, then each other kind of member its kind can have
+        internal IEnumerable<(string title, Action add)> Adds()
+        {
+            var row = RowAdd();
+            if (row != null) yield return row.Value;
+            foreach (var kind in OfferedMembers())
+            {
+                if (kind == "field") continue;
+                var k = kind;
+                yield return (GraphMenu.AddMember(kind), () => AddMember(k));
+            }
         }
 
         void Member(JValue list, JValue m, bool last)
@@ -664,6 +635,7 @@ namespace Tide.Editor
             var kind = m.Str("kind");
             var row = GraphLook.Row("tg-row");
             row.name = "row" + id;
+            row.userData = id;
             switch (kind)
             {
                 case "field":
@@ -681,9 +653,10 @@ namespace Tide.Editor
                     {
                         if (!NameTaken(list, m, typed)) Edit("Rename", () => m.Set("name", JValue.Of(typed), GraphSchema.MemberOrder(kind)));
                     }, "name");
-                    name.name = "name" + id;
+                    name.Named("name" + id);
                     name.RegisterCallback<KeyDownEvent>(ev => FieldKeys(ev, name, list, m, last && kind == "field"), TrickleDown.TrickleDown);
                     row.Add(name);
+                    row.Add(new VisualElement { style = { flexGrow = 1 }, pickingMode = PickingMode.Ignore });
                     row.Add(TypeChip(e, "type", m.Str("type"), null));
                     row.Add(GraphValues.Control(Window, new GraphSlot(id, kind == "tweak" ? "value" : "default"), m.Str("type"), kind == "field", Id, m.Str("name")));
                     break;
@@ -694,8 +667,9 @@ namespace Tide.Editor
                     {
                         if (!NameTaken(list, m, typed)) Edit("Rename", () => m.Set("name", JValue.Of(typed), GraphSchema.MemberOrder(kind)));
                     }, "name");
-                    name.name = "name" + id;
+                    name.Named("name" + id);
                     row.Add(name);
+                    row.Add(new VisualElement { style = { flexGrow = 1 }, pickingMode = PickingMode.Ignore });
                     row.Add(TypeChip(e, "type", m.Str("type"), null));
                     var accessors = m.Arr("accessors");
                     if (accessors != null)
@@ -737,8 +711,8 @@ namespace Tide.Editor
                     break;
                 }
             }
-            var more = GraphLook.IconButton("more", "More for this " + GraphSchema.MemberTitle(kind).ToLowerInvariant(), null, "tg-on-hover");
-            more.clicked += () => OpenRowMenu(more, e);
+            var more = GraphLook.IconButton("more", "Rename, copy, delete (or right-click)", null, "tg-on-hover");
+            more.clicked += () => GraphMenu.Open(Window, GraphMenu.ForRow(this, id), more);
             row.Add(more);
             Add(row);
             var note = m.Str("comment");
@@ -755,7 +729,7 @@ namespace Tide.Editor
         }
 
         // Enter in a field's name keeps what's typed and goes on: to a new field after the last, else to the next
-        void FieldKeys(KeyDownEvent ev, TextField name, JValue list, JValue m, bool last)
+        void FieldKeys(KeyDownEvent ev, GraphName name, JValue list, JValue m, bool last)
         {
             var id = m.Wire("id");
             if (ev.keyCode == KeyCode.Escape && Board.Fresh == id)
@@ -846,10 +820,7 @@ namespace Tide.Editor
             var members = d.Arr("members");
             var count = members?.Items.Count ?? 0;
             for (var i = 0; i < count; i++) Named(members, members.Items[i], i == count - 1, true, "choice", null);
-            if (count == 0) Add(GraphLook.Text("The choices a value of it can be, by name.", "tg-empty"));
-            var add = GraphLook.Labelled("plus", RowWords("enum") ?? "choice", () => AddNamed("members", "Choice", null), "tg-add-row");
-            add.name = "add";
-            Add(add);
+            if (count == 0) Add(GraphLook.Text("The choices a value of it can be, by name. The + in its title adds one.", "tg-empty"));
         }
 
         void Entries(JValue d)
@@ -857,10 +828,7 @@ namespace Tide.Editor
             var entries = d.Arr("entries");
             var count = entries?.Items.Count ?? 0;
             for (var i = 0; i < count; i++) Named(entries, entries.Items[i], i == count - 1, false, "setting", null);
-            if (count == 0) Add(GraphLook.Text(GraphSchema.DeclSummary("settings"), "tg-empty"));
-            var add = GraphLook.Labelled("plus", RowWords("settings") ?? "setting", () => AddNamed("entries", "setting", "0"), "tg-add-row");
-            add.name = "add";
-            Add(add);
+            if (count == 0) Add(GraphLook.Text(GraphSchema.DeclSummary("settings") + ". The + in its title adds one.", "tg-empty"));
         }
 
         void Named(JValue list, JValue item, bool last, bool optionalValue, string what, string type)
@@ -870,11 +838,12 @@ namespace Tide.Editor
             if (e == null) return;
             var row = GraphLook.Row("tg-row");
             row.name = "row" + id;
+            row.userData = id;
             var name = GraphLook.Name(item.Str("name"), typed =>
             {
                 if (!NameTaken(list, item, typed)) Edit("Rename", () => item.Set("name", JValue.Of(typed), GraphDocument.OrderOf(e)));
             }, "name");
-            name.name = "name" + id;
+            name.Named("name" + id);
             name.RegisterCallback<KeyDownEvent>(ev =>
             {
                 if (ev.keyCode == KeyCode.Escape && Board.Fresh == id)
@@ -893,6 +862,7 @@ namespace Tide.Editor
                 AddNamed(what == "choice" ? "members" : "entries", what == "choice" ? "Choice" : "setting", what == "choice" ? null : "0", renamed ? (item, typed) : ((JValue, string)?)null);
             }, TrickleDown.TrickleDown);
             row.Add(name);
+            row.Add(new VisualElement { style = { flexGrow = 1 }, pickingMode = PickingMode.Ignore });
             var value = GraphValues.Control(Window, new GraphSlot(id, "value"), type, optionalValue, Id, item.Str("name"));
             if (optionalValue)
             {
@@ -909,8 +879,9 @@ namespace Tide.Editor
                 row.Add(equals);
             }
             row.Add(value);
-            var remove = GraphLook.IconButton("close", "Remove this " + what, () => Edit("Remove " + what, () => list.Items.Remove(item)), "tg-on-hover");
-            row.Add(remove);
+            var more = GraphLook.IconButton("more", "Rename, copy, delete (or right-click)", null, "tg-on-hover");
+            more.clicked += () => GraphMenu.Open(Window, GraphMenu.ForRow(this, id), more);
+            row.Add(more);
             Add(row);
             AddProblems(this, id, row);
         }
@@ -943,12 +914,13 @@ namespace Tide.Editor
             var e = Doc.Find(id);
             if (e == null) return;
             var row = GraphLook.Row("tg-row");
+            row.userData = id;
             row.style.paddingLeft = 6 + depth * 14;
             if (e.List == null) row.Add(GraphLook.Text("The entity", "tg-port-label"));
             else
             {
                 var name = GraphLook.Name(p.Str("name"), typed => Edit("Rename", () => p.Set("name", JValue.Of(typed), GraphSchema.PrefabNodeOrder)), "name");
-                name.name = "name" + id;
+                name.Named("name" + id);
                 row.Add(name);
                 if (p.Str("base") != null) row.Add(GraphLook.Text("from " + p.Str("base"), "tg-tag"));
             }
@@ -960,7 +932,12 @@ namespace Tide.Editor
                 children.Items.Add(Doc.NewPrefabNode(GraphDocument.UniqueIn(children, "Child")));
             }), "tg-on-hover");
             row.Add(child);
-            if (e.List != null) row.Add(GraphLook.IconButton("close", "Remove this entity", () => Edit("Remove entity", () => e.List.Items.Remove(p)), "tg-on-hover"));
+            if (e.List != null)
+            {
+                var more = GraphLook.IconButton("more", "Rename, copy, delete (or right-click)", null, "tg-on-hover");
+                more.clicked += () => GraphMenu.Open(Window, GraphMenu.ForRow(this, id), more);
+                row.Add(more);
+            }
             Add(row);
             var components = p.Arr("components");
             var line = GraphLook.Row("tg-tags");
@@ -999,89 +976,14 @@ namespace Tide.Editor
         // ---------------------------------------------------------------------------------------------------------
         // Menus
 
-        internal List<GraphOption> MenuOptions()
-        {
-            var e = Element;
-            var d = e.Value;
-            var options = new List<GraphOption>();
-            foreach (var kind in OfferedMembers())
-            {
-                if (kind == "field") continue;
-                var k = kind;
-                options.Add(new GraphOption
-                {
-                    Title = GraphSchema.MemberTitle(kind), Detail = GraphSchema.MemberSummary(kind), Tall = true, Section = "Add", Data = kind,
-                    Pick = () => AddMember(k),
-                });
-            }
-            if (Kind == "scene" && d.Get("members") != null && d.Get("members").IsArray && d.Arr("members").Items.Count == 0)
-                options.Add(new GraphOption { Title = "Nothing of its own", Detail = "A scene that's only a name", Tall = true, Section = "More", Pick = () => Edit("Scene", () => d.Set("members", JValue.Null())) });
-            CommonOptions(e, options);
-            return options;
-        }
+        // Its menu: the board's one menu, as for every card (GraphMenu)
+        internal List<GraphOption> MenuOptions() => GraphMenu.ForItem(this);
 
-        void OpenMenu(VisualElement from)
+        // A row moved earlier or later among its card's (from Details)
+        internal void Move(int id, int by)
         {
-            var list = new GraphOptionList(null, null, null, 300);
-            list.Set(MenuOptions());
-            Window.Open(list, from);
-        }
-
-        void OpenRowMenu(VisualElement from, GraphElement e)
-        {
-            var m = e.Value;
-            var kind = m.Str("kind");
-            var options = new List<GraphOption>();
-            if (kind == "field")
-            {
-                var info = GraphSchema.KeyInfo("local");
-                options.Add(new GraphOption
-                {
-                    Title = info.Label, Detail = info.Help, Tall = true, Checked = m.Flag("local"),
-                    Pick = () => Edit(info.Label, () => m.SetFlag("local", !m.Flag("local"), GraphSchema.MemberOrder(kind))),
-                });
-                if (m.Get("default") != null || true)
-                    options.Add(new GraphOption { Title = "Work out its starting value…", Detail = "A small graph, for more than a number or a text", Tall = true, Pick = () => Board.OpenValue(new GraphSlot(e.Id, "default")) });
-                if (m.Get("default") != null)
-                    options.Add(new GraphOption { Title = "Clear its starting value", Pick = () => Edit("Clear value", () => m.Remove("default")) });
-            }
-            if (kind == "property")
-            {
-                var accessors = m.Arr("accessors");
-                foreach (var word in new[] { "get", "set" })
-                {
-                    var w = word;
-                    if (accessors != null && accessors.Items.Any(a => a.Str("word") == w)) continue;
-                    options.Add(new GraphOption
-                    {
-                        Title = "Add its " + w, Detail = w == "get" ? "The code that works it out when it's read" : "The code that runs when it's set",
-                        Tall = true, Pick = () =>
-                        {
-                            JValue made = null;
-                            Window.Edit("Add " + w, () =>
-                            {
-                                var list = m.Arr("accessors");
-                                if (list == null) m.Set("accessors", list = JValue.NewArray(), GraphSchema.MemberOrder("property"));
-                                list.Items.Add(made = Doc.NewAccessor(w));
-                                Board.PlaceNew(made, GraphSchema.AccessorOrder);
-                            });
-                            if (made != null) Board.Reveal(made.Wire("id"));
-                        },
-                    });
-                }
-            }
-            if (GraphSchema.HasKey(kind, true, "attributes"))
-                options.Add(new GraphOption { Title = "Add an attribute…", Detail = GraphSchema.KeyInfo("attributes").Help, Tall = true, Pick = () => AskAttribute(e, null) });
-            options.Add(new GraphOption { Title = GraphSchema.KeyInfo("comment").Label + "…", Pick = () => AskNote(e) });
-            var at = e.List.Items.IndexOf(m);
-            options.Add(new GraphOption { Separator = true });
-            options.Add(new GraphOption { Title = "Move up", Off = at <= 0, Pick = () => Move(e, -1) });
-            options.Add(new GraphOption { Title = "Move down", Off = at >= e.List.Items.Count - 1, Pick = () => Move(e, 1) });
-            if (!GraphSchema.MemberOnce(kind)) options.Add(new GraphOption { Title = "Duplicate", Pick = () => Board.Duplicate(e.Id) });
-            options.Add(new GraphOption { Title = "Remove", Pick = () => Board.Delete(e.Id) });
-            var menu = new GraphOptionList(null, null, null, 280);
-            menu.Set(options);
-            Window.Open(menu, from);
+            var e = Doc.Find(id);
+            if (e?.List != null) Move(e, by);
         }
 
         void Move(GraphElement e, int by)

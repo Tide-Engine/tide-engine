@@ -29,6 +29,7 @@ namespace Tide.Editor
         public int Priority;
         public bool Statement;
         public bool Reads; // A read of something the code takes, or of a local
+        public string Op;  // The operator a node of an operator is made with
         public Func<GraphDocument, JValue, Vector2, JValue> Make;
         public Action<JValue> Apply;
         public Action Command;
@@ -73,6 +74,7 @@ namespace Tide.Editor
                         var o = op;
                         var k = spec.K;
                         var entry = Node(group, $"{title ?? spec.Title} {op}", k, $"{k} operator {title} {op}", spec.Help, n => n.Set("op", JValue.Of(o), GraphSchema.NodeOrder(k)));
+                        entry.Op = o;
                         yield return entry;
                     }
                     continue;

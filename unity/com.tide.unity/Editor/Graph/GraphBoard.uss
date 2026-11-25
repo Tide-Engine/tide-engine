@@ -621,8 +621,8 @@
 .tg-row {
     flex-direction: row;
     align-items: center;
-    min-height: 26px;
-    padding: 0 4px 0 6px;
+    min-height: 30px;
+    padding: 0 4px 0 10px;
 }
 
 .tg-row:hover {
@@ -871,15 +871,14 @@
     margin: 0 1px;
 }
 
-/* An input with its value in it has no wire, and shows no pin until a wire is dragged: then every input shows
-   where one can end */
+/* While a wire is dragged: the pins it can go to are lit (a ring, and their row), the others dimmed */
 
-.tg-port--quiet {
-    visibility: hidden;
+.tg-port--cannot {
+    opacity: 0.22;
 }
 
-.tg-wiring .tg-port--quiet {
-    visibility: visible;
+.tg-port-row--can {
+    background-color: var(--tg-accent-soft);
 }
 
 .tg-pin-value {
@@ -1253,4 +1252,271 @@
     background-color: var(--tg-error-soft);
     border-bottom-width: 1px;
     border-bottom-color: var(--tg-error);
+}
+
+/* ---- Round three: names, selected rows, docked panels ---- */
+
+/* A name: its text, which drags what it names; a double click makes it a field */
+.tg-name {
+    flex-direction: row;
+    align-items: center;
+    flex-shrink: 1;
+    min-width: 16px;
+    overflow: hidden;
+}
+
+.tg-name-text {
+    padding: 1px 3px;
+    margin: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--tg-text);
+}
+
+.tg-name > .tg-inline {
+    flex-grow: 1;
+    min-width: 80px;
+}
+
+.tg-name.tg-inline--title > .tg-name-text {
+    -unity-font-style: bold;
+    font-size: 13px;
+}
+
+.tg-name--empty > .tg-name-text {
+    color: var(--tg-faint);
+    -unity-font-style: italic;
+}
+
+.tg-node-head .tg-name-text {
+    color: #ffffff;
+    -unity-font-style: bold;
+}
+
+.tg-card-head > .tg-name {
+    margin-left: 6px;
+}
+
+.tg-frame-head > .tg-name {
+    margin-left: 4px;
+}
+
+.tg-row--selected,
+.tg-row--selected:hover {
+    background-color: var(--tg-accent-soft);
+}
+
+.tg-entry-row.tg-row--selected {
+    background-color: var(--tg-accent-soft);
+}
+
+.tg-body {
+    flex-direction: row;
+    flex-grow: 1;
+    flex-shrink: 1;
+}
+
+.tg-board-area {
+    overflow: hidden;
+}
+
+.tg-dock {
+    flex-shrink: 0;
+    background-color: var(--tg-surface);
+    border-color: var(--tg-border);
+}
+
+.tg-dock--left {
+    width: 250px;
+    border-right-width: 1px;
+}
+
+.tg-dock--right {
+    width: 300px;
+    border-left-width: 1px;
+}
+
+.tg-dock-body {
+    padding-bottom: 12px;
+}
+
+/* Details */
+
+.tg-details-head {
+    flex-direction: row;
+    align-items: center;
+    padding: 10px 10px 2px 10px;
+}
+
+.tg-details-line {
+    padding: 4px 10px;
+}
+
+.tg-details-row {
+    flex-direction: row;
+    align-items: center;
+    min-height: 22px;
+}
+
+.tg-details-label {
+    width: 86px;
+    flex-shrink: 0;
+    color: var(--tg-muted);
+    font-size: 11px;
+    padding: 0;
+    margin: 0;
+    white-space: normal;
+}
+
+.tg-details-line > .tg-details-label {
+    width: auto;
+    margin-bottom: 3px;
+}
+
+.tg-details-help {
+    color: var(--tg-faint);
+    font-size: 11px;
+    white-space: normal;
+    padding: 2px 10px 0 10px;
+    margin: 0;
+}
+
+.tg-details-line .tg-details-help {
+    padding: 2px 0 0 0;
+}
+
+.tg-details-help--tick {
+    padding: 0 0 0 20px;
+}
+
+.tg-details-tick {
+    padding: 4px 10px;
+}
+
+.tg-details-toggle {
+    margin: 0;
+}
+
+.tg-details-toggle > .unity-toggle__input {
+    flex-grow: 1;
+}
+
+.tg-details-toggle .unity-toggle__text {
+    margin-left: 4px;
+}
+
+.tg-dock .unity-base-text-field__input--placeholder,
+.tg-dock .unity-text-element--placeholder {
+    color: var(--tg-faint);
+}
+
+.tg-details-value > .tg-link {
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.tg-details-line > .tg-details-text {
+    margin-top: 4px;
+}
+
+.tg-details-text {
+    margin: 0;
+    flex-grow: 1;
+    flex-shrink: 1;
+}
+
+.tg-details-value {
+    flex-direction: row;
+    align-items: center;
+    flex-grow: 1;
+}
+
+.tg-details-value > .tg-row-value {
+    width: 110px;
+}
+
+.tg-details-advanced {
+    margin: 6px 4px 0 4px;
+}
+
+.tg-details-advanced > .unity-foldout__content {
+    margin-left: 0;
+}
+
+.tg-details-advanced .tg-details-tick,
+.tg-details-advanced .tg-details-line {
+    padding-left: 6px;
+}
+
+.tg-dock-body .tg-text-area {
+    margin-top: 2px;
+}
+
+.tg-dock-body .tg-link {
+    align-self: flex-start;
+    margin: 4px 8px;
+}
+
+.tg-dock-body .tg-tags {
+    padding: 0;
+}
+
+/* My game */
+
+.tg-mine-group {
+    align-items: center;
+    padding: 8px 4px 2px 10px;
+}
+
+.tg-mine-row {
+    min-height: 24px;
+}
+
+.tg-mine-row.tg-lit {
+    background-color: var(--tg-accent-soft);
+}
+
+.tg-mine-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 4px;
+    margin-right: 6px;
+    flex-shrink: 0;
+    background-color: var(--tg-more);
+}
+
+.tg-mine-dot--Data {
+    background-color: var(--tg-data);
+}
+
+.tg-mine-dot--Behaviour {
+    background-color: var(--tg-behaviour);
+}
+
+.tg-mine-space {
+    margin: 0;
+}
+
+.tg-mine-ghost {
+    position: absolute;
+    padding: 3px 8px;
+    border-radius: 5px;
+    border-width: 1px;
+    border-color: var(--tg-accent);
+    background-color: var(--tg-surface);
+    color: var(--tg-text);
+}
+
+.tg-empty--card {
+    padding-bottom: 6px;
+}
+
+/* An add row on a node or an entry: as wide as its words, so the space beside it drags what it's on */
+.tg-add-row--compact {
+    align-self: flex-start;
+    border-radius: 4px;
+    margin: 2px 4px;
+    min-height: 22px;
+    padding: 0 6px;
 }
