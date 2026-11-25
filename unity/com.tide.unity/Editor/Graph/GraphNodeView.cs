@@ -97,6 +97,8 @@ namespace Tide.Editor
         public JValue Call;              // The call drawn with it, when it's a statement that is one
         public readonly List<PortView> Ports = new List<PortView>();
         public string Signature;         // What it was built from: built again when that changes
+        // The next change is its own control's, still being dragged (a colour in its picker): it isn't built again
+        internal bool KeepOnce;
         protected VisualElement Head, Body;
         Label problem;
         // What its inputs show: each chip with the node it shows (coloured by its type), and with the parameter
@@ -164,7 +166,7 @@ namespace Tide.Editor
                 foreach (var w in GraphPorts.DataWires(v))
                 {
                     var shown = frame.ShownIn(w);
-                    if (shown != null) width = Mathf.Max(width, 100 + Mathf.Min(260, frame.TextOf(shown).Length * 8 + 24));
+                    if (shown != null) width = Mathf.Max(width, 100 + Mathf.Min(260, frame.WidthOf(shown) * 8 + 24));
                 }
             }
             return new Vector2(Mathf.Max(width, 140 + Mathf.Min(260, widest * 8)), 34 + 22 * ports);
@@ -329,7 +331,9 @@ namespace Tide.Editor
                 if (!string.IsNullOrEmpty(written)) return written;
                 GraphCall call = null;
                 check?.Calls.TryGetValue(owner.Wire("id"), out call);
-                return call?.At(index).name ?? $"argument {index + 1}";
+                // ...until a check names it, the schema's word for one of the list and which
+                var word = GraphSchema.Spec(k)?.Lists.FirstOrDefault(l => l.Key == path.Key)?.Label ?? path.Key;
+                return call?.At(index).name ?? $"{word} {index + 1}";
             }
             if (path.Parts.Length == 1) return GraphSchema.PortLabel(path.Key);
             return fallback ?? "";
@@ -381,6 +385,7 @@ namespace Tide.Editor
                 return pick;
             }
             var k = shown.Str("k");
+            if (GraphSchema.Inline(k) == GraphSchema.InlineNumbers) return Numbers(shown, label, at => Open(at));
             if (k == "bool" || k == "int" || k == "float" || k == "string" || k == "char" || k == "unary")
             {
                 // A value typed: its own control, and a way to something else
@@ -441,6 +446,55 @@ namespace Tide.Editor
                 chip.RegisterCallback<PointerLeaveEvent>(_ => Frame.Light(key.name, key.local, false));
             }
             return chip;
+        }
+
+        // A vector or a colour made of numbers alone, in the input: the type's own control (the schema's
+        // valueControls), a box for each number or a colour field. A name typed in a box makes it a node again.
+        VisualElement Numbers(JValue call, string label, Action<VisualElement> other)
+        {
+            var box = GraphLook.Row("tg-pin-value", "tg-pin-value--numbers");
+            box.name = "numbers";
+            var name = call.Str("name");
+            var args = call.Arr("args")?.Items ?? new List<JValue>();
+            float Number(int i)
+            {
+                var arg = i < args.Count ? Frame.ShownIn(JValue.AsId(args[i])) : null;
+                var text = arg != null ? Frame.TextOf(arg).TrimEnd('f', 'F', 'd', 'D').Replace("_", "") : "";
+                return float.TryParse(text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var f) ? f : 0;
+            }
+            if (GraphSchema.ValueControl(name) == "colour" && (args.Count == 3 || args.Count == 4))
+            {
+                var alpha = args.Count == 4;
+                var field = new UnityEditor.UIElements.ColorField { value = new Color(Number(0), Number(1), Number(2), alpha ? Number(3) : 1), showAlpha = alpha };
+                field.name = "colour";
+                field.tooltip = GraphSchema.ValueHelp(name) ?? "";
+                field.RegisterValueChangedCallback(e =>
+                {
+                    e.StopPropagation();
+                    var v = e.newValue;
+                    var texts = new List<string> { GraphValues.Format(v.r), GraphValues.Format(v.g), GraphValues.Format(v.b) };
+                    if (alpha) texts.Add(GraphValues.Format(v.a));
+                    // The field stays as it is while its picker is open: the change is its own
+                    KeepOnce = true;
+                    Frame.PutNumbers(call, texts, label);
+                });
+                box.Add(field);
+            }
+            else
+                for (var i = 0; i < args.Count; i++)
+                {
+                    var path = new WirePath("args", i);
+                    var arg = Frame.ShownIn(JValue.AsId(args[i]));
+                    var part = LabelOf(Window.Checked, call, path, null);
+                    var f = GraphLook.Inline(arg != null ? Frame.TextOf(arg) : "", typed => Frame.TypeInto(call, path, typed, box, LabelOf(Window.Checked, call, path, label)), "0", "tg-inline--value");
+                    f.name = "number" + i;
+                    f.tooltip = part;
+                    box.Add(f);
+                }
+            var change = GraphLook.IconButton("down", "Pick something else: a name, a field, something worked out", () => other(box), "tg-on-hover");
+            change.name = "other";
+            box.Add(change);
+            return box;
         }
 
         protected PortView Pin(GraphPort p)
@@ -795,7 +849,8 @@ namespace Tide.Editor
                 op = GraphLook.Plain(() => Frame.PickOperator(this, owner, op), "tg-word", "tg-op");
                 op.text = now;
                 op.name = "op";
-                op.tooltip = "How it's changed. Click for another way.";
+                var word = GraphSchema.AssignWord(now);
+                op.tooltip = (word != null ? GraphLook.UpperFirst(word) + ". " : "") + "Click for another way of changing it.";
                 row.Add(op);
                 // One more, one less: there's no value to give
                 noValue = GraphSchema.Ops("step").Any(o => o.op == now) && from == 0;

@@ -180,7 +180,7 @@ public class GraphSchemaTests
         var call = doc.NewNode("call", 0, 0);
         call.Set("args", JValue.ArrayOf(new[] { JValue.Null(), JValue.Null() }));
         call.Set("argNames", JValue.Strings(new[] { "", "crit" }));
-        CollectionAssert.AreEqual(new[] { "arg 1", "crit:" }, GraphPorts.Of(call).Where(p => p.Input).Select(p => p.Label));
+        CollectionAssert.AreEqual(new[] { GraphSchema.Spec("call").Lists[0].Label + " 1", "crit:" }, GraphPorts.Of(call).Where(p => p.Input).Select(p => p.Label));
         // A shorthand member has no object
         var member = doc.NewNode("member", 0, 0);
         member.SetFlag("shorthand", true);
@@ -198,8 +198,14 @@ public class GraphSchemaTests
         foreach (var k in inline.Arr("always").Items) Assert.AreEqual(GraphSchema.InlineAlways, GraphSchema.Inline(k.String), k.String);
         foreach (var k in inline.Arr("path").Items) Assert.AreEqual(GraphSchema.InlinePath, GraphSchema.Inline(k.String), k.String);
         foreach (var k in inline.Arr("negative").Items) Assert.AreEqual(GraphSchema.InlineNegative, GraphSchema.Inline(k.String), k.String);
-        Assert.AreEqual(0, GraphSchema.Inline("call"), "anything worked out is a node");
+        foreach (var k in inline.Arr("numbers").Items) Assert.AreEqual(GraphSchema.InlineNumbers, GraphSchema.Inline(k.String), k.String);
+        foreach (var name in inline.Arr("numbersOf").Items) Assert.IsTrue(GraphSchema.InlineNumbersOf(name.String), name.String);
+        Assert.IsFalse(GraphSchema.InlineNumbersOf("Twice"), "a call of anything else is a node");
+        Assert.AreEqual(0, GraphSchema.Inline("method"), "anything worked out is a node");
         Assert.AreEqual(0, GraphSchema.Inline("binary"));
+        var words = GraphSchema.Json.Get("operators").Get("assignInfo");
+        for (var i = 0; i < words.Keys.Count; i++) Assert.AreEqual(words.Values[i].Str("label"), GraphSchema.AssignWord(words.Keys[i]), words.Keys[i]);
+        Assert.AreEqual("argument", GraphSchema.Spec("call").Lists[0].Label);
         Assert.AreEqual(inline.Str("about"), GraphSchema.InlineAbout);
         Assert.AreEqual("Set", GraphSchema.Spec("assign").Title);
 

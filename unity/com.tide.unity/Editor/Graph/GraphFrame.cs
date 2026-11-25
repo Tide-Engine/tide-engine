@@ -155,7 +155,11 @@ namespace Tide.Editor
                 bool yes;
                 if (how == GraphSchema.InlineAlways) yes = inputs.Count == 0;
                 else if (how == GraphSchema.InlinePath) yes = inputs.Count == 0 || (of != null && GraphSchema.Inline(of.Str("k")) != GraphSchema.InlineNegative && Folds(of, depth + 1));
-                else yes = n.Str("op") == "-" && of != null && (of.Str("k") == "int" || of.Str("k") == "float") && Folds(of, depth + 1);
+                else if (how == GraphSchema.InlineNegative) yes = n.Str("op") == "-" && of != null && (of.Str("k") == "int" || of.Str("k") == "float") && Folds(of, depth + 1);
+                // float2(16, -14): a vector or a colour whose arguments are all numbers shown there
+                else
+                    yes = GraphSchema.InlineNumbersOf(n.Str("name")) && inputs.Count > 0 && inputs.All(w => ById.TryGetValue(w, out var arg)
+                        && (arg.Str("k") == "int" || arg.Str("k") == "float" || GraphSchema.Inline(arg.Str("k")) == GraphSchema.InlineNegative) && Folds(arg, depth + 1));
                 state[id] = yes;
                 return yes;
             }
@@ -173,8 +177,9 @@ namespace Tide.Editor
             for (var n = leaf; n != null && path.Count < 64;)
             {
                 path.Insert(0, n);
+                var how = GraphSchema.Inline(n.Str("k"));
                 var inputs = GraphPorts.DataWires(n).Where(w => w != 0).ToList();
-                n = inputs.Count == 1 ? ShownIn(inputs[0]) : null;
+                n = inputs.Count == 1 && (how == GraphSchema.InlinePath || how == GraphSchema.InlineNegative) ? ShownIn(inputs[0]) : null;
             }
             return path;
         }
@@ -191,6 +196,7 @@ namespace Tide.Editor
                 case "local": return ById.TryGetValue(n.Wire("ref"), out var d) ? GraphSchema.LocalName(d) : "?";
                 case "member": return "." + n.Str("member");
                 case "unary": return n.Str("op") ?? "";
+                case "call": return n.Str("name") + "(" + string.Join(", ", (n.Arr("args")?.Items ?? new List<JValue>()).Select(a => ShownIn(JValue.AsId(a)) is JValue arg ? TextOf(arg) : "")) + ")";
                 case "int":
                 case "float":
                 case "char": return n.Str("text") ?? "";
@@ -210,6 +216,10 @@ namespace Tide.Editor
             foreach (var n in path.Where(n => n.Str("k") != "unary")) sb.Append(PartText(n));
             return sb.ToString();
         }
+
+        // How many characters wide what's shown in an input is, as tidec's layout counts them (folded_text): a
+        // path's names and dots, a box for each of a vector's numbers
+        internal int WidthOf(JValue shown) => GraphSchema.Inline(shown.Str("k")) == GraphSchema.InlineNumbers ? 8 * GraphPorts.DataWires(shown).Count(w => w != 0) : TextOf(shown).Length;
 
         // A value shown in an input and what it's made of: their ids
         internal HashSet<int> ChainOf(int id)
@@ -271,6 +281,8 @@ namespace Tide.Editor
                 if (op == "&&" || op == "||") return "bool";
             }
             var now = path.Get(owner);
+            var typed = ShownIn(now)?.Str("k");
+            if (typed == "int" || typed == "float" || typed == "unary") return null;
             return now != 0 ? TypeAt(now) : null;
         }
 
@@ -515,6 +527,13 @@ namespace Tide.Editor
                     nodes.Add(view);
                 }
                 else if (view.Signature == sig && view.Node == n && view.Call == call) continue;
+                else if (view.KeepOnce && view.Node == n && view.Call == call)
+                {
+                    view.KeepOnce = false;
+                    view.Signature = sig;
+                    continue;
+                }
+                view.KeepOnce = false;
                 view.Node = n;
                 view.Call = call;
                 view.Signature = sig;
@@ -998,6 +1017,34 @@ namespace Tide.Editor
             });
         }
 
+        // Puts a colour's numbers in the call that makes it (Color(1, 0.5, 0.25)), each a number shown there
+        internal void PutNumbers(JValue call, IList<string> texts, string label)
+        {
+            var g = Graph;
+            if (g == null) return;
+            Edit("Set " + label, () =>
+            {
+                Classify();
+                var order = GraphSchema.NodeOrder("call");
+                var args = call.Arr("args");
+                if (args == null) call.Set("args", args = JValue.NewArray(), order);
+                while (args.Items.Count < texts.Count) args.Items.Add(JValue.Null());
+                for (var i = 0; i < texts.Count; i++)
+                {
+                    var arg = ShownIn(JValue.AsId(args.Items[i]));
+                    if (arg != null && (arg.Str("k") == "int" || arg.Str("k") == "float"))
+                    {
+                        GraphValues.SetLiteral(arg, "float", texts[i]);
+                        continue;
+                    }
+                    var at = GraphDocument.PlaceOf(call);
+                    var n = Doc.AddNode(g, "float", at.x, at.y);
+                    GraphValues.SetLiteral(n, "float", texts[i]);
+                    SetWire(call, new WirePath("args", i), n.Wire("id"), out _);
+                }
+            });
+        }
+
         // The parameter or the local of a name, as a part to read it: null when the code has none of that name
         internal Part ReadOf(string name)
         {
@@ -1097,10 +1144,11 @@ namespace Tide.Editor
         internal void PickOperator(GraphNodeView view, JValue n, VisualElement from)
         {
             var k = n.Str("k");
-            var list = new GraphOptionList(GraphSchema.Spec(k)?.Title, null, "Search", 220);
+            var list = new GraphOptionList(k == "assign" ? "How is it changed?" : GraphSchema.Spec(k)?.Title, null, "Search", k == "assign" ? 260 : 220);
             list.Set(GraphSchema.Ops(k).Select(o => new GraphOption
             {
-                Title = o.title ?? o.op, Detail = o.title != null ? o.op : null, Keywords = o.op, Checked = o.op == n.Str("op"),
+                // A Set's sign with what it does in words beside it (the schema's assignInfo)
+                Title = o.title ?? o.op, Detail = o.title != null ? o.op : k == "assign" ? GraphSchema.AssignWord(o.op) : null, Keywords = o.op, Checked = o.op == n.Str("op"),
                 Pick = () => Edit("Operator", () => n.Set("op", JValue.Of(o.op), GraphSchema.NodeOrder(k))),
             }));
             Window.Open(list, from);

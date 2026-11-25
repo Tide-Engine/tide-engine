@@ -890,6 +890,21 @@
     margin: 0 2px;
 }
 
+.tg-pin-value--numbers {
+    max-width: 230px;
+}
+
+.tg-pin-value--numbers > .tg-inline {
+    margin-right: 3px;
+}
+
+.tg-pin-value.tg-pin-value--numbers .unity-color-field {
+    min-width: 84px;
+    width: 84px;
+    flex-grow: 0;
+    flex-shrink: 0;
+}
+
 .tg-pin-value .unity-base-field {
     margin: 0;
     flex-grow: 1;

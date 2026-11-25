@@ -173,7 +173,7 @@ namespace Tide.Editor
             return float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var f) ? f : 0;
         }
 
-        static string Format(float f)
+        internal static string Format(float f)
         {
             var s = Math.Round(f, 3).ToString("0.###", CultureInfo.InvariantCulture);
             return s.Contains(".") ? s : s + ".0";
@@ -422,7 +422,7 @@ namespace Tide.Editor
             if (own != null) return;
             // Not an enum of this file: the language server says whether it's one of the game's, and its choices
             list.Status = "Asking what " + type + " can be…";
-            TideGraphLanguage.MembersOfType(w, type, (members, why) =>
+            TideGraphLanguage.MembersOfName(w, type, (members, why) =>
             {
                 if (list.WasClosed) return;
                 var choices = members?.Where(m => m.Kind == TideGraphLanguage.KindEnumMember).Select(m => m.Label).ToList() ?? new List<string>();

@@ -89,6 +89,8 @@ namespace Tide.Editor
             public readonly Dictionary<string, (string control, string help)> ValueControls = new Dictionary<string, (string, string)>();
             public string ChoiceHelp;
             public readonly Dictionary<string, int> Inline = new Dictionary<string, int>();
+            public readonly HashSet<string> InlineNumbersOf = new HashSet<string>();
+            public readonly Dictionary<string, Info> AssignInfo = new Dictionary<string, Info>();
             public string InlineAbout;
             public string[] TypeCommon = Array.Empty<string>(), Rules = Array.Empty<string>();
             public TypeBuilder[] TypeBuilders = Array.Empty<TypeBuilder>();
@@ -314,6 +316,9 @@ namespace Tide.Editor
             foreach (var k in Strings(inline?.Arr("always"))) s.Inline[k] = InlineAlways;
             foreach (var k in Strings(inline?.Arr("path"))) s.Inline[k] = InlinePath;
             foreach (var k in Strings(inline?.Arr("negative"))) s.Inline[k] = InlineNegative;
+            foreach (var k in Strings(inline?.Arr("numbers"))) s.Inline[k] = InlineNumbers;
+            foreach (var name in Strings(inline?.Arr("numbersOf"))) s.InlineNumbersOf.Add(name);
+            Infos(j.Get("operators")?.Get("assignInfo"), s.AssignInfo);
             return s;
         }
 
@@ -391,7 +396,13 @@ namespace Tide.Editor
         // Which kinds of node are shown in the input that reads them, when one input does (`inline`): always (a
         // literal, a name), as a path (a member of what is itself shown there), as a negative (a '-' over a number);
         // 0 for a kind that's always a node. And the rule in the schema's words.
-        public const int InlineAlways = 1, InlinePath = 2, InlineNegative = 3;
+        // ...and as numbers (a call named one of `numbersOf`, a vector's or a colour's, whose arguments are all
+        // numbers shown there: float2(16, 14)), which is shown as the type's own control.
+        public const int InlineAlways = 1, InlinePath = 2, InlineNegative = 3, InlineNumbers = 4;
+        public static bool InlineNumbersOf(string name) => name != null && S.InlineNumbersOf.Contains(name);
+
+        // What a Set's operator is in words (operators.assignInfo): "becomes", "goes up by"; null where it has none
+        public static string AssignWord(string op) => op != null && S.AssignInfo.TryGetValue(op, out var i) ? i.Label : null;
         public static int Inline(string k) => k != null && S.Inline.TryGetValue(k, out var how) ? how : 0;
         public static string InlineAbout => S.InlineAbout;
 

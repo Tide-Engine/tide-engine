@@ -1128,7 +1128,7 @@ public class GraphTests
         GraphShots.Enter(frame.Views[eval.Wire("id")].Q<TextField>("title"), "Print");
         Assert.AreEqual("Print", call.Str("name"));
         // An argument, and the parameter dragged into it: its name in the input, and no node or wire for the read
-        GraphShots.Click(frame.Views[eval.Wire("id")].Q<Button>("add:arg"));
+        GraphShots.Click(frame.Views[eval.Wire("id")].Q<Button>("add:" + GraphSchema.Spec("call").Lists[0].Label));
         var arg = frame.Views[eval.Wire("id")].Input("args.0");
         Assert.IsNotNull(arg);
         Assert.IsTrue(board.Connect(frame.Entry.ReadPin("times"), arg, out var why), why);

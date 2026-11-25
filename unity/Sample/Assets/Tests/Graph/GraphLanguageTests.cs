@@ -773,7 +773,7 @@ public class GraphLanguageTests
     // TIDE_GRAPH_SHOTS set, and a graphics device, each step is a picture too.
 
     const string SpinGraph =
-        "{\"tidegraph\": 1, \"nextId\": 90, \"decls\": [\n" +
+        "{\"tidegraph\": 1, \"nextId\": 200, \"decls\": [\n" +
         "  {\"kind\": \"scene\", \"id\": 1, \"name\": \"Main\", \"members\": []},\n" +
         "  {\"kind\": \"enum\", \"id\": 70, \"name\": \"Mood\", \"members\": [{\"id\": 71, \"name\": \"Calm\"}, {\"id\": 72, \"name\": \"Wild\"}]},\n" +
         "  {\"kind\": \"const\", \"id\": 60, \"name\": \"SPEED\", \"type\": \"float\", \"value\": {\"root\": 61, \"nodes\": [{\"id\": 61, \"k\": \"float\", \"x\": 0, \"y\": 0, \"text\": \"2.0\"}]}},\n" +
@@ -781,7 +781,8 @@ public class GraphLanguageTests
         "    {\"kind\": \"field\", \"id\": 3, \"type\": \"float\", \"name\": \"frequency\"},\n" +
         "    {\"kind\": \"field\", \"id\": 4, \"type\": \"float\", \"name\": \"phase\"},\n" +
         "    {\"kind\": \"field\", \"id\": 5, \"type\": \"float3\", \"name\": \"axis\"},\n" +
-        "    {\"kind\": \"field\", \"id\": 6, \"type\": \"Mood\", \"name\": \"mood\"}]},\n" +
+        "    {\"kind\": \"field\", \"id\": 6, \"type\": \"Mood\", \"name\": \"mood\"},\n" +
+        "    {\"kind\": \"field\", \"id\": 7, \"type\": \"Color\", \"name\": \"tint\"}]},\n" +
         "  {\"kind\": \"function\", \"id\": 40, \"x\": 0, \"y\": 600, \"name\": \"Twice\", \"returnType\": \"float\", \"params\": [{\"id\": 41, \"mode\": \"read\", \"type\": \"float\", \"name\": \"amount\"}], \"body\": {\"entry\": 42, \"nodes\": [\n" +
         "    {\"id\": 42, \"k\": \"return\", \"x\": 300, \"y\": 0, \"value\": 43},\n" +
         "    {\"id\": 43, \"k\": \"binary\", \"x\": 0, \"y\": 100, \"op\": \"*\", \"lhs\": 44, \"rhs\": 45},\n" +
@@ -807,10 +808,25 @@ public class GraphLanguageTests
         "    {\"id\": 28, \"k\": \"name\", \"x\": 860, \"y\": 136, \"name\": \"wobble\"},\n" +
         "    {\"id\": 26, \"k\": \"int\", \"x\": 860, \"y\": 136, \"text\": \"0\"},\n" +
         "    {\"id\": 27, \"k\": \"name\", \"x\": 860, \"y\": 136, \"name\": \"SPEED\"},\n" +
-        "    {\"id\": 30, \"k\": \"assign\", \"x\": 1484, \"y\": 0, \"op\": \"=\", \"target\": 31, \"value\": 33},\n" +
+        "    {\"id\": 30, \"k\": \"assign\", \"x\": 1484, \"y\": 0, \"op\": \"=\", \"target\": 31, \"value\": 33, \"next\": 150},\n" +
         "    {\"id\": 31, \"k\": \"member\", \"x\": 1484, \"y\": 136, \"object\": 32, \"member\": \"mood\"},\n" +
         "    {\"id\": 32, \"k\": \"name\", \"x\": 1484, \"y\": 136, \"name\": \"wobble\"},\n" +
-        "    {\"id\": 33, \"k\": \"member\", \"x\": 1484, \"y\": 136, \"shorthand\": true, \"member\": \"Wild\"}\n" +
+        "    {\"id\": 33, \"k\": \"member\", \"x\": 1484, \"y\": 136, \"shorthand\": true, \"member\": \"Wild\"},\n" +
+        "    {\"id\": 150, \"k\": \"assign\", \"x\": 1760, \"y\": 0, \"op\": \"=\", \"target\": 151, \"value\": 153, \"next\": 160},\n" +
+        "    {\"id\": 151, \"k\": \"member\", \"x\": 1760, \"y\": 136, \"object\": 152, \"member\": \"axis\"},\n" +
+        "    {\"id\": 152, \"k\": \"name\", \"x\": 1760, \"y\": 136, \"name\": \"wobble\"},\n" +
+        "    {\"id\": 153, \"k\": \"call\", \"x\": 1760, \"y\": 136, \"name\": \"float3\", \"args\": [154, 155, 156]},\n" +
+        "    {\"id\": 154, \"k\": \"int\", \"x\": 1760, \"y\": 136, \"text\": \"0\"},\n" +
+        "    {\"id\": 155, \"k\": \"float\", \"x\": 1760, \"y\": 136, \"text\": \"1.5\"},\n" +
+        "    {\"id\": 156, \"k\": \"unary\", \"x\": 1760, \"y\": 136, \"op\": \"-\", \"value\": 157},\n" +
+        "    {\"id\": 157, \"k\": \"int\", \"x\": 1760, \"y\": 136, \"text\": \"2\"},\n" +
+        "    {\"id\": 160, \"k\": \"assign\", \"x\": 2100, \"y\": 0, \"op\": \"=\", \"target\": 161, \"value\": 163},\n" +
+        "    {\"id\": 161, \"k\": \"member\", \"x\": 2100, \"y\": 136, \"object\": 162, \"member\": \"tint\"},\n" +
+        "    {\"id\": 162, \"k\": \"name\", \"x\": 2100, \"y\": 136, \"name\": \"wobble\"},\n" +
+        "    {\"id\": 163, \"k\": \"call\", \"x\": 2100, \"y\": 136, \"name\": \"Color\", \"args\": [164, 165, 166]},\n" +
+        "    {\"id\": 164, \"k\": \"float\", \"x\": 2100, \"y\": 136, \"text\": \"1.0\"},\n" +
+        "    {\"id\": 165, \"k\": \"float\", \"x\": 2100, \"y\": 136, \"text\": \"0.5\"},\n" +
+        "    {\"id\": 166, \"k\": \"float\", \"x\": 2100, \"y\": 136, \"text\": \"0.25\"}\n" +
         "  ]}}\n" +
         "]}\n";
 
@@ -833,9 +849,9 @@ public class GraphLanguageTests
         window.Reveal(10);
         var frame = board.Frame(10);
 
-        // A local, three Sets and the two calls that work a value out: six nodes of the file's twenty-one
-        CollectionAssert.AreEquivalent(new[] { 80, 12, 15, 20, 23, 30 }, frame.Views.Keys);
-        Assert.AreEqual(21, GraphDocument.Nodes(frame.Graph).Items.Count);
+        // A local, five Sets and the two calls that work a value out: eight nodes of the file's thirty-six
+        CollectionAssert.AreEquivalent(new[] { 80, 12, 15, 20, 23, 30, 150, 160 }, frame.Views.Keys);
+        Assert.AreEqual(36, GraphDocument.Nodes(frame.Graph).Items.Count);
         var opened = window.Doc.Text;
         Assert.IsFalse(window.Dirty, "showing them where they're read changes nothing of the file");
         Assert.AreEqual("1.5", frame.Views[80].Q("in:value").Q<TextField>("typed").value, "a number is typed where it's read");
@@ -921,7 +937,65 @@ public class GraphLanguageTests
         Assert.IsTrue(board.Connect(frame.Entry.ReadPin("time"), frame.Views[15].Input("args.0"), out var why), why);
         frame = board.Frame(10);
         Assert.AreEqual("time", frame.Views[15].Q("in:args.0").Q("chip").Q<Button>("part0").text);
-        Assert.AreEqual(6, frame.Views.Count, "a chip, not a node");
+        Assert.AreEqual(8, frame.Views.Count, "a chip, not a node");
+
+        // A vector made of numbers alone is in the input, as a box for each number; a colour as its field
+        Assert.IsTrue(frame.Hidden.Contains(153) && frame.Hidden.Contains(156) && frame.Hidden.Contains(163));
+        var axis = frame.Views[150].Q("in:value");
+        Assert.IsFalse(frame.Views[150].Input("value").Connected, "no wire");
+        CollectionAssert.AreEqual(new[] { "0", "1.5", "-2" }, axis.Q("numbers").Query<TextField>().ToList().Select(f => f.value).ToList());
+        CollectionAssert.AreEqual(new[] { "x", "y", "z" }, axis.Q("numbers").Query<TextField>().ToList().Select(f => f.tooltip).ToList(), "each box is its part, by the type's own names");
+        var tint = frame.Views[160].Q("in:value").Q<UnityEditor.UIElements.ColorField>("colour");
+        Assert.IsNotNull(tint);
+        Assert.AreEqual(new Color(1, 0.5f, 0.25f, 1), tint.value);
+        Assert.AreEqual("float3(0, 1.5, -2)", frame.TextOf(frame.ShownIn(153)));
+        window.Reveal(150);
+        yield return GraphShots.Take(window, "43-a-vector-in-its-input");
+        window.Reveal(160);
+        yield return GraphShots.Take(window, "44-a-colour-in-its-input");
+        window.Reveal(10);
+        // A number typed in a box is that number, in the file's own node for it
+        var before = GraphDocument.Nodes(frame.Graph).Items.Count;
+        frame.TypeInto(GraphDocument.NodeIn(frame.Graph, 153), new WirePath("args", 0), "0.75", frame.Views[150]);
+        Assert.AreEqual("float", GraphDocument.NodeIn(frame.Graph, 154).Str("k"), "a whole number becomes a fraction where it is");
+        Assert.AreEqual("0.75", GraphDocument.NodeIn(frame.Graph, 154).Str("text"));
+        Assert.AreEqual(before, GraphDocument.Nodes(frame.Graph).Items.Count);
+        // A colour picked changes the numbers, and the field isn't built again while its picker is open
+        frame = board.Frame(10);
+        tint = frame.Views[160].Q("in:value").Q<UnityEditor.UIElements.ColorField>("colour");
+        tint.value = new Color(0.2f, 0.4f, 0.6f, 1);
+        CollectionAssert.AreEqual(new[] { "0.2", "0.4", "0.6" }, new[] { 164, 165, 166 }.Select(id => GraphDocument.NodeIn(frame.Graph, id).Str("text")).ToList());
+        Assert.AreSame(tint, board.Frame(10).Views[160].Q("in:value").Q<UnityEditor.UIElements.ColorField>("colour"));
+        // A name typed in a box makes the vector a node, wired in, with the name in its row
+        frame.TypeInto(GraphDocument.NodeIn(frame.Graph, 153), new WirePath("args", 1), "speed", frame.Views[150]);
+        frame = board.Frame(10);
+        Assert.IsFalse(frame.Hidden.Contains(153), "no longer numbers alone");
+        Assert.IsTrue(frame.Views[150].Input("value").Connected);
+        Assert.AreEqual("speed", frame.Views[153].Q("in:args.1").Q("chip").Q<Button>("part0").text);
+        yield return CheckedAgain(window);
+        StringAssert.Contains("wobble.axis = float3(0.75, speed, -2);", window.Checked.Text);
+        StringAssert.Contains("wobble.tint = Color(0.2, 0.4, 0.6);", window.Checked.Text);
+        // How a Set changes what it changes, in the schema's words beside the sign
+        frame = board.Frame(10);
+        var how = frame.Views[12].Q("in:value").Q<Button>("op");
+        StringAssert.Contains(GraphSchema.AssignWord("+="), how.tooltip.ToLowerInvariant());
+        GraphShots.Click(how);
+        var ways = (GraphOptionList)window.Popup;
+        Assert.AreEqual(GraphSchema.AssignWord("="), ways.Shown.First(o => o.Title == "=").Detail);
+        Assert.AreEqual(GraphSchema.Json.Get("operators").Get("assignInfo").Get("++").Str("label"), ways.Shown.First(o => o.Title == "++").Detail);
+        yield return GraphShots.Take(window, "45-how-a-set-changes");
+        window.ClosePopup(ways);
+        // An enum that's the type an input takes gives its choices, this file's or not: by its name
+        List<TideGraphLanguage.Member> anchors = null;
+        TideGraphLanguage.MembersOfName(window, "Anchor", (found, _) => anchors = found ?? new List<TideGraphLanguage.Member>());
+        yield return Until(() => anchors != null, "tidels says what an enum of the engine's has");
+        Assert.IsTrue(anchors.Any(m => m.Label == "UpperLeft" && m.Kind == TideGraphLanguage.KindEnumMember), string.Join(", ", anchors.Select(m => m.Label)));
+        Assert.AreEqual(window.Doc.Text, TideLanguageClient.Shared.TextOf(TideLanguageClient.UriOf(path)), "asked by name: tidels has the file as it is");
+        values = board.PickValue(frame, frame.Views[160].Node, new WirePath("value"), "value", frame.Views[160]);
+        yield return Until(() => !values.Asking, "tidels says what a Color has");
+        Assert.AreEqual("Color", values.Wanted);
+        Assert.IsTrue(values.Shown.Any(o => o.Title == "Color.white"), "a type's own constants: " + Titles(values));
+        window.ClosePopup(values);
 
         // The function's "-2": a '-' over a number, typed in the input
         window.Reveal(40);

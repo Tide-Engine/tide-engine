@@ -566,50 +566,38 @@ namespace Tide.Editor
             });
         }
 
-        // What a name has after its dot (Math's functions and constants, an enum's choices): asked of a node that
-        // reads the name, in a copy of the file, which is put back
-        public static void MembersOfName(TideGraphWindow window, GraphSlot slot, string name, Action<List<Member>, string> done)
+        // What a name itself has after its dot (a namespace's functions and constants, an enum's choices, a
+        // type's own constants), by the name: tide/graphMembers with {"name"}
+        public static void MembersOfName(TideGraphWindow window, string name, Action<List<Member>, string> done)
         {
             var client = ClientOf(window);
-            if (client == null || string.IsNullOrEmpty(name))
+            name = (name ?? "").TrimEnd('?');
+            if (client == null || name.Length == 0 || name.IndexOfAny(new[] { '<', '[' }) >= 0)
             {
                 done(null, "the language server isn't checking this file");
                 return;
             }
             var uri = UriOf(window.Path);
             var text = window.Doc.Text;
-            var copy = GraphDocument.Parse(text);
-            var graph = copy.GetGraph(slot);
-            if (graph == null)
-            {
-                done(null, null);
-                return;
-            }
-            var read = copy.AddNode(graph, "name", 0, 0);
-            read.Set("name", JValue.Of(name), GraphSchema.NodeOrder("name"));
-            var node = read.Wire("id");
-            var probe = copy.Text;
             client.Operate(finish =>
             {
-                if (window == null || !client.SetText(uri, probe))
+                if (window == null || !client.SetText(uri, text))
                 {
                     finish();
                     done(null, "the window closed");
                     return;
                 }
                 var parameters = JValue.NewObject();
-                parameters.Set("node", JValue.Of(node));
+                parameters.Set("name", JValue.Of(name));
                 client.Ask("tide/graphMembers", uri, parameters, (items, why) =>
                 {
-                    client.SetText(uri, text);
                     finish();
                     done(Items(items).Where(i => !string.IsNullOrEmpty(i.Str("label"))).Select(Member.Of).ToList(), why);
                 });
             });
         }
 
-        // What a type of the game has (an enum's choices, a struct's fields), by its name: asked in a copy of the
-        // file with a function that names the type
+        // What a value of a type has (a struct's fields, a vector's parts), by the type's name: asked with {"type"}
         public static void MembersOfType(TideGraphWindow window, string type, Action<List<Member>, string> done)
         {
             var client = ClientOf(window);

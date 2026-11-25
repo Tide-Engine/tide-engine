@@ -90,7 +90,7 @@ namespace Tide.Editor
                 members[type] = found ?? new List<TideGraphLanguage.Member>();
                 Fill(true);
             }
-            if (space) TideGraphLanguage.MembersOfName(Window, frame.Slot, type.Substring("name:".Length), Got);
+            if (space) TideGraphLanguage.MembersOfName(Window, type.Substring("name:".Length), Got);
             else TideGraphLanguage.MembersOfType(Window, type, Got);
         }
 
@@ -189,13 +189,28 @@ namespace Tide.Editor
                     var t = tick;
                     options.Add(new GraphOption { Title = t, Section = value, Priority = 4, Pick = () => frame.PutLiteral(owner, path, "bool", t, label) });
                 }
-            // An enum of this file's: its choices
-            var choices = wanted != null ? Doc.EnumMembers(wanted.TrimEnd('?')) : null;
+            // An enum's choices: this file's own, or what the language server says the type's name has; and a
+            // type's own constants (Color.white)
+            var named = wanted?.TrimEnd('?');
+            var choices = named != null ? Doc.EnumMembers(named) : null;
+            if (named != null && !Simple(named) && named.IndexOfAny(new[] { '<', '[' }) < 0)
+            {
+                AskType("name:" + named, true);
+                if (members.TryGetValue("name:" + named, out var own))
+                {
+                    if (choices == null && own.Any(m => m.Kind == TideGraphLanguage.KindEnumMember)) choices = own.Where(m => m.Kind == TideGraphLanguage.KindEnumMember).Select(m => m.Label).ToList();
+                    foreach (var constant in own.Where(m => m.Kind == TideGraphLanguage.KindConstant && GraphValues.Fits(m.Type, wanted)))
+                    {
+                        var path2 = new List<GraphFrame.Part> { new GraphFrame.Part { Kind = "name", Name = named, Space = true }, new GraphFrame.Part { Kind = "member", Name = constant.Label, Type = constant.Type } };
+                        options.Add(new GraphOption { Title = named + "." + constant.Label, Section = named, Priority = 3, Dot = TideGraphTypes.ColorOf(wanted, Light), Pick = () => Take(path2) });
+                    }
+                }
+            }
             if (choices != null)
                 foreach (var choice in choices)
                 {
                     var part = new GraphFrame.Part { Kind = "shorthand", Name = choice, Type = wanted };
-                    options.Add(new GraphOption { Title = "." + choice, Section = wanted.TrimEnd('?'), Priority = 4, Dot = TideGraphTypes.ColorOf(wanted, Light), Pick = () => Take(new List<GraphFrame.Part> { part }) });
+                    options.Add(new GraphOption { Title = "." + choice, Section = named, Priority = 4, Dot = TideGraphTypes.ColorOf(wanted, Light), Pick = () => Take(new List<GraphFrame.Part> { part }) });
                 }
 
             // What the code takes, and the locals declared before the node: completion's variables there are the
