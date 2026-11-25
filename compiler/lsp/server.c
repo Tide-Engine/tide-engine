@@ -1693,6 +1693,8 @@ static void document_request(lsp_server *s, const char *method, const json *id, 
             analysis_graph_text(&g);
         } else if (strcmp(method, "tide/graphTypes") == 0) {
             analysis_graph_types(&g);
+        } else if (strcmp(method, "tide/graphCalls") == 0) {
+            analysis_graph_calls(&g);
         } else if (strcmp(method, "tide/graphMembers") == 0) {
             // What a node's value has: the game read again with a '.' after the node, and completion there; and the
             // node's type, read first with the node written and no '.'. The next request reads the graph as it is
@@ -1906,7 +1908,7 @@ static bool is_document_request(const char *method)
         "textDocument/codeLens", "textDocument/codeAction", "textDocument/inlayHint", "textDocument/foldingRange",
         "textDocument/semanticTokens/full", "textDocument/typeDefinition", "textDocument/implementation",
         "textDocument/prepareCallHierarchy", "textDocument/rangeFormatting", "textDocument/selectionRange",
-        "tide/graphText", "tide/graphTypes", "tide/graphCompletion", "tide/graphHover", "tide/graphSignatureHelp",
+        "tide/graphText", "tide/graphTypes", "tide/graphCalls", "tide/graphCompletion", "tide/graphHover", "tide/graphSignatureHelp",
         "tide/graphMembers",
     };
     for (size_t i = 0; i < sizeof methods / sizeof methods[0]; i++) {

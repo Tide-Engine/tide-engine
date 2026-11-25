@@ -15481,6 +15481,50 @@ void analysis_graph_types(jbuf *out)
     jb_put(out, "}");
 }
 
+// What each call's node calls with: {"<id>": {"params": ["value", "min", "max"], "types": ["float", "", ""],
+// "args": [0, 1, 2]}}: the callee's parameters' names (the game's function's, or the built-in form the call
+// took), their types where the game declares them, and the parameter each written argument goes to. Calls with
+// no names to show (Spawn(...)) aren't in it.
+void analysis_graph_calls(jbuf *out)
+{
+    enum { MOST = 32 };
+    const graph_map *map = DOC->src.graph;
+    VEC(int) seen = {0};
+    int written = 0;
+    jb_put(out, "{");
+    for (int i = 0; i < A.calls.count; i++) {
+        const expr *call = A.calls.items[i];
+        if (call->at.file != A.doc || call->at.line <= 0) continue;
+        const int id = graph_id_at(map, call->at);
+        bool again = !id;
+        for (int k = 0; k < seen.count && !again; k++) again = seen.items[k] == id;
+        if (again) continue;
+        str names[MOST];
+        const int count = call_param_names(call, names, MOST);
+        if (count <= 0) continue;
+        vec_push(seen, id);
+        const decl *command = called_command(call);
+        const decl *callee = !command && (call->call == CALL_METHOD || call->call == CALL_FUNCTION || call->call == CALL_EFFECT)
+                           ? call->method : NULL;
+        jb_printf(out, "%s\"%d\":{\"params\":[", written++ ? "," : "", id);
+        for (int k = 0; k < count; k++) {
+            if (k) jb_put(out, ",");
+            jb_string(out, str_to_cstr(names[k]));
+        }
+        jb_put(out, "],\"types\":[");
+        for (int k = 0; k < count; k++) {
+            if (k) jb_put(out, ",");
+            const type t = command && k < command->fields.count ? command->fields.items[k].type
+                         : callee && k < callee->params.count ? callee->params.items[k].type : (type){TY_ERROR, NULL};
+            jb_string(out, t.kind == TY_ERROR ? "" : type_name(t));
+        }
+        jb_put(out, "],\"args\":[");
+        for (int n = 0; n < written_count(call); n++) jb_printf(out, "%s%d", n ? "," : "", written_param(call, n));
+        jb_put(out, "]}");
+    }
+    jb_put(out, "}");
+}
+
 void analysis_graph_node_type(const int node, jbuf *out)
 {
     jbuf types = {0};

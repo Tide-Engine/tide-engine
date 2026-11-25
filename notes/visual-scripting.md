@@ -359,7 +359,9 @@ JetBrains, one web editor). What they'd otherwise each implement is tidec's, ser
 - `tidels_tests` `lsp_graphs`: diagnostics with the node, and the four requests; members of a type by name (the
   game's, the engine's, and nothing for text that's more than a type); a graph with holes: each on its node with
   its port (and index), the unknown call beside them still said, no `_graphHole` in any message, its Tide and
-  an unread node's members still answered.
+  an unread node's members still answered; `tide/graphCalls` for a built-in (`Math.Max`: a, b) and a function of
+  the game's (names and types); a layout with a worked-out value left of its statement and a number where its
+  reader is.
 - The Sample's EditMode `GraphLanguageTests` (tidels and tidec of this checkout's build, or `TIDE_TIDELS`,
   `TIDE_TIDEC`): an unknown call's error from tidels on its node with its Tide line, the click selecting it; a
   member node's type (`int`) on it, its output and its object's input, its hover; completion after a wired
@@ -523,7 +525,8 @@ and code to its right; a declaration with none is placed by the editor beside wh
   what it takes (a component, a singleton, a filter, and what tidels offers at that place). A handler's entry
   picks its event; a command's has its payload's rows; a function's has its result's type. The entry's exec
   output is the body's `entry`. Dragging a frame's title moves all of it; it grows around its nodes.
-- **Wires for names.** A `name` node that reads the frame's parameter, and a `local` node, aren't drawn as
+- **Wires for names** (superseded 2026-11-25 by "Simple values are in the input" below, which goes further: no
+  wire either). A `name` node that reads the frame's parameter, and a `local` node, aren't drawn as
   nodes: their wire comes straight from the parameter's pin on the entry, or from the pin of the node that
   declares the local (`var`, a loop's variable, an `is`'s name, an `out var`). Dragging from such a pin makes the
   node; renaming the parameter or the local renames them. A `name` of anything else (a constant, a type, a
@@ -556,6 +559,42 @@ isn't on screen: "View as Tide" in the board's "..." menu opens it.
 
 **Finding.** A "Contents" list (closed until asked for) and a jump-to search list the file's declarations by
 group; picking one pans to it. Frames off screen aren't drawn.
+
+**Simple values are in the input** (2026-11-25, my pick after looking at the first rebuilt page; Provisional).
+With a node per name and per `.member`, one statement was three nodes and four wires (`wobble`'s pin → `phase` →
+Set's target), a converted function was a syntax tree, and in a big frame the wires from the entry's pins crossed
+all of it. So: **a value read by one input is shown in that input and edited there, and is no node and has no
+wire, when it's simple**: a literal (`int`, `float`, `bool`, `string`, `char`, `this`, `default`, `null`), a
+`name` or a `local`, a `member` of what is itself shown there (a path, `ball.position.x`; a shorthand `.Run`), a
+`-` over a number. Anything worked out (a call, an operator, a list, a literal of a type...) is a node wired in, as
+before; a simple value read by two inputs is a node too. The schema says which kinds (`inline`: `always`,
+`path`, `negative`, and the rule in words); the file is unchanged, a node per name and member as tidec writes
+them. A statement reads as a sentence on one node: **Set** `wobble.phase` `+=` `wobble.frequency`.
+
+- An input's row is its name (`portInfo`), then what's in it: a number's, a tick's, a text's own control; a chip
+  with a name or a path in its type's colour; or a pin for a wire. An empty input says "pick…" (red after a check
+  says it's a hole, by `data.port`).
+- Clicking an input's value, or its "pick…", opens the value picker for that input, a search box over: a value
+  of its type to type in (where the type's known: `tide/graphCalls` gives a call's parameters' types,
+  `tide/graphTypes` a node's), **what this code has** (the frame's parameters and the locals declared before
+  it, each opening to its fields through `tide/graphMembers` by type), the game's constants and functions
+  (tidels' completion at that place), then "Work it out…" (operators, calls), which makes a node wired in.
+  Each segment of a path can be clicked to change it from there on.
+- The entry's pins and a node's value pin are still dragged from: dropped on an input they fill it (a chip for
+  a parameter or a local, a wire for a node); dropped on the frame they open the search as before. Hovering a
+  chip lights the entry's row or the node that declares what it reads, and the other reads of it; hovering a
+  parameter's row lights its reads.
+- A method whose object is shown in the input is titled with it, `ball.Bounce`, `Math.Clamp`, and has no "of"
+  row; a call's arguments are named by its callee's parameters (`tide/graphCalls`: `params`, `types`, `args`),
+  "argument 1" only until the first check answers.
+- Layout: tidec gives what's shown in an input no room (`graph_layout_fold`: the node is placed where its reader
+  is, the reader is as wide as its widest row). sumo's arena went from 24,000 x 28,000 to 15,000 x 14,000.
+
+**`tide/graphCalls`** (2026-11-25): `{"<call's node>": {"params": ["value", "min", "max"], "types": ["float", "",
+""], "args": [0, 1, 2]}}` for every checked call of the document: the callee's parameters' names
+(`call_param_names`, as inlay hints have them: the game's function's or command's, or the built-in form the call
+took), their types where the game declares them (empty for a built-in's), and the parameter each written argument
+goes to. Calls with no names to show (`Spawn(...)`) aren't in it.
 
 **More of the wording in the schema** (2026-11-25, what the web page had made up, so the Unity window says the
 same): `flagInfo` (a node's own flags: label, help, advanced), `portInfo` (what an input or an exec output is

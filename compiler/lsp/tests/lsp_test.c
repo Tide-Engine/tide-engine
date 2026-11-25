@@ -14271,12 +14271,26 @@ TIDE_TEST(lsp_graphs)
         "  {\"kind\": \"singleton\", \"id\": 2, \"name\": \"Score\", \"members\": [{\"kind\": \"field\", \"id\": 3, \"type\": \"int\", \"name\": \"points\"}]},\n"
         "  {\"kind\": \"system\", \"id\": 10, \"name\": \"Add\", \"params\": [{\"id\": 11, \"mode\": \"mut\", \"type\": \"Score\", \"name\": \"score\"}],\n"
         "   \"body\": {\"entry\": 12, \"nodes\": [\n"
-        "    {\"id\": 12, \"k\": \"assign\", \"x\": 0, \"y\": 0, \"op\": \"+=\", \"target\": 13, \"value\": 15},\n"
+        "    {\"id\": 12, \"k\": \"assign\", \"x\": 0, \"y\": 0, \"op\": \"+=\", \"target\": 13, \"value\": 15, \"next\": 18},\n"
         "    {\"id\": 13, \"k\": \"member\", \"x\": 0, \"y\": 0, \"object\": 14, \"member\": \"points\"},\n"
         "    {\"id\": 14, \"k\": \"name\", \"x\": 0, \"y\": 0, \"name\": \"score\"},\n"
         "    {\"id\": 15, \"k\": \"call\", \"x\": 0, \"y\": 0, \"name\": \"Bonus\", \"args\": [16]},\n"
         "    {\"id\": 16, \"k\": \"int\", \"x\": 0, \"y\": 0, \"text\": \"3\"},\n"
-        "    {\"id\": 17, \"k\": \"name\", \"x\": 0, \"y\": 0, \"name\": \"score\"}\n"
+        "    {\"id\": 17, \"k\": \"name\", \"x\": 0, \"y\": 0, \"name\": \"score\"},\n"
+        "    {\"id\": 18, \"k\": \"var\", \"x\": 0, \"y\": 0, \"name\": \"most\", \"value\": 19, \"next\": 25},\n"
+        "    {\"id\": 19, \"k\": \"call\", \"x\": 0, \"y\": 0, \"name\": \"Math.Max\", \"args\": [20, 21]},\n"
+        "    {\"id\": 20, \"k\": \"int\", \"x\": 0, \"y\": 0, \"text\": \"1\"},\n"
+        "    {\"id\": 21, \"k\": \"int\", \"x\": 0, \"y\": 0, \"text\": \"2\"},\n"
+        "    {\"id\": 22, \"k\": \"call\", \"x\": 0, \"y\": 0, \"name\": \"Scaled\", \"args\": [23, 24]},\n"
+        "    {\"id\": 23, \"k\": \"int\", \"x\": 0, \"y\": 0, \"text\": \"1\"},\n"
+        "    {\"id\": 24, \"k\": \"bool\", \"x\": 0, \"y\": 0, \"value\": true},\n"
+        "    {\"id\": 25, \"k\": \"eval\", \"x\": 0, \"y\": 0, \"value\": 22}\n"
+        "  ]}},\n"
+        "  {\"kind\": \"function\", \"id\": 26, \"name\": \"Scaled\", \"returnType\": \"int\", \"params\": [\n"
+        "    {\"id\": 27, \"type\": \"int\", \"name\": \"amount\"}, {\"id\": 28, \"type\": \"bool\", \"name\": \"twice\"}],\n"
+        "   \"body\": {\"entry\": 29, \"nodes\": [\n"
+        "    {\"id\": 29, \"k\": \"return\", \"x\": 0, \"y\": 0, \"value\": 30},\n"
+        "    {\"id\": 30, \"k\": \"name\", \"x\": 0, \"y\": 0, \"name\": \"amount\"}\n"
         "  ]}}\n"
         "]}\n";
     static const char uri[] = "file:///lsp_graph.tidegraph";
@@ -14296,6 +14310,11 @@ TIDE_TEST(lsp_graphs)
     TIDE_CHECK(points != NULL);
 
     TIDE_CHECK(has(request_at(uri, "tide/graphTypes", 0, 0, ""), "\"13\":\"int\""));
+    // What a call's node calls with: a built-in's parameters by name, the game's with their types
+    const char *calls = request_at(uri, "tide/graphCalls", 0, 0, "");
+    if (!has(calls, "\"19\"")) fprintf(stderr, "calls: %s\n", calls);
+    TIDE_CHECK(has(calls, "\"19\":{\"params\":[\"a\",\"b\"],\"types\":[\"\",\"\"],\"args\":[0,1]}"));
+    TIDE_CHECK(has(calls, "\"22\":{\"params\":[\"amount\",\"twice\"],\"types\":[\"int\",\"bool\"],\"args\":[0,1]}"));
 
     if (points) {
         char extra[64];
@@ -14349,17 +14368,20 @@ TIDE_TEST(lsp_graphs)
     TIDE_CHECK(has(request_at(holes_uri, "tide/graphText", 0, 0, ""), "system Add(mut Score score)"));
     TIDE_CHECK(offers(request_at(holes_uri, "tide/graphMembers", 0, 0, "\"node\":17"), "points"));
 
-    // The schema both editors read, and a layout: the statement at 0, its values to its left
+    // The schema both editors read, and a layout: the statement at 0, a value that's worked out to its left, and
+    // a simple one (a number) where its reader is, as it's shown in the reader's input
     clear_sent();
     handle("{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"tide/graphSchema\",\"params\":{}}");
     TIDE_CHECK(has(last_sent(), "\"k\": \"switchExpr\"") && has(last_sent(), "\"declarations\""));
     clear_sent();
     handle("{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"tide/graphLayout\",\"params\":{\"graph\":{\"entry\":1,\"nodes\":["
-           "{\"id\":1,\"k\":\"return\",\"value\":2},{\"id\":2,\"k\":\"int\",\"text\":\"3\"}]}}}");
+           "{\"id\":1,\"k\":\"return\",\"value\":2},{\"id\":2,\"k\":\"call\",\"name\":\"Most\",\"args\":[3]},"
+           "{\"id\":3,\"k\":\"int\",\"text\":\"3\"}]}}}");
     const json *layout = json_path(json_parse(last_sent(), strlen(last_sent())), "result", NULL);
     TIDE_CHECK(layout && json_get(layout, "1") && json_get(layout, "2"));
     if (layout && json_get(layout, "1") && json_get(layout, "2")) {
         TIDE_CHECK(json_int(json_get(layout, "2")->items[0], 0) < json_int(json_get(layout, "1")->items[0], 0));
+        TIDE_CHECK(json_get(layout, "3") && json_int(json_get(layout, "3")->items[0], -1) == json_int(json_get(layout, "2")->items[0], 0));
     }
     clear_sent();
     lsp_free(&server);

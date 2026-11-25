@@ -622,21 +622,44 @@ const char *graph_schema_text(size_t *len)
 static const graph_json *schema_nodes; // Its "nodes", while a graph is read (graph_lower, graph_schema_hold), else NULL
 static int schema_held;
 
-static const graph_json *read_schema(void)
+static const graph_json *schema_root;  // ...and all of it
+
+static const graph_json *read_schema_root(void)
 {
     source src = {.path = "<graph schema>"};
     src.text = graph_schema_text(&src.len);
-    const graph_json *root = graph_json_parse(&src);
-    return graph_json_get(root, "nodes");
+    return graph_json_parse(&src);
+}
+
+static const graph_json *read_schema(void)
+{
+    return graph_json_get(read_schema_root(), "nodes");
 }
 
 void graph_schema_hold(const bool hold)
 {
     if (hold) {
-        if (!schema_held++ && !schema_nodes) schema_nodes = read_schema();
+        if (!schema_held++ && !schema_nodes) {
+            schema_root = read_schema_root();
+            schema_nodes = graph_json_get(schema_root, "nodes");
+        }
     } else if (!--schema_held) {
         schema_nodes = NULL;
+        schema_root = NULL;
     }
+}
+
+int graph_schema_inline(const str kind)
+{
+    static const char *const lists[] = {"always", "path", "negative"};
+    const graph_json *shown = graph_json_get(schema_root ? schema_root : read_schema_root(), "inline");
+    for (int l = 0; shown && l < 3; l++) {
+        const graph_json *kinds = graph_json_get(shown, lists[l]);
+        for (int i = 0; kinds && kinds->kind == GJ_ARRAY && i < kinds->count; i++) {
+            if (kinds->items[i]->kind == GJ_STRING && str_eq(kinds->items[i]->text, kind)) return l + 1;
+        }
+    }
+    return 0;
 }
 
 static const graph_json *node_spec(const str k)

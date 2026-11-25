@@ -80,7 +80,7 @@
   ],
   "nodes": [
     {"k": "var", "title": "Local", "category": "locals", "exec": true, "keys": ["mut", "type", "name", "value", "shared"], "inputs": ["value"], "declares": "name", "help": "Makes a local: a named value for the code after it"},
-    {"k": "assign", "title": "Assign", "category": "flow", "exec": true, "keys": ["op", "target", "value"], "inputs": ["target", "value"], "help": "Changes a value"},
+    {"k": "assign", "title": "Set", "category": "flow", "exec": true, "keys": ["op", "target", "value"], "inputs": ["target", "value"], "help": "Changes a value"},
     {"k": "eval", "title": "Do", "category": "flow", "exec": true, "value": true, "keys": ["value", "stacked", "block", "withBlock"], "inputs": ["value"], "outputs": ["block"], "help": "Runs a call for what it does"},
     {"k": "if", "title": "If", "category": "flow", "exec": true, "keys": ["cond", "then", "else"], "inputs": ["cond"], "outputs": ["then", "else"], "help": "Runs one branch or the other"},
     {"k": "while", "title": "While", "category": "flow", "exec": true, "keys": ["cond", "body"], "inputs": ["cond"], "outputs": ["body"], "help": "Runs its body again while a condition holds"},
@@ -128,7 +128,7 @@
     {"k": "index", "title": "Index", "category": "math", "value": true, "keys": ["object", "index"], "inputs": ["object"], "lists": [{"key": "index", "label": "index"}], "help": "An element of a list, a map or a grid"},
     {"k": "text", "title": "Text", "category": "text", "value": true, "keys": ["text", "inputs"], "map": "inputs", "help": "A value written as Tide text"}
   ],
-  "rules": ["An input takes one wire; wiring another replaces it.", "A statement runs from one place: an exec output takes one wire, and a statement is wired from one exec output.", "No value is made of itself: a data wire can't close a loop.", "A value wired to two inputs is worked out at each.", "A local is read where what declares it has run."],
+  "rules": ["An input takes one wire; wiring another replaces it.", "A statement runs from one place: an exec output takes one wire, and a statement is wired from one exec output.", "No value is made of itself: a data wire can't close a loop.", "A value wired to two inputs is worked out at each.", "A local is read where what declares it has run.", "A simple value is in the input that reads it: a number, text, a name, a path of fields. A value worked out by a call or an operator is a node wired in."],
   "groups": [
     {"name": "Data", "title": "Data", "summary": "What the game keeps"},
     {"name": "Behaviour", "title": "Behaviour", "summary": "What the game does"},
@@ -177,6 +177,12 @@
     "with": {"label": "only with", "help": "Only for entities that have it; not read"},
     "without": {"label": "without", "help": "Only for entities that do not have it"},
     "query": {"label": "a query of", "help": "Other entities to go through, by what they have", "advanced": true}
+  },
+  "inline": {
+    "about": "A value read by one input is shown in that input, edited there, and is no node of its own: a literal or a name (always), a member of what is itself shown there (path: ball.position.x), a '-' over a number (negative). Everything else is a node wired in. tidec's layout gives them no room (graph_layout_fold).",
+    "always": ["int", "float", "bool", "string", "char", "this", "default", "null", "name", "local"],
+    "path": ["member"],
+    "negative": ["unary"]
   },
   "typePicker": {
     "common": ["int", "float", "bool", "string", "float2", "float3", "Color", "Entity"],

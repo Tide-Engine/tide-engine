@@ -9,6 +9,12 @@
 
 enum { NODE_GAP = 40, ROW_GAP = 60, MAX_ROW = 3200 };
 
+static str key_text(const graph_json *v, const char *key)
+{
+    const graph_json *s = graph_json_get(v, key);
+    return s && s->kind == GJ_STRING ? s->text : (str){NULL, 0};
+}
+
 typedef struct layout {
     graph_layout_node *nodes;
     int count;
@@ -30,10 +36,77 @@ static graph_layout_node *find(const layout *l, const int id)
 
 void graph_layout_measure(graph_layout_node *n, const int widest_text)
 {
+    n->text = widest_text;
     const int text = widest_text * 8;
     n->w = 140 + (text > 260 ? 260 : text);
     const int ports = n->inputs.count + n->bodies.count + 1;
     n->h = 48 + 24 * ports;
+}
+
+static void index_nodes(layout *l)
+{
+    l->cap = l->count * 2 + 1;
+    l->slots = arena_alloc(sizeof(int) * (size_t)l->cap);
+    for (int i = 0; i < l->count; i++) {
+        unsigned h = (unsigned)l->nodes[i].id * 2654435761u;
+        while (l->slots[h % (unsigned)l->cap]) h++;
+        l->slots[h % (unsigned)l->cap] = i + 1;
+    }
+}
+
+// Whether a node is shown in the input that reads it: 1 yes, 0 no, worked out once (`state`: 0 not yet, 1 being
+// worked out, 2 no, 3 yes)
+static bool folds(const layout *l, const graph_layout_node *n, const int *readers, char *state)
+{
+    const int at = (int)(n - l->nodes);
+    if (state[at]) return state[at] == 3;
+    state[at] = 1;
+    bool yes = false;
+    const int shown = readers[at] == 1 ? graph_schema_inline(n->kind) : 0;
+    const graph_layout_node *of = n->inputs.count == 1 ? find(l, n->inputs.items[0]) : NULL;
+    if (shown == 1) yes = n->inputs.count == 0;
+    else if (shown == 2) yes = n->inputs.count == 0 || (of && graph_schema_inline(of->kind) != 3 && folds(l, of, readers, state));
+    else if (shown == 3) yes = str_eq_c(n->op, "-") && of && (str_eq_c(of->kind, "int") || str_eq_c(of->kind, "float")) && folds(l, of, readers, state);
+    state[at] = yes ? 3 : 2;
+    return yes;
+}
+
+// How many characters a folded value shows: a path's names and its dots
+static int folded_text(const layout *l, const graph_layout_node *n, const int depth)
+{
+    const graph_layout_node *of = n->inputs.count == 1 && depth < 64 ? find(l, n->inputs.items[0]) : NULL;
+    return n->text + (of && of->folded ? 1 + folded_text(l, of, depth + 1) : 0);
+}
+
+void graph_layout_fold(graph_layout_node *nodes, const int count)
+{
+    layout l = {nodes, count, NULL, 0};
+    index_nodes(&l);
+    int *readers = arena_alloc(sizeof(int) * (size_t)(count ? count : 1));
+    char *state = arena_alloc((size_t)(count ? count : 1));
+    memset(readers, 0, sizeof(int) * (size_t)count);
+    memset(state, 0, (size_t)count);
+    for (int i = 0; i < count; i++) {
+        for (int k = 0; k < nodes[i].inputs.count; k++) {
+            const graph_layout_node *read = find(&l, nodes[i].inputs.items[k]);
+            if (read) readers[read - nodes]++;
+        }
+    }
+    for (int i = 0; i < count; i++) nodes[i].folded = folds(&l, &nodes[i], readers, state);
+    // A reader is as wide as its widest input's row: the input's name, then what's shown in it
+    for (int i = 0; i < count; i++) {
+        if (nodes[i].folded) continue;
+        for (int k = 0; k < nodes[i].inputs.count; k++) {
+            const graph_layout_node *read = find(&l, nodes[i].inputs.items[k]);
+            if (!read || !read->folded) continue;
+            int chip = folded_text(&l, read, 0) * 8 + 24;
+            if (chip > 260) chip = 260;
+            if (nodes[i].w < 100 + chip) nodes[i].w = 100 + chip;
+        }
+    }
+    for (int i = 0; i < count; i++) {
+        if (nodes[i].folded) nodes[i].w = nodes[i].h = 0;
+    }
 }
 
 // A value's tree, its right edge at `right` and its top at `top`: the height it takes
@@ -41,6 +114,13 @@ static int place_value(layout *l, const int id, const int right, const int top)
 {
     graph_layout_node *n = find(l, id);
     if (!n || n->placed) return 0;
+    if (n->folded) { // Where its reader is: it's shown there
+        n->placed = true;
+        n->x = right + NODE_GAP;
+        n->y = top;
+        for (int i = 0; i < n->inputs.count; i++) place_value(l, n->inputs.items[i], right, top);
+        return 0;
+    }
     n->placed = true;
     n->x = right - n->w;
     n->y = top;
@@ -57,7 +137,7 @@ static int place_value(layout *l, const int id, const int right, const int top)
 static int value_width(const layout *l, const int id, const int depth)
 {
     const graph_layout_node *n = find(l, id);
-    if (!n || depth > 256) return 0;
+    if (!n || depth > 256 || n->folded) return 0;
     int widest = 0;
     for (int i = 0; i < n->inputs.count; i++) {
         const int w = value_width(l, n->inputs.items[i], depth + 1);
@@ -120,14 +200,13 @@ static extent place_chain(layout *l, int id, int x, const int y)
 void graph_layout_place(graph_layout_node *nodes, const int count, const int root, const bool body)
 {
     layout l = {nodes, count, NULL, 0};
-    l.cap = count * 2 + 1;
-    l.slots = arena_alloc(sizeof(int) * (size_t)l.cap);
-    for (int i = 0; i < count; i++) {
-        nodes[i].placed = false;
-        unsigned h = (unsigned)nodes[i].id * 2654435761u;
-        while (l.slots[h % (unsigned)l.cap]) h++;
-        l.slots[h % (unsigned)l.cap] = i + 1;
-    }
+    graph_schema_hold(true);
+    graph_layout_fold(nodes, count);
+    graph_schema_hold(false);
+    index_nodes(&l);
+    for (int i = 0; i < count; i++) nodes[i].placed = false;
+    graph_layout_node *first = find(&l, root);
+    if (first && first->folded) first->folded = false; // (A graph's own first node is never in another's input)
     if (body) place_chain(&l, root, 0, 0);
     else if (root) place_value(&l, root, 0, 0);
     int stray_x = 0, stray_y = 0;
@@ -139,6 +218,7 @@ void graph_layout_place(graph_layout_node *nodes, const int count, const int roo
         if (nodes[i].placed) continue;
         nodes[i].x = stray_x;
         nodes[i].y = stray_y;
+        if (nodes[i].folded) continue; // (Read by a node that's a stray itself: beside it)
         stray_x += nodes[i].w + NODE_GAP;
     }
 }
@@ -162,6 +242,8 @@ bool graph_layout_json(const graph_json *g, sb *out)
         p->id = id && id->kind == GJ_NUMBER ? (int)id->number : 0;
         graph_data_wires(n, &p->inputs);
         graph_exec_wires(n, &p->bodies);
+        p->kind = key_text(n, "k");
+        p->op = key_text(n, "op");
         const graph_json *next = graph_json_get(n, "next");
         p->next = next && next->kind == GJ_NUMBER ? (int)next->number : 0;
         int widest = 0;
@@ -227,16 +309,28 @@ static void measure_frame(board_items *items, const graph_json *owner)
     int left = 0, top = 0, right = 0, bottom = 0; // Values are placed to the left of what reads them: below 0 too
     const graph_json *body = graph_json_get(owner, "body");
     const graph_json *nodes = body ? graph_json_get(body, "nodes") : NULL;
-    for (int i = 0; nodes && nodes->kind == GJ_ARRAY && i < nodes->count; i++) {
+    const int count = nodes && nodes->kind == GJ_ARRAY ? nodes->count : 0;
+    graph_layout_node *sizes = arena_alloc(sizeof(graph_layout_node) * (size_t)(count ? count : 1));
+    memset(sizes, 0, sizeof(graph_layout_node) * (size_t)count);
+    for (int i = 0; i < count; i++) {
         const graph_json *n = nodes->items[i];
-        graph_layout_node size = {0};
-        graph_data_wires(n, &size.inputs);
-        graph_exec_wires(n, &size.bodies);
+        graph_layout_node *size = &sizes[i];
+        size->id = id_of(n);
+        size->kind = key_str(n, "k");
+        size->op = key_str(n, "op");
+        graph_data_wires(n, &size->inputs);
+        graph_exec_wires(n, &size->bodies);
         int widest = 0;
         for (int k = 0; n->kind == GJ_OBJECT && k < n->count; k++) {
             if (n->items[k]->kind == GJ_STRING && n->items[k]->text.len > widest) widest = n->items[k]->text.len;
         }
-        graph_layout_measure(&size, widest);
+        graph_layout_measure(size, widest);
+    }
+    graph_layout_fold(sizes, count);
+    for (int i = 0; i < count; i++) {
+        const graph_json *n = nodes->items[i];
+        const graph_layout_node size = sizes[i];
+        if (size.folded) continue; // Shown in its reader
         const graph_json *x = graph_json_get(n, "x"), *y = graph_json_get(n, "y");
         const int nx = x && x->kind == GJ_NUMBER ? (int)x->number : 0, ny = y && y->kind == GJ_NUMBER ? (int)y->number : 0;
         if (nx < left) left = nx;
