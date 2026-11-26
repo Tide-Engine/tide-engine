@@ -577,7 +577,8 @@ try {
             };
         })()`));
         assert.equal(view.nodes, view.graphNodes, `every node of Fall is drawn but the simple values, which are in the inputs that read them: ${JSON.stringify(view)}`);
-        assert.ok(view.pins >= 4 && view.values > 10 && view.wires > view.exec && view.exec >= 3 && view.bad === 0, `pins, values in inputs and wires are drawn: ${JSON.stringify(view)}`);
+        // Values in inputs are the constant ones (numbers, paths): a variable is a Get node, in `nodes`
+        assert.ok(view.pins >= 4 && view.values > 5 && view.wires > view.exec && view.exec >= 3 && view.bad === 0, `pins, values in inputs and wires are drawn: ${JSON.stringify(view)}`);
         assert.ok(view.cards >= 10 && view.frames >= 7 && view.themed, `the board's cards and frames, in the site's theme: ${JSON.stringify(view)}`);
         assert.equal(view.source, 0, 'the Tide the graph stands for is not on screen');
         await until(inGraph(`doc.querySelector('.tg-status').textContent === 'Checked' && app.lang.text?.includes('system Fall(')`),

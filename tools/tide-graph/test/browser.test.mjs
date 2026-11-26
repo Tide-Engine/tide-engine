@@ -1248,7 +1248,8 @@ describe('the graph editor in a browser', { skip }, () => {
             await p.key('Enter');
             await picked(p);
             await p.until(`!document.querySelector('.tg-has-error') && !document.querySelector('.tg-status').textContent.includes('problem')`, 'the error gone once fixed');
-            assert.equal(await p.evaluate(`document.querySelectorAll('.tg-badge-error').length`), 0, 'no count of errors left on its frame');
+            // The frame's count is put on with the frame drawn next
+            await p.until(`document.querySelectorAll('.tg-badge-error').length === 0`, 'no count of errors left on its frame');
             // Tidy up: the frame's nodes by tidels's layout, the board's cards and frames by its board
             const before = (await doc(p)).decls[1].body.nodes.map(n => [n.x, n.y]);
             await p.evaluate(`app.layoutFrame(${(await doc(p)).decls[1].id})`);

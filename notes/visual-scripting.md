@@ -981,3 +981,27 @@ byte-identical), and both drawn tests fail if two nodes of one frame overlap.
 
 Tests: `tide_graph_editor` (model 23, browser 12), docs playground 8, tide-vscode 38, JetBrains 18; tidels_tests
 `lsp_graphs`; Unity's graph fixtures 63 on the hidden desktop, 59 and 4 skipped under `-nographics`.
+
+## A package newer than its tide; the browser tests on CI (2026-11-26)
+
+The owner's Unity project (the package from git `#dev`) showed every word as its key ("toolbar.add") with no look:
+the package's version lookup gave the newest release, 0.9.0-nightly.7, from before the schema had `words` and
+`look`. No release had been published after it: every Build on `dev` since round two failed, on our tests.
+
+- **The package ships the schema** (`unity/com.tide.unity/Editor/Graph/graph_schema.json`, the compiler's: the model
+  test checks it is the same, as the JetBrains copy). `GraphSchema` takes the tide's schema for the language and,
+  where it has none, the package's `look`, and each word the tide's schema hasn't (`WordOf`). Unity's
+  `AnOlderTidesSchemaTakesThePackagesWordsAndLook` adopts a schema without either.
+- **macOS:** `tide_graph_editor`'s browser tests ran slower and slower after the first (a test of 0.6 s here took
+  189 s, then the suite reached ctest's 600 s): steps that wait for the next frame or a timer (a name's focus, a menu)
+  timed out. The headless Chrome was throttled as a covered window. `browser.mjs` launches it with
+  `--disable-background-timer-throttling`, `--disable-backgrounding-occluded-windows` and
+  `--disable-renderer-backgrounding` (as Puppeteer does); here too, the browser tests took 32 s before and the whole of `tide_graph_editor` 14 s after.
+  It also intercepts the browser's own drag and drop (`Input.setInterceptDrags`), which on macOS would hold the
+  browser, and fails a test that starts one.
+- **Windows** failed now and then on `p.text` read straight after an edit (the host's queue set it after earlier
+  messages: now at once) and on a frame's error count, put on with the next frame (waited for now).
+- **Docs / Examples:** the stars playground check counted values in inputs; a variable is a Get node since round
+  four, so it wants more than 5 (it has 9), not more than 10.
+- The undo note ("Deleted …") is 54 px from the bottom in both editors, above the zoom buttons a narrow board has
+  under it.

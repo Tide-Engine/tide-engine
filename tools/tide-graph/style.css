@@ -528,7 +528,7 @@ span.tg-node-input { overflow: hidden; text-overflow: ellipsis; white-space: now
 .tg-tip-problem + .tg-tip-problem, .tg-tip-note + .tg-tip-problem { margin-top: 6px; }
 .tg-tip-problem { font-weight: 600; }
 .tg-tip-note { color: var(--tg-muted); margin-top: 3px; }
-.tg-toast { position: fixed; left: 50%; bottom: 22px; transform: translate(-50%, 12px); z-index: 50; display: flex; align-items: center; gap: 12px; max-width: min(560px, calc(100vw - 24px)); background: var(--tg-text); color: var(--tg-board); border-radius: 10px; padding: 8px 14px; box-shadow: 0 6px 24px var(--tg-shadow); opacity: 0; pointer-events: none; transition: opacity 0.15s ease, transform 0.15s ease; }
+.tg-toast { position: fixed; left: 50%; bottom: 54px; transform: translate(-50%, 12px); z-index: 50; display: flex; align-items: center; gap: 12px; max-width: min(560px, calc(100vw - 24px)); background: var(--tg-text); color: var(--tg-board); border-radius: 10px; padding: 8px 14px; box-shadow: 0 6px 24px var(--tg-shadow); opacity: 0; pointer-events: none; transition: opacity 0.15s ease, transform 0.15s ease; }
 .tg-toast-shown { opacity: 1; transform: translate(-50%, 0); pointer-events: auto; }
 .tg-toast-action { background: none; border: none; color: inherit; font-weight: 700; cursor: pointer; text-decoration: underline; padding: 0; white-space: nowrap; }
 

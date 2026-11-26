@@ -100,6 +100,31 @@ namespace Tide.Editor
         static Schema current;
         static string cacheProgram, cacheStamp; // What the Library's copy is of
 
+        // The schema this package was made with (a copy of the compiler's, which tide-graph's model test keeps the
+        // same): its look and words stand in for what an older tide's schema hasn't, as when the package follows dev
+        // and the newest release of tide is from before them. What the language is stays the tide's.
+        internal const string ShippedPath = "Packages/com.tide.unity/Editor/Graph/graph_schema.json";
+        static JValue shipped;
+        static bool shippedRead;
+
+        internal static JValue Shipped
+        {
+            get
+            {
+                if (shippedRead) return shipped;
+                shippedRead = true;
+                try
+                {
+                    shipped = GraphJson.Parse(File.ReadAllText(Path.GetFullPath(ShippedPath), Encoding.UTF8));
+                }
+                catch (Exception e) when (e is IOException || e is UnauthorizedAccessException || e is GraphJson.ParseError)
+                {
+                    shipped = null;
+                }
+                return shipped;
+            }
+        }
+
         // Why there's no schema, when there isn't: the editor shows it instead of a graph
         public static string Failure { get; private set; }
         // Where the schema in use came from
@@ -250,7 +275,7 @@ namespace Tide.Editor
         static Schema Read(JValue j)
         {
             if (j == null || !j.IsObject || j.Arr("nodes") == null || j.Arr("declarations") == null || j.Get("elements") == null) return null;
-            var s = new Schema { Json = j, Root = Strings(j.Arr("root")), Look = j.Get("look"), Words = j.Get("words") };
+            var s = new Schema { Json = j, Root = Strings(j.Arr("root")), Look = j.Get("look") ?? Shipped?.Get("look"), Words = j.Get("words") };
             KindSpec Kind(JValue d) => new KindSpec
             {
                 Kind = d.Str("kind"), Title = d.Str("title"), Group = d.Str("group"), Keys = Strings(d.Arr("keys")), Modifiers = Strings(d.Arr("modifiers")),
@@ -556,11 +581,14 @@ namespace Tide.Editor
 
         static readonly HashSet<string> missing = new HashSet<string>();
 
-        // `key`'s words, each {name} filled from `fill` (name, value pairs); a menu's entry is its label. A key the
-        // schema hasn't is said as it is, and logged once.
+        // The schema's words for `key`, else the package's own copy's (a tide older than the package)
+        static JValue WordOf(string key) => Current?.Words?.Get(key) ?? Shipped?.Get("words")?.Get(key);
+
+        // `key`'s words, each {name} filled from `fill` (name, value pairs); a menu's entry is its label. A key
+        // neither schema has is said as it is, and logged once.
         public static string Word(string key, params string[] fill)
         {
-            var v = Current?.Words?.Get(key);
+            var v = WordOf(key);
             var text = v == null ? null : v.Kind == JKind.String ? v.String : v.IsObject ? v.Str("label") : null;
             if (text == null)
             {
@@ -591,10 +619,10 @@ namespace Tide.Editor
         }
 
         // Whether the schema has words for `key`
-        public static bool HasWord(string key) => Current?.Words?.Get(key) != null;
+        public static bool HasWord(string key) => WordOf(key) != null;
 
         // A menu entry's keys, as its words say them ("" for none)
-        public static string WordKeys(string key) => Current?.Words?.Get(key) is JValue v && v.IsObject ? v.Str("keys") ?? "" : "";
+        public static string WordKeys(string key) => WordOf(key) is JValue v && v.IsObject ? v.Str("keys") ?? "" : "";
 
         public static NodeSpec[] Nodes => S.Nodes;
 

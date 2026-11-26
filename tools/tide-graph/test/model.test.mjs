@@ -481,8 +481,11 @@ test("every word the page says is the schema's, and its look has every colour in
     for (const f of Object.values(look.font.files)) assert.ok(fs.existsSync(path.join(repo, 'tools/tide-graph/fonts', f)), f);
     assert.ok(fs.existsSync(path.join(repo, 'tools/tide-graph/fonts', look.font.license)));
     assert.equal(schema.headerColor('assign'), look.headers.flow.dark);
-    // The JetBrains plugin's copy of the schema is the compiler's
-    assert.equal(fs.readFileSync(path.join(repo, 'tools/tide-jetbrains/graph/graph_schema.json'), 'utf8'), fs.readFileSync(path.join(repo, 'compiler/src/graph_schema.json'), 'utf8'));
+    // The JetBrains plugin's copy of the schema is the compiler's, and so is the Unity package's (its words and look
+    // for a tide older than it)
+    const compilers = fs.readFileSync(path.join(repo, 'compiler/src/graph_schema.json'), 'utf8');
+    assert.equal(fs.readFileSync(path.join(repo, 'tools/tide-jetbrains/graph/graph_schema.json'), 'utf8'), compilers);
+    assert.equal(fs.readFileSync(path.join(repo, 'unity/com.tide.unity/Editor/Graph/graph_schema.json'), 'utf8'), compilers, 'unity/com.tide.unity/Editor/Graph/graph_schema.json is a copy of compiler/src/graph_schema.json');
 });
 
 test('nothing is offered that a kind cannot have', () => {

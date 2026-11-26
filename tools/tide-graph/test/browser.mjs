@@ -27,8 +27,11 @@ export function findBrowser() {
 // Starts the browser and opens one page. Returns { command, evaluate, on, errors, close }.
 export async function launch(browser, { width = 1400, height = 900 } = {}) {
     const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'tide-graph-browser-'));
-    // --mute-audio and headless: nothing of a test is seen or heard (AGENTS.md, Quiet agent runs)
+    // --mute-audio and headless: nothing of a test is seen or heard (AGENTS.md, Quiet agent runs). The page's timers
+    // and frames run at full speed though no one sees it: a macOS runner takes a headless window for a covered one
+    // and slows them to a crawl (what Puppeteer's defaults turn off too)
     const child = spawn(browser, ['--headless=new', '--mute-audio', '--disable-gpu', '--no-first-run', '--no-default-browser-check', '--no-sandbox',
+        '--disable-background-timer-throttling', '--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding',
         '--disable-extensions', '--remote-debugging-port=0', `--user-data-dir=${profile}`, `--window-size=${width},${height}`,
         '--allow-file-access-from-files', '--hide-scrollbars', 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true });
     const closed = new Promise(done => child.once('close', done));
@@ -62,6 +65,10 @@ export async function launch(browser, { width = 1400, height = 900 } = {}) {
             errors.push(message.params.exceptionDetails.exception?.description ?? message.params.exceptionDetails.text);
         } else if (message.method === 'Runtime.consoleAPICalled' && message.params.type === 'error') {
             errors.push(message.params.args.map(arg => arg.value ?? arg.description).join(' '));
+        } else if (message.method === 'Input.dragIntercepted') {
+            // The browser's own drag and drop (of text, a link, an image): the board's drags are its own, and on
+            // macOS the system's drag holds the browser until it ends, so no event of the test reaches the page
+            errors.push(`The browser began a drag of its own: ${JSON.stringify(message.params.data.items.map(i => i.mimeType + ' ' + i.data.slice(0, 60)))}`);
         } else {
             for (const l of listeners.get(message.method) || []) l(message.params);
         }
@@ -82,6 +89,7 @@ export async function launch(browser, { width = 1400, height = 900 } = {}) {
     await command('Runtime.enable');
     await command('Page.enable');
     await command('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
+    await command('Input.setInterceptDrags', { enabled: true });
     return {
         command, evaluate, errors,
         on(method, listener) {
@@ -133,13 +141,14 @@ window.app = TideGraph.start({ post(m) { posted.push(m); tideHost(JSON.stringify
         if (binding !== 'tideHost' || b.host !== me) return;
         const m = JSON.parse(payload);
         posted.push(m);
+        // The file's text is the page's edit as soon as it says it, as a test reads it next; tidels hears of it in turn
+        if (m.type === 'edit') current = m.text;
         // Each message after the one before it, as a host handles them
         queue = queue.then(async () => {
             if (m.type === 'ready') {
                 await toPage({ type: 'load', text: current, uri, name, schema });
                 if (!server) await toPage({ type: 'server', available: false, message: 'no tidels in this test' });
             } else if (m.type === 'edit') {
-                current = m.text;
                 server?.notify('textDocument/didChange', { textDocument: { uri, version: ++version }, contentChanges: [{ text: m.text }] });
             } else if (m.type === 'request') {
                 if (server && String(m.method).startsWith('tide/')) {

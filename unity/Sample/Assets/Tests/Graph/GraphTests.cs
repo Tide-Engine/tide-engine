@@ -2332,6 +2332,36 @@ public class GraphTests
         Assert.Fail($"The package's dark look isn't the schema's: {now} is what it should be");
     }
 
+    // A tide older than the package (one whose schema has no words or look, as a package following dev with the
+    // newest release has): the window says the package's words and draws its look, not the words' keys
+    [Test]
+    public void AnOlderTidesSchemaTakesThePackagesWordsAndLook()
+    {
+        NeedTidec();
+        Assert.IsNotNull(GraphSchema.Shipped, "the package has its schema");
+        Assert.AreEqual(File.ReadAllText(Path.Combine(Repository, "compiler", "src", "graph_schema.json")),
+            File.ReadAllText(Path.Combine(Repository, "unity", "com.tide.unity", "Editor", "Graph", "graph_schema.json")), "the package's is the compiler's");
+        var older = GraphJson.Parse(GraphJson.Write(GraphSchema.Json));
+        older.Remove("words");
+        older.Remove("look");
+        try
+        {
+            GraphSchema.Adopt(older, "an older tide");
+            Assert.IsNull(GraphSchema.Json.Get("words"), "the older one is in use");
+            Assert.AreEqual(GraphSchema.Shipped.Get("words").Str("toolbar.add"), GraphSchema.Word("toolbar.add"));
+            Assert.IsTrue(GraphSchema.HasWord("card.rows.empty"));
+            Assert.AreEqual(GraphSchema.Shipped.Get("look").Get("colors").Get("board").Str("dark"), GraphSchema.LookHex("board", false));
+            Assert.AreEqual("Inter", GraphSchema.FontFamily);
+        }
+        finally
+        {
+            // (adopted, it was kept in the Library as that tidec's: asked of the tidec again)
+            File.Delete(GraphSchema.CachePath);
+            GraphSchema.Reload();
+        }
+        Assert.IsNotNull(GraphSchema.Json.Get("words"), "the tidec's own again");
+    }
+
     // The panels' rows line up: in My game, each column's cells start at one x (a nested row's indent is inside its
     // name); in Details, the labels are one column, as wide as the widest. Laid out only with a graphics device.
     [UnityTest]

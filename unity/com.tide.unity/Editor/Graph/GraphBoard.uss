@@ -1943,9 +1943,10 @@ Label.tg-get-name {
     white-space: pre;
 }
 
+/* Above the zoom buttons, which a narrow board has under the middle */
 .tg-toast {
     position: absolute;
-    bottom: 22px;
+    bottom: 54px;
     align-self: center;
     max-width: 560px;
     padding: 8px 14px;
