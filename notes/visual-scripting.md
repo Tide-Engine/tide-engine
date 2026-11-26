@@ -1018,3 +1018,8 @@ the package's version lookup gave the newest release, 0.9.0-nightly.7, from befo
   of its own, which no `arena_reset` or rewind lets go of, so tidels keeps it across analyses). All files in one
   tidec still took 5.5 GB (the compiler lets go of nothing between files, and can't: the lexer's state outlives a
   rewind, as ASan said), so `graph_roundtrip.cmake` gives tidec 200 files at a time (about 1 GB each on Linux).
+- The macOS messages then said it: tests weren't apart. A page remembered the test before's panels (My game open
+  over the card a test clicked), a test's 2100x760 stayed for those after it when it failed, and the page became
+  hidden (no frames drawn, so no focus put). `openEditor` now empties the page's storage, puts back the browser's
+  size and brings the page to the front before each page, and the browser has focus emulated. The JetBrains job ran
+  out of Gradle's default 512 MB compiling its tests: `org.gradle.jvmargs` gives it 3 GB.

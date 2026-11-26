@@ -90,8 +90,10 @@ export async function launch(browser, { width = 1400, height = 900 } = {}) {
     await command('Page.enable');
     await command('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
     await command('Input.setInterceptDrags', { enabled: true });
+    // The page has the focus, as a person's would: a macOS runner gives a headless window none
+    await command('Emulation.setFocusEmulationEnabled', { enabled: true });
     return {
-        command, evaluate, errors,
+        command, evaluate, errors, width, height,
         on(method, listener) {
             if (!listeners.has(method)) listeners.set(method, []);
             listeners.get(method).push(listener);
@@ -119,6 +121,8 @@ ${files.styles.map(f => `<link rel="stylesheet" href="${pathToFileURL(path.join(
 ${files.scripts.map(f => `<script src="${pathToFileURL(path.join(root, f)).href}"></script>`).join('\n')}
 <script>
 window.posted = [];
+// Each page as a person's first: no panels remembered from the test before
+try { localStorage.clear(); } catch {}
 window.app = TideGraph.start({ post(m) { posted.push(m); tideHost(JSON.stringify(m)); } });
 </script></body></html>`;
     const file = path.join(scratch, 'page.html');
@@ -163,6 +167,10 @@ window.app = TideGraph.start({ post(m) { posted.push(m); tideHost(JSON.stringify
             }
         }).catch(() => {});
     });
+    // At the browser's size (a test before may have changed it), seen: on a macOS runner a page can be left hidden,
+    // and a hidden page draws no frames, so nothing waiting on the next one comes
+    await b.command('Emulation.setDeviceMetricsOverride', { width: b.width, height: b.height, deviceScaleFactor: 1, mobile: false });
+    await b.command('Page.bringToFront');
     await b.command('Page.navigate', { url: pathToFileURL(file).href });
     const sleep = ms => new Promise(done => setTimeout(done, ms));
     const tools = {
