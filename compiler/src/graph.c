@@ -2,6 +2,7 @@
 
 #include "graph.h"
 
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -619,8 +620,9 @@ static int past_knots(lw *w, int id)
     return id;
 }
 
-// The schema (graph_schema.json, which the build embeds): every kind of node and its ports. Read from the arena
-// each time it's asked for after one, as the language server's arena goes between analyses
+// The schema (graph_schema.json, which the build embeds): every kind of node and its ports. Read once, into memory
+// that lasts as long as tidec or the language server (arena_keep): it's the same each time, and lookups of a kind
+// once read all of it again each, which in a long run (tidec --graph-roundtrip of every file) never let go
 extern const unsigned char tide_graph_schema[];
 extern const unsigned int tide_graph_schema_size;
 
@@ -635,11 +637,22 @@ static int schema_held;
 
 static const graph_json *schema_root;  // ...and all of it
 
+static atomic_flag schema_reading = ATOMIC_FLAG_INIT;
+static const graph_json *schema_kept;
+
 static const graph_json *read_schema_root(void)
 {
-    source src = {.path = "<graph schema>"};
-    src.text = graph_schema_text(&src.len);
-    return graph_json_parse(&src);
+    while (atomic_flag_test_and_set(&schema_reading)) {}
+    if (!schema_kept) {
+        source src = {.path = "<graph schema>"};
+        src.text = graph_schema_text(&src.len);
+        arena_keep(true);
+        schema_kept = graph_json_parse(&src);
+        arena_keep(false);
+    }
+    const graph_json *root = schema_kept;
+    atomic_flag_clear(&schema_reading);
+    return root;
 }
 
 static const graph_json *read_schema(void)

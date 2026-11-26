@@ -1010,3 +1010,11 @@ the package's version lookup gave the newest release, 0.9.0-nightly.7, from befo
   search, which is drawn again with the cursor kept) has the cursor, and then once that lets go. macOS still failed
   in later tests at their first click or focus, unthrottled: `clickOn` now fails when what it aims at is under
   something else, and a wait that times out says the page's size, focus, what has the cursor and what's open.
+- **Linux** jobs (web shard 3, sanitize, Android) were stopped by the runner: `tidec_graph_roundtrip` ran out of
+  memory (on Linux under an 8 GB cap: out of memory in 19 s; 12 MB per file). Every lookup of the schema's `inline`
+  and `titled` lists and of a node's ports with it not held parsed the whole embedded schema again, into an arena
+  that one tidec run never lets go of; round four's layout looks some up for each node, and round five's `words` and
+  `look` doubled it. The schema is now read once into memory kept for the program (`arena_keep` in common.c: blocks
+  of its own, which no `arena_reset` or rewind lets go of, so tidels keeps it across analyses). All files in one
+  tidec still took 5.5 GB (the compiler lets go of nothing between files, and can't: the lexer's state outlives a
+  rewind, as ASan said), so `graph_roundtrip.cmake` gives tidec 200 files at a time (about 1 GB each on Linux).

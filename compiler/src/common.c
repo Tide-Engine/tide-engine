@@ -39,6 +39,38 @@ static _Thread_local arena_block *arena_mine;
 static arena_block *arena_others;
 static atomic_flag arena_listing = ATOMIC_FLAG_INIT;
 
+// What lasts as long as the program (arena_keep): blocks of its own, listed apart from the arena's
+static _Thread_local bool arena_keeping;
+static arena_block *arena_kept;
+static atomic_flag arena_keeping_lock = ATOMIC_FLAG_INIT;
+
+void arena_keep(const bool keep)
+{
+    arena_keeping = keep;
+}
+
+static void *arena_alloc_kept(const size_t size)
+{
+    while (atomic_flag_test_and_set(&arena_keeping_lock)) {}
+    if (!arena_kept || arena_kept->used + size > arena_kept->cap) {
+        const size_t cap = size > 1u << 18 ? size : 1u << 18;
+        arena_block *block = malloc(sizeof(arena_block) + cap);
+        if (!block) {
+            fprintf(stderr, "tidec: out of memory\n");
+            exit(1);
+        }
+        block->used = 0;
+        block->cap = cap;
+        block->next = arena_kept;
+        arena_kept = block;
+    }
+    void *p = arena_kept->data + arena_kept->used;
+    arena_kept->used += size;
+    atomic_flag_clear(&arena_keeping_lock);
+    memset(p, 0, size);
+    return p;
+}
+
 void arena_thread(void)
 {
     arena_other = true;
@@ -71,6 +103,7 @@ static void *arena_alloc_other(const size_t size)
 void *arena_alloc(size_t size)
 {
     size = (size + 15) & ~(size_t)15;
+    if (arena_keeping) return arena_alloc_kept(size);
     if (arena_other) return arena_alloc_other(size);
     if (!arena_head || arena_head->used + size > arena_head->cap) {
         const size_t cap = size > 1u << 20 ? size : 1u << 20;

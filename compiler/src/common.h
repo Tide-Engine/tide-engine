@@ -16,6 +16,9 @@ void arena_reset(void);
 // starts): what it allocates from here on is from blocks of its own, good until arena_reset as any allocation is.
 // A checkpoint and a rewind are the arena's own thread's alone.
 void arena_thread(void);         // Frees everything arena_alloc returned.
+// While the calling thread keeps (arena_keep(true) until arena_keep(false)), what it allocates lasts as long as the
+// program: no arena_reset or rewind lets go of it. For what's read once and the same each time (the graph schema).
+void arena_keep(bool keep);
 
 // A temporary allocation scope. Rewind invalidates everything allocated
 // after the checkpoint: none of it may be kept in an object that survives.
