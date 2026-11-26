@@ -1005,3 +1005,8 @@ the package's version lookup gave the newest release, 0.9.0-nightly.7, from befo
   four, so it wants more than 5 (it has 9), not more than 10.
 - The undo note ("Deleted …") is 54 px from the bottom in both editors, above the zoom buttons a narrow board has
   under it.
+- That run still failed. On Windows a problem count stayed in **My game**: it wasn't drawn again while its search
+  had the cursor, and nothing drew it later. Now `MyGame.refresh()` draws it unless something else of it (not its
+  search, which is drawn again with the cursor kept) has the cursor, and then once that lets go. macOS still failed
+  in later tests at their first click or focus, unthrottled: `clickOn` now fails when what it aims at is under
+  something else, and a wait that times out says the page's size, focus, what has the cursor and what's open.

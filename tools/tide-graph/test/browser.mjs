@@ -180,7 +180,7 @@ window.app = TideGraph.start({ post(m) { posted.push(m); tideHost(JSON.stringify
                 if (Date.now() > end) {
                     // What the page looked like, for whoever reads the failure (TIDE_GRAPH_SHOTS names a folder)
                     if (process.env.TIDE_GRAPH_SHOTS) await tools.shot(path.join(process.env.TIDE_GRAPH_SHOTS, `timeout-${label.replace(/[^A-Za-z0-9]+/g, '-')}.png`)).catch(() => {});
-                    throw new Error(`Timed out waiting for ${label}`);
+                    throw new Error(`Timed out waiting for ${label} (${await tools.state().catch(e => e.message)})`);
                 }
                 await sleep(40);
             }
@@ -202,7 +202,19 @@ window.app = TideGraph.start({ post(m) { posted.push(m); tideHost(JSON.stringify
         },
         async clickOn(selector, options) {
             const at = await tools.center(selector);
+            // A click that something else would take (a panel, a popup, off the page) says so, not what it missed
+            const hit = await b.evaluate(`(() => { const e = document.querySelector(${JSON.stringify(selector)}), h = document.elementFromPoint(${at.x}, ${at.y});
+                return e.contains(h) ? '' : (h ? h.tagName.toLowerCase() + '.' + [...h.classList].join('.') : 'nothing'); })()`);
+            if (hit) throw new Error(`${selector} at ${Math.round(at.x)}, ${Math.round(at.y)} is under ${hit} (${await tools.state()})`);
             await tools.click(at.x, at.y, options);
+        },
+        // What the page is like, for a failure's message: its size and focus, what has the cursor, what's open
+        state() {
+            return b.evaluate(`(() => { const a = document.activeElement;
+                return 'page ' + innerWidth + 'x' + innerHeight + (document.hasFocus() ? ' focused' : ' not focused') + ' ' + document.visibilityState
+                    + ', cursor in ' + (a ? a.tagName.toLowerCase() + '.' + [...a.classList].join('.') + (a.dataset?.fk ? '[' + a.dataset.fk + ']' : '') : 'nothing')
+                    + ', popups ' + document.querySelectorAll('.tg-popup, .tg-menu').length
+                    + ', body ' + (document.body.className || '-'); })()`);
         },
         async drag(from, to, { steps = 6, button = 'left', modifiers = 0 } = {}) {
             await b.command('Input.dispatchMouseEvent', { type: 'mouseMoved', x: from.x, y: from.y, button: 'none', modifiers });

@@ -31,6 +31,22 @@
             this.openVars = new Set(); // Variables opened to their fields, by frame and path
             this.fields = new Map();   // What a type has, as tidels said: type -> [{ name, type }]
             this.varsOf = 0;           // The frame whose variables are listed
+            // Drawn again once what had the cursor in it lets go, when something changed meanwhile (refresh)
+            this.el.addEventListener('focusout', () => requestAnimationFrame(() => {
+                if (this.stale && this.app.open.mygame && !this.busy()) this.render();
+            }));
+        }
+
+        // Whether something in it other than its search has the cursor (its search is drawn again with it)
+        busy() {
+            const a = document.activeElement;
+            return !!a && a !== this.input && this.el.contains(a);
+        }
+
+        // Draws it again for what changed (its problems, its variables), or once what has the cursor lets go
+        refresh() {
+            if (this.busy()) { this.stale = true; return; }
+            this.render();
         }
 
         // The Variables of the code in hand (Blueprint's My Blueprint): what the frame takes and its locals, each

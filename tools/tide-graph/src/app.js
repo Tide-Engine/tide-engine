@@ -252,7 +252,7 @@
             // My game's Variables are the code in hand's
             const f = this.variablesFrame();
             if (f) this.lastFrame = f.item.id;
-            if ((f?.item.id || 0) !== this.myGame.varsOf && this.open.mygame && !this.myGame.el.contains(document.activeElement)) this.myGame.render();
+            if ((f?.item.id || 0) !== this.myGame.varsOf && this.open.mygame) this.myGame.refresh();
         }
 
         // The frame whose variables My game lists: the one the selection is in, or the one picked, or the last of
@@ -387,7 +387,7 @@
             }
             if (what === 'check' || what === 'diagnostics') {
                 this.board.markProblems();
-                if (this.open.mygame && !this.myGame.el.contains(document.activeElement)) this.myGame.render();
+                if (this.open.mygame) this.myGame.refresh();
             }
             this.renderStatus();
         }
