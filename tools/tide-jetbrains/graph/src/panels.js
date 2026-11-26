@@ -226,7 +226,9 @@
             const row = el('div.tg-mygame-item.tg-colrow' + (ed.picked.has(entry.id) ? '.tg-on' : ''), { dataset: { id: entry.id, kind: v?.kind || '' } },
                 lead,
                 G.ui.cell(2, el('span.tg-mygame-kind', { text: entry.detail })),
-                G.ui.cell(3, entry.problems ? el('span.tg-badge.tg-badge-error', { text: String(entry.problems) }) : null));
+                // How many problems it has, as its title bar says it: the errors in red, else the warnings in amber
+                G.ui.cell(3, entry.problems ? el('span.tg-badge.tg-badge-error', { text: String(entry.problems) })
+                    : entry.warnings ? el('span.tg-badge.tg-badge-warning', { text: String(entry.warnings) }) : null));
             row.addEventListener('pointerdown', e => this.down(e, row, item));
             row.addEventListener('pointermove', e => this.move(e));
             row.addEventListener('pointerup', e => this.up(e));

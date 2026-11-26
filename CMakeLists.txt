@@ -160,9 +160,10 @@ if(TIDE_NODE)
         "${CMAKE_CURRENT_SOURCE_DIR}/tools/tide-vscode/test/extension.test.mjs"
         "${CMAKE_CURRENT_SOURCE_DIR}/tools/tide-vscode/test/debug.test.mjs")
     # The graph editor's (tools/tide-graph): its model (tidec makes the graphs it reads), the page in a headless muted
-    # browser (skipped without Chrome or Edge), and VS Code's side of it with VS Code replaced
+    # browser (skipped without Chrome or Edge), and VS Code's side of it with VS Code replaced. It ends when its tests
+    # have, whatever a browser left running holds (on macOS, Chrome's helpers kept its output open past a failure)
     if(TARGET tidec)
-        add_test(NAME tide_graph_editor COMMAND "${TIDE_NODE}" --test
+        add_test(NAME tide_graph_editor COMMAND "${TIDE_NODE}" --test --test-force-exit
             "${CMAKE_CURRENT_SOURCE_DIR}/tools/tide-graph/test/model.test.mjs"
             "${CMAKE_CURRENT_SOURCE_DIR}/tools/tide-graph/test/browser.test.mjs"
             "${CMAKE_CURRENT_SOURCE_DIR}/tools/tide-vscode/test/graph.test.mjs")

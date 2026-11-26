@@ -442,6 +442,8 @@ describe('the graph editor in a browser', { skip }, () => {
 
         // What each card's menu adds is its kind's memberKinds, and nothing else
         const menuOf = async id => {
+            // (in view first: what was made after it may have moved the board)
+            await p.evaluate(`app.reveal(${id})`);
             await p.clickOn(`.tg-card[data-id="${id}"] .tg-more`);
             await p.until(`!!document.querySelector('.tg-menu')`, 'a card menu');
             const items = await p.evaluate(`[...document.querySelectorAll('.tg-menu .tg-menu-item')].map(i => ({ name: i.dataset.name || '', label: i.querySelector('.tg-menu-label').textContent, disabled: i.classList.contains('tg-disabled') }))`);
@@ -1249,7 +1251,8 @@ describe('the graph editor in a browser', { skip }, () => {
             await picked(p);
             await p.until(`!document.querySelector('.tg-has-error') && !document.querySelector('.tg-status').textContent.includes('problem')`, 'the error gone once fixed');
             // The frame's count is put on with the frame drawn next
-            await p.until(`document.querySelectorAll('.tg-badge-error').length === 0`, 'no count of errors left on its frame');
+            await p.until(`document.querySelectorAll('.tg-badge-error').length === 0`, 'no count of errors left on its frame or in My game',
+                undefined, `[...document.querySelectorAll('.tg-badge-error')].map(b => b.closest('[data-id]')?.dataset.id + ' ' + b.title + ' ' + b.textContent).join('; ')`);
             // Tidy up: the frame's nodes by tidels's layout, the board's cards and frames by its board
             const before = (await doc(p)).decls[1].body.nodes.map(n => [n.x, n.y]);
             await p.evaluate(`app.layoutFrame(${(await doc(p)).decls[1].id})`);

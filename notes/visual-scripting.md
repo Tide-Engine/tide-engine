@@ -1023,3 +1023,8 @@ the package's version lookup gave the newest release, 0.9.0-nightly.7, from befo
   hidden (no frames drawn, so no focus put). `openEditor` now empties the page's storage, puts back the browser's
   size and brings the page to the front before each page, and the browser has focus emulated. The JetBrains job ran
   out of Gradle's default 512 MB compiling its tests: `org.gradle.jvmargs` gives it 3 GB.
+- Then Linux, Android, sanitize and JetBrains passed. Windows' last count was My game's: it counted warnings with
+  errors and drew them red, where a title bar (and Unity's My game) says the errors in red, else the warnings in
+  amber; now it does the same (`problemsIn(item, warnings)`). macOS passed every browser test but the Add menu's in
+  32 s, and then never ended: `tide_graph_editor` runs with `--test-force-exit`, and the browser's output is let go
+  of when it's closed. The Add menu test brings a card into view before its menu (`app.reveal`).

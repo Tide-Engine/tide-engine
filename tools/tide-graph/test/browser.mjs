@@ -104,6 +104,9 @@ export async function launch(browser, { width = 1400, height = 900 } = {}) {
             let timeout;
             await Promise.race([closed, new Promise(done => { timeout = setTimeout(() => { child.kill(); done(); }, 5000); })]);
             clearTimeout(timeout);
+            // (its output is let go of too: a helper of Chrome's can hold it open after Chrome ends)
+            child.stderr.destroy();
+            child.unref();
             fs.rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
         },
     };
@@ -179,7 +182,7 @@ window.app = TideGraph.start({ post(m) { posted.push(m); tideHost(JSON.stringify
         evaluate: b.evaluate,
         sleep,
         // Waits until an expression of the page is true
-        async until(expression, label, timeout = 15000) {
+        async until(expression, label, timeout = 15000, why = null) {
             const end = Date.now() + timeout;
             for (;;) {
                 const value = await b.evaluate(expression);
@@ -188,7 +191,8 @@ window.app = TideGraph.start({ post(m) { posted.push(m); tideHost(JSON.stringify
                 if (Date.now() > end) {
                     // What the page looked like, for whoever reads the failure (TIDE_GRAPH_SHOTS names a folder)
                     if (process.env.TIDE_GRAPH_SHOTS) await tools.shot(path.join(process.env.TIDE_GRAPH_SHOTS, `timeout-${label.replace(/[^A-Za-z0-9]+/g, '-')}.png`)).catch(() => {});
-                    throw new Error(`Timed out waiting for ${label} (${await tools.state().catch(e => e.message)})`);
+                    const said = why ? ` [${await b.evaluate(why).catch(e => e.message)}]` : '';
+                    throw new Error(`Timed out waiting for ${label}${said} (${await tools.state().catch(e => e.message)})`);
                 }
                 await sleep(40);
             }

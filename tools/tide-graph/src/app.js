@@ -399,16 +399,20 @@
             return this.lang.diagnostics.filter(d => !d.node || ed.doc.find(d.node));
         }
 
-        // How many problems a card or a frame has in it
-        problemsIn(item) {
+        // How many errors a card or a frame has in it (`warnings`: how many warnings)
+        problemsIn(item, warnings = false) {
             if (!this.problemCounts) {
                 this.problemCounts = new Map();
                 for (const d of this.problems()) {
                     const id = d.node ? this.editor.itemOf(d.node) : 0;
-                    if (id) this.problemCounts.set(id, (this.problemCounts.get(id) || 0) + 1);
+                    if (!id) continue;
+                    const c = this.problemCounts.get(id) || { errors: 0, warnings: 0 };
+                    if (d.severity === 1) c.errors++; else c.warnings++;
+                    this.problemCounts.set(id, c);
                 }
             }
-            return this.problemCounts.get(item) || 0;
+            const c = this.problemCounts.get(item);
+            return c ? (warnings ? c.warnings : c.errors) : 0;
         }
 
         // The chip that says whether the board is checked, and how many problems it has

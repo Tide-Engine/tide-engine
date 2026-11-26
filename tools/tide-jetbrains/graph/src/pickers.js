@@ -741,7 +741,7 @@
                 if (in_ !== group.name) continue;
                 out.push({
                     title: ed.doc.titleOf(item), key: String(item.id), id: item.id, of: item.member || item.accessor ? item.type?.id : undefined, detail: item.accessor ? schema.memberSpec('property')?.title || w('details.property') : spec?.title || kind,
-                    group: group.title, groupSummary: group.summary, problems: app.problemsIn(item.id),
+                    group: group.title, groupSummary: group.summary, problems: app.problemsIn(item.id), warnings: app.problemsIn(item.id, true),
                     tag: app.problemsIn(item.id) ? '!' : undefined,
                 });
             }
