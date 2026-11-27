@@ -1031,29 +1031,34 @@ static void build_signatures(void)
              "this call is in the frame's drawing. Unity draws it, through its own camera, into the screen alone (a render "
              "target of Tide's gets nothing of it), with every submesh in that material. Both are local fields a prefab or a "
              "scene sets in Unity's inspector; with either unset, and outside Unity, it draws nothing.");
+#define PRIMITIVE_SHADER_DOC " Optional textures, a vert, a frag, and shader values follow the color. Shaders take Vertex3."
     describe(add("Draw", "Cube", T_NONE, "tide_draw_cube", 3, T_F3, T_F3, T_COLOR),
-             "center, size, color", "A filled cube, centered in the world, with the full size along each axis.");
+             "center, size, color", "A filled cube, centered in the world, with the full size along each axis." PRIMITIVE_SHADER_DOC);
     signature *cube = add("Draw", "Cube", T_NONE, "tide_draw_cube_rotated", 3, T_F3, T_F3, T_Q);
     cube->argc = 4;
     cube->params[3] = T_COLOR;
-    describe(cube, "center, size, rotation, color", "A filled cube, rotated around its center, with the full size along each axis.");
+    describe(cube, "center, size, rotation, color",
+             "A filled cube, rotated around its center, with the full size along each axis." PRIMITIVE_SHADER_DOC);
     describe(add("Draw", "Sphere", T_NONE, "tide_draw_sphere", 3, T_F3, T_F, T_COLOR),
-             "center, radius, color", "A filled sphere, centered in the world.");
+             "center, radius, color", "A filled sphere, centered in the world." PRIMITIVE_SHADER_DOC);
     signature *cylinder = add("Draw", "Cylinder", T_NONE, "tide_draw_cylinder", 3, T_F3, T_F, T_F);
     cylinder->argc = 4;
     cylinder->params[3] = T_COLOR;
-    describe(cylinder, "center, radius, height, color", "A filled cylinder, centered in the world, along the y axis.");
+    describe(cylinder, "center, radius, height, color",
+             "A filled cylinder, centered in the world, along the y axis." PRIMITIVE_SHADER_DOC);
     signature *rotated_cylinder = add("Draw", "Cylinder", T_NONE, "tide_draw_cylinder_rotated", 3, T_F3, T_F, T_F);
     rotated_cylinder->argc = 5;
     rotated_cylinder->params[3] = T_Q;
     rotated_cylinder->params[4] = T_COLOR;
-    describe(rotated_cylinder, "center, radius, height, rotation, color", "A filled cylinder, rotated around its center from the y axis.");
+    describe(rotated_cylinder, "center, radius, height, rotation, color",
+             "A filled cylinder, rotated around its center from the y axis." PRIMITIVE_SHADER_DOC);
     describe(add("Draw", "Plane", T_NONE, "tide_draw_plane", 3, T_F3, T_F2, T_COLOR),
-             "center, size, color", "A filled plane, centered in the world, with its size along x and z.");
+             "center, size, color", "A filled plane, centered in the world, with its size along x and z." PRIMITIVE_SHADER_DOC);
     signature *plane = add("Draw", "Plane", T_NONE, "tide_draw_plane_rotated", 3, T_F3, T_F2, T_Q);
     plane->argc = 4;
     plane->params[3] = T_COLOR;
-    describe(plane, "center, size, rotation, color", "A filled plane, rotated around its center from the xz plane.");
+    describe(plane, "center, size, rotation, color", "A filled plane, rotated around its center from the xz plane." PRIMITIVE_SHADER_DOC);
+#undef PRIMITIVE_SHADER_DOC
 
     describe(add("Draw", "WorldToScreen", T_F2, "tide_draw_world_to_screen", 1, T_F2, T_NONE, T_NONE),
              "position", "A world point through the current 2D camera, in screen pixels from the top left, with y down. "
@@ -1529,6 +1534,12 @@ static const char *member_doc(const size_t i)
 bool builtin_draw_owner(const str name)
 {
     return str_eq_c(name, "Draw");
+}
+
+int builtin_primitive_min_args(const str name)
+{
+    if (str_eq_c(name, "Cylinder")) return 4;
+    return str_eq_c(name, "Sphere") || str_eq_c(name, "Cube") || str_eq_c(name, "Plane") ? 3 : 0;
 }
 
 bool builtin_old_draw_owner(const str name)

@@ -1485,6 +1485,7 @@ struct expr {
     // worked out for the first, and what's written of it again for the second reads what the first left
     int mesh_part;
     bool blit;           // Draw.Blit: source texture, destination target and a frag
+    int primitive_args;  // A shaded primitive's geometry arguments before textures and shaders
     bool targeted;       // A RenderTarget receiver supplies this draw's destination
     bool args_checked;   // A Clear's arguments were checked while telling a typed clear from a Color's: once is enough
     bool resource_operation; // RenderTarget creation, resize or disposal: ordered local side effects
@@ -1782,6 +1783,7 @@ typedef struct shader {
     // its Format (7 R32f, 8 Rgba32f), which a blended read loads exactly; -1 otherwise (direct_texture's alone)
     VEC(int) source_formats;
     bool blit;           // A full destination overwrite with a fixed Vertex quad
+    bool primitive;      // A cached built-in Vertex3 mesh
     bool instanced;      // Its draw supplies a list of instances
     bool gpu_instances;  // ...a GPU list's, read from its storage slot (instance_storage), drawn indirect
     bool compute;        // A kernel's: `kernel`, run by GPU.Run, with no vertex, vert or frag

@@ -7811,7 +7811,7 @@ static void list_bound(const shader *sh, sb *out, const bool per_instance)
 // order. NULL where it gives none there.
 static const expr *draw_texture(const expr *call, const int k)
 {
-    for (int a = call->blit ? 0 : 2, n = 0; a < call->args.count; a++) {
+    for (int a = call->blit ? 0 : call->primitive_args ? call->primitive_args : 2, n = 0; a < call->args.count; a++) {
         const expr *arg = call->args.items[a];
         if (arg->bind == BIND_SHADER) break;
         if ((arg->type.kind == TY_TEXTURE || arg->type.kind == TY_GRID) && n++ == k) return arg;
@@ -7998,7 +7998,8 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
             && s->skinned == call->skinned
             && s->values_type == call->values_type && s->gpu_instances == call->gpu_instances
             && s->gpu_vertices == call->gpu_vertices && s->gpu_indices == call->gpu_indices
-            && s->blit == call->blit && s->direct_texture == direct_texture && same_source_formats(s, call)) return s;
+            && s->blit == call->blit && s->primitive == (call->primitive_args != 0)
+            && s->direct_texture == direct_texture && same_source_formats(s, call)) return s;
     }
     shader *sh = NEW(shader);
     sh->index = prog->shaders.count;
@@ -8007,6 +8008,7 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
     sh->frag = call->frag;
     sh->textured = textured;
     sh->blit = call->blit;
+    sh->primitive = call->primitive_args != 0;
     sh->direct_texture = direct_texture;
     // The textures its draws give, in order: its vert's and its frag's, and with no frag the one its pixels are drawn with
     sh->given_textures = direct_texture || textured ? shader_given_textures(call->vert, call->frag) : 0;
@@ -8254,11 +8256,12 @@ void plan_shaders(program *prog)
             continue;
         }
         if (!check_image_outputs(prog, call)) continue;
-        const decl *vertex = call->blit ? prog->vertex : call->args.items[0]->type.decl->fields.items[0].type.decl;
+        const decl *vertex = call->blit ? prog->vertex : call->primitive_args ? prog->vertex3
+                                      : call->args.items[0]->type.decl->fields.items[0].type.decl;
         // A texture is the value argument after the indices, or after a 3D mesh's transform: a Texture, or a
         // grid, which is one there
         bool textured = false, direct_texture = call->blit;
-        for (int a = 2; !call->blit && a < call->args.count; a++) {
+        for (int a = call->primitive_args ? call->primitive_args : 2; !call->blit && a < call->args.count; a++) {
             const type_kind kind = call->args.items[a]->type.kind;
             textured |= !call->frag && (kind == TY_GRID || kind == TY_TEXTURE);
             direct_texture |= kind == TY_GRID || kind == TY_TEXTURE;

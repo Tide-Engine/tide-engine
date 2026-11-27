@@ -14,6 +14,7 @@ bool builtin_owner(str name);
 
 // The frame's drawing API: Draw, whose methods a render target has too.
 bool builtin_draw_owner(str name);
+int builtin_primitive_min_args(str name);
 // Draw2D and Draw3D, which Draw took the place of: a call of theirs is an error that names Draw's.
 bool builtin_old_draw_owner(str name);
 

@@ -1658,6 +1658,10 @@ TIDE_TEST(lsp_shaders_complete)
     TIDE_CHECK(!offers(complete(IN_VIEW("Draw.Mesh(models.crate, $")), "Shade"));
     TIDE_CHECK(!offers(complete(IN_VIEW("Draw.Circle(float2(0, 0), 1, $")), "Shade"));
 #undef IN_VIEW
+    const char *primitive = complete(SHADER_CODE
+        "frag PaintPrimitive(Vertex3 vertex, out Color color) { color = vertex.color; }\n"
+        "view DrawBall() { Draw.Sphere(float3(0, 0, 5), 1, Color.white, $); }\n");
+    TIDE_CHECK(offers(primitive, "PaintPrimitive") && !offers(primitive, "Shade"));
     TIDE_CHECK(offers(complete(SHADER_CODE "void Paint(Models models, Box box, Sun sun)\n{\n"
                                             "    Draw.Mesh(models.crate, models.faces, float4x4.identity, $\n}\n"),
                        "Shade"));

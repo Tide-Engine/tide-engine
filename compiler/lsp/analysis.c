@@ -10706,6 +10706,16 @@ static int open_call(const int last, int *commas)
 
 // Whether the '(' at token `open` is Draw.Mesh's.
 static type receiver_type(int dot, loc at);
+static int opens_primitive_draw(const int open)
+{
+    const token *toks = DOC->toks;
+    if (open < 3 || toks[open - 1].kind != T_IDENT || toks[open - 2].kind != T_DOT) return 0;
+    const int min = builtin_primitive_min_args(toks[open - 1].text);
+    if (min && (str_eq_c(toks[open - 3].text, "Draw")
+                || receiver_type(open - 2, toks[open].at).kind == TY_RENDER_TARGET)) return min;
+    return 0;
+}
+
 static bool opens_mesh_draw(const int open)
 {
     const token *toks = DOC->toks;
@@ -12194,14 +12204,17 @@ void analysis_completion(const int line, const int character, jbuf *out)
         const bool type_written = pk == T_IDENT && (builtin_type_named(prev->text, &ignored) || str_eq_c(prev->text, "string"));
         if (statement_start && type_written) break;
         // Draw.Mesh(vertices, indices, ...: the vert and the frag a view draws through, by name
-        if (call >= 0 && opens_mesh_draw(call) && commas >= (str_eq_c(DOC->toks[call - 1].text, "Instanced") ? 3 : 2)) {
+        const int primitive = opens_primitive_draw(call);
+        const bool mesh = call >= 0 && opens_mesh_draw(call);
+        const int first_shader = primitive ? primitive : mesh && str_eq_c(DOC->toks[call - 1].text, "Instanced") ? 3 : 2;
+        if ((primitive || mesh) && commas >= first_shader) {
             const scope sc = scope_at(at);
             const bool draws = sc.decl && (sc.decl->is_view || (sc.decl->kind == DECL_FUNCTION && !sc.decl->is_async));
             call_args args;
             call_arguments(call, &args);
-            const decl *vertex = mesh_vertex(&sc, args.first[0], args.last[0]);
+            const decl *vertex = primitive ? A.prog->vertex3 : mesh_vertex(&sc, args.first[0], args.last[0]);
             // ...and after them, the values they take
-            for (int a = 2; draws && a < args.count && a < commas; a++) {
+            for (int a = primitive ? primitive : 2; draws && a < args.count && a < commas; a++) {
                 complete_draw_values(&c, shader_written(args.first[a], args.last[a]));
             }
             if (draws) complete_shaders(&c, vertex);

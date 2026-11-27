@@ -6,7 +6,6 @@
 // Its dimensions and position belong to the instance, so drawing another
 // size neither builds nor uploads geometry again. Colors are versions of
 // the mesh: a later color cannot change what an earlier command draws.
-enum { PRIMITIVE_CUBE, PRIMITIVE_SPHERE, PRIMITIVE_CYLINDER, PRIMITIVE_PLANE };
 static const char primitive_ids[4] = {0};
 
 enum { SEGMENTS = 24, SPHERE_RINGS = 12 };
@@ -104,28 +103,36 @@ static void fill_plane(tide_draw_list *d, const uint32_t slot, const tide_color 
     tide_draw_mesh_fill(d, slot, vertices, 4, indices, 6);
 }
 
-static uint32_t primitive(tide_draw_list *d, const uint32_t shape, const tide_color color)
+static uint32_t primitive(tide_draw_list *d, const uint32_t space, const tide_primitive_kind shape, const tide_color color)
 {
     bool fill;
-    const uint32_t slot = tide_draw_mesh_slot(d, TIDE_MESH_MEMORY, (uint64_t)(uintptr_t)&primitive_ids[shape], 0,
+    const uint32_t slot = tide_draw_mesh_slot(d, space, (uint64_t)(uintptr_t)&primitive_ids[shape], 0,
                                              tide_hash(&color, sizeof color), &fill);
     if (fill) {
         switch (shape) {
-        case PRIMITIVE_CUBE: fill_cube(d, slot, color); break;
-        case PRIMITIVE_SPHERE: fill_sphere(d, slot, color); break;
-        case PRIMITIVE_CYLINDER: fill_cylinder(d, slot, color); break;
-        case PRIMITIVE_PLANE: fill_plane(d, slot, color); break;
+        case TIDE_PRIMITIVE_CUBE: fill_cube(d, slot, color); break;
+        case TIDE_PRIMITIVE_SPHERE: fill_sphere(d, slot, color); break;
+        case TIDE_PRIMITIVE_CYLINDER: fill_cylinder(d, slot, color); break;
+        case TIDE_PRIMITIVE_PLANE: fill_plane(d, slot, color); break;
         }
     }
     return slot;
+}
+
+uint32_t tide_draw_primitive_mesh(tide_draw_list *d, const tide_primitive_kind shape, const tide_float3 scale,
+                                  const tide_color color)
+{
+    if ((unsigned)shape >= sizeof primitive_ids || !(scale.x > 0 && scale.y > 0 && scale.z > 0)) return 0;
+    // The built-in pipeline uploads a packed vertex. Custom shaders read Vertex3 bytes directly.
+    return primitive(d, TIDE_MESH_BYTES, shape, color);
 }
 
 void tide_draw_cube_rotated(tide_draw_list *d, const tide_float3 center, const tide_float3 size,
                              const tide_quaternion rotation, const tide_color color)
 {
     if (!(size.x > 0 && size.y > 0 && size.z > 0)) return;
-    tide_draw_instance(d, primitive(d, PRIMITIVE_CUBE, color), tide_trs_f4x4(center, rotation, size), 0, TIDE_FILTER_POINT,
-                       TIDE_WRAP_CLAMP);
+    tide_draw_instance(d, primitive(d, TIDE_MESH_MEMORY, TIDE_PRIMITIVE_CUBE, color),
+                       tide_trs_f4x4(center, rotation, size), 0, TIDE_FILTER_POINT, TIDE_WRAP_CLAMP);
 }
 
 void tide_draw_cube(tide_draw_list *d, const tide_float3 center, const tide_float3 size, const tide_color color)
@@ -136,7 +143,7 @@ void tide_draw_cube(tide_draw_list *d, const tide_float3 center, const tide_floa
 void tide_draw_sphere(tide_draw_list *d, const tide_float3 center, const float radius, const tide_color color)
 {
     if (!(radius > 0)) return;
-    tide_draw_instance(d, primitive(d, PRIMITIVE_SPHERE, color),
+    tide_draw_instance(d, primitive(d, TIDE_MESH_MEMORY, TIDE_PRIMITIVE_SPHERE, color),
                        tide_trs_f4x4(center, tide_identity_q(), tide_f3_splat(radius)), 0, TIDE_FILTER_POINT, TIDE_WRAP_CLAMP);
 }
 
@@ -144,8 +151,8 @@ void tide_draw_cylinder_rotated(tide_draw_list *d, const tide_float3 center, con
                                  const tide_quaternion rotation, const tide_color color)
 {
     if (!(radius > 0 && height > 0)) return;
-    tide_draw_instance(d, primitive(d, PRIMITIVE_CYLINDER, color),
-                       tide_trs_f4x4(center, rotation, tide_f3(radius, height, radius)), 0, TIDE_FILTER_POINT, TIDE_WRAP_CLAMP);
+    tide_draw_instance(d, primitive(d, TIDE_MESH_MEMORY, TIDE_PRIMITIVE_CYLINDER, color),
+                       tide_trs_f4x4(center, rotation, tide_cylinder_scale(radius, height)), 0, TIDE_FILTER_POINT, TIDE_WRAP_CLAMP);
 }
 
 void tide_draw_cylinder(tide_draw_list *d, const tide_float3 center, const float radius, const float height,
@@ -158,8 +165,8 @@ void tide_draw_plane_rotated(tide_draw_list *d, const tide_float3 center, const 
                               const tide_quaternion rotation, const tide_color color)
 {
     if (!(size.x > 0 && size.y > 0)) return;
-    tide_draw_instance(d, primitive(d, PRIMITIVE_PLANE, color),
-                       tide_trs_f4x4(center, rotation, tide_f3(size.x, 1, size.y)), 0, TIDE_FILTER_POINT, TIDE_WRAP_CLAMP);
+    tide_draw_instance(d, primitive(d, TIDE_MESH_MEMORY, TIDE_PRIMITIVE_PLANE, color),
+                       tide_trs_f4x4(center, rotation, tide_plane_scale(size)), 0, TIDE_FILTER_POINT, TIDE_WRAP_CLAMP);
 }
 
 void tide_draw_plane(tide_draw_list *d, const tide_float3 center, const tide_float2 size, const tide_color color)

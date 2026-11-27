@@ -116,6 +116,8 @@ Positions and sizes are in world units, with `y` up. The camera maps them to the
 | `Draw.Plane(center, size, color)` | A rectangle in the local `xz` plane, with full widths `size.x` and `size.y` |
 | `Draw.Instanced(vertices, indices, instances)` | One mesh for each instance in a list, 2D or 3D by its vertices, with optional textures and shaders (see [Instances from a list](./shaders.md#instances-from-a-list)) |
 
+Cube, sphere, cylinder and plane also accept custom shaders after their color. See [3D primitives](./3d.md#primitives).
+
 Each frame starts black, with the camera at the origin and one world unit per pixel.
 
 ## Colors

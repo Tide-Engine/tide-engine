@@ -61,6 +61,8 @@ Draw.Mesh(vertices, indices, transform, Wave);          // A vert
 Draw.Mesh(vertices, indices, transform, Wave, Shade);   // Both: the vert first
 ```
 
+The [solid 3D primitives](./3d.md#primitives) accept the same shader suffix after their color. For example, `Draw.Sphere(center, radius, Color.white, Shade)` calls a `Shade` that takes `Vertex3`.
+
 With no frag, a pixel is its vertex's `color` times the draw's texture at its `uv`, as the built-in `Vertex` and `Vertex3` draw: a struct with no `Color color` draws white, and a texture needs a `float2 uv` to be read at. With no vert, the vertices are used as they are.
 
 A model from a file fills a struct of yours the same way, by those names and a few more (`normal`, `tangent`, `uv2`): `asset Mesh<BoxVertex> crate = "art/crate.glb";`, then `Draw.Mesh(crate, transform, Wave, Shade)`. See [Meshes](./assets.md#meshes).

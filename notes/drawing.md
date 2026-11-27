@@ -1,3 +1,16 @@
+## Custom shaders on solid 3D primitives (2026-11-27)
+
+Cube, Sphere, Cylinder and Plane take the mesh shader suffix after their color, on Draw or a render target.
+The existing dimensions and rotations place the draw through the shader's instance transform. Shaders take
+Vertex3 (position, UV and color). Declare a mesh with a custom vertex type for additional attributes.
+Both paths use the same geometry builders. Shaded draws cache raw Vertex3 bytes by shape and color in
+TIDE_MESH_BYTES. Plain draws use TIDE_MESH_MEMORY because the built-in pipeline uploads packed vertices.
+Consecutive compatible shaded draws batch through the ordinary shaded mesh path.
+
+The shader pixel fixture exercises all four primitives, explicit textures, shader values, a vert-only draw,
+a target receiver, zero size and plain/shaded draws of the same shape and color. Windows ASan/Vulkan and
+web-debug/WebGPU passed. The existing native primitive tests and the compiler's wrong-vertex diagnostic passed.
+
 ## Several textures a draw gives (2026-11-14)
 
 `Mesh`, `Instanced`, `SkinnedMesh`, a target's forms and `Blit` give a frag and a vert as many Textures as they

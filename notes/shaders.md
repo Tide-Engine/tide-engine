@@ -1,3 +1,10 @@
+## Solid 3D primitives with custom shaders (2026-11-27)
+
+The compiler checks the usual shape arguments using the plain built-in signature and checks the suffix using
+the mesh shader rules. It specializes the generated draw adapter for cached primitive geometry and uses Vertex3
+as the vertex type. Texture roles, values, shader bindings and destination checks follow the existing mesh path.
+See drawing.md for the pixel and diagnostic fixtures.
+
 ## Metal: a storage buffer's length is told, not asked (2026-11-19)
 
 Unity's translator to Metal refuses `GetDimensions` on a buffer, which `tidehl_length<i>` used for a storage

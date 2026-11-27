@@ -1,3 +1,12 @@
+## Cached primitive meshes for generated shaders (2026-11-27)
+
+Generated C calls `tide_draw_primitive_mesh` to obtain the current draw list's cached raw Vertex3 mesh slot.
+The helper validates the shape and requires positive scale on all mesh axes. It returns zero for an undrawable
+shape. Generated code supplies the transform and submits the slot through the existing `tide_draw_shaded`.
+`tide_cylinder_scale` and `tide_plane_scale` are inline conversions shared with the plain draws. The existing
+plain path keeps its packed GPU layout. The new path reuses geometry on cache hits.
+Contracts and Windows ASan/Vulkan and WebGPU pixel coverage are in drawing.md.
+
 ## A platform layer with no window of its own, for iOS (2026-11-19)
 
 New, the agent's, under the `platform/` maintenance below; Provisional. `platform/embedded/window.c` and `audio.c`

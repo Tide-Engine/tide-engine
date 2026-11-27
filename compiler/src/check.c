@@ -9103,17 +9103,45 @@ static type check_blit(checker *c, expr *e)
 // frag is the built-in call it always was. Anything else draws through a
 // shader tidec writes (see shader.c): a vertex struct of the game's, a vert,
 // a frag.
+static bool shaded_primitive(checker *c, expr *e)
+{
+    const int min = builtin_primitive_min_args(e->name), count = e->args.count;
+    return min && ((count > min && named_shader(c, e->args.items[count - 1]))
+                   || (count > min + 1 && named_shader(c, e->args.items[count - 2])));
+}
+
+static bool check_primitive_args(checker *c, expr *e, const int count, const int min)
+{
+    // Any explicit textures follow the shape's ordinary arguments.
+    int end = count;
+    while (end > min) {
+        const type t = e->args.items[end - 1]->type;
+        if (t.kind != TY_TEXTURE && t.kind != TY_GRID
+            && !(t.kind == TY_ENUM && (t.decl == c->prog->filter || t.decl == c->prog->wrap))) break;
+        end--;
+    }
+    const int total = e->args.count;
+    e->args.count = end;
+    const type result = resolve_builtin_call(str_from("Draw"), e);
+    if (result.kind != TY_ERROR) check_default_args(c, e);
+    e->args.count = total;
+    e->primitive_args = end;
+    return result.kind != TY_ERROR;
+}
+
 static type check_mesh_draw(checker *c, expr *e)
 {
     program *prog = c->prog;
+    const int primitive = builtin_primitive_min_args(e->name);
     const bool instanced = e->instanced = str_eq_c(e->name, "Instanced");
     bool skinned = e->skinned = str_eq_c(e->name, "SkinnedMesh");
-    const char *draw_name = e->targeted ? (skinned ? "target.SkinnedMesh" : instanced ? "target.Instanced" : "target.Mesh")
+    const char *draw_name = primitive ? str_to_cstr(e->name)
+                         : e->targeted ? (skinned ? "target.SkinnedMesh" : instanced ? "target.Instanced" : "target.Mesh")
                                         : (skinned ? "Draw.SkinnedMesh" : instanced ? "Draw.Instanced" : "Draw.Mesh");
     // `lod: multiplier`, written last: levels of detail made for a mesh the game made, while it runs (docs/spec.md,
     // Levels of detail). Taken off the arguments, which go by what each is, and checked once the mesh's are
     loc lod_at = e->at;
-    if (e->arg_names.count == e->args.count && e->args.count > 0 && str_eq_c(e->arg_names.items[e->args.count - 1], "lod")) {
+    if (!primitive && e->arg_names.count == e->args.count && e->args.count > 0 && str_eq_c(e->arg_names.items[e->args.count - 1], "lod")) {
         e->mesh_lod = e->args.items[e->args.count - 1];
         lod_at = e->arg_name_at.items[e->args.count - 1];
         e->args.count--;
@@ -9124,6 +9152,10 @@ static type check_mesh_draw(checker *c, expr *e)
         if (e->arg_names.items[i].len == 0) continue;
         for (int k = 0; k < e->args.count; k++) {
             if (e->args.items[k]->kind != E_LIST && e->args.items[k]->kind != E_DEFAULT) check_expr(c, e->args.items[k]);
+        }
+        if (primitive) {
+            diag_error(e->arg_name_at.items[i], "%s with a shader takes its arguments in order", draw_name);
+            return T_ERR;
         }
         diag_error(e->arg_name_at.items[i], "%s takes its arguments in order, and 'lod:' alone by name, last", draw_name);
         diag_note("'lod: 1' asks for levels of detail of a mesh the game makes; leave out '" STR_FMT ":'",
@@ -9136,9 +9168,9 @@ static type check_mesh_draw(checker *c, expr *e)
     int count = e->args.count;
     bool order_said = false;
     expr *values = NULL;
-    while (count > 0) {
+    while (count > primitive) {
         expr *name = e->args.items[count - 1];
-        decl *shader = named_shader(c, name);
+        decl *shader = primitive && name->bind == BIND_SHADER ? name->type_decl : named_shader(c, name);
         if (!shader && count == e->args.count && count > 2) { // Its values, if a vert or a frag is named before them
             values = name;
             count--;
@@ -9172,7 +9204,7 @@ static type check_mesh_draw(checker *c, expr *e)
     // those, each a member of the same expression, and what the call wrote stays in `written`, for the editors
     int checked = 0; // How many of the first arguments are checked already
     int checked_optional = -1;
-    if (count > 0 && e->args.items[0]->kind != E_LIST && e->args.items[0]->kind != E_DEFAULT) {
+    if (!primitive && count > 0 && e->args.items[0]->kind != E_LIST && e->args.items[0]->kind != E_DEFAULT) {
         expr *mesh = e->args.items[0];
         const type whole = check_expr(c, mesh);
         checked = 1;
@@ -9240,7 +9272,7 @@ static type check_mesh_draw(checker *c, expr *e)
         }
         return T_ERR;
     }
-    if (count < (instanced ? 3 : 2)) {
+    if (!primitive && count < (instanced ? 3 : 2)) {
         for (int i = checked; i < count; i++) check_expr(c, e->args.items[i]);
         diag_error(e->at, instanced ? "%s takes a mesh's vertices, its indices, and a list of instances first"
                                   : "%s takes a mesh's vertices and its indices first", draw_name);
@@ -9250,10 +9282,10 @@ static type check_mesh_draw(checker *c, expr *e)
 
     // The vertices: a list of the struct its vert or frag runs on, or the one
     // the list's first value names
-    expr *vertices = e->args.items[0];
-    decl *vertex = NULL;
+    expr *vertices = primitive ? e : e->args.items[0];
+    decl *vertex = primitive ? prog->vertex3 : NULL;
     int early = -1; // An argument checked before its turn, to tell the vertices' dimension
-    if (vertices->kind == E_LIST) {
+    if (!primitive && vertices->kind == E_LIST) {
         const decl *shader = e->vert ? e->vert : e->frag;
         const expr *first = vertices->args.count ? vertices->args.items[0] : NULL;
         if (shader && shader->params.count && shader->params.items[0].type.kind == TY_STRUCT) {
@@ -9269,7 +9301,7 @@ static type check_mesh_draw(checker *c, expr *e)
         }
         if (!vertex) vertex = prog->vertex;
         check_expr_want(c, vertices, list_of(prog, decl_type(vertex)));
-    } else {
+    } else if (!primitive) {
         const type t = checked > 0 ? vertices->type : check_expr(c, vertices);
         if ((t.kind == TY_LIST || t.kind == TY_GPU_LIST) && t.decl->fields.items[0].type.kind == TY_STRUCT) {
             vertex = t.decl->fields.items[0].type.decl;
@@ -9280,11 +9312,11 @@ static type check_mesh_draw(checker *c, expr *e)
                       "GPUList of one");
         }
     }
-    expr *indices = e->args.items[1];
+    expr *indices = primitive ? NULL : e->args.items[1];
     const type index_list = list_of(prog, T_INT_);
-    const type index_type = checked > 1 ? indices->type : indices->kind == E_LIST ? check_expr_want(c, indices, index_list)
-                                                                                    : check_expr(c, indices);
-    for (int i = 2; i < count; i++) {
+    const type index_type = primitive ? index_list : checked > 1 ? indices->type
+                          : indices->kind == E_LIST ? check_expr_want(c, indices, index_list) : check_expr(c, indices);
+    for (int i = primitive ? 0 : 2; i < count; i++) {
         expr *arg = e->args.items[i];
         if (i == early || i == checked_optional) continue;
         if (instanced && i == 2 && arg->kind == E_LIST) {
@@ -9315,9 +9347,11 @@ static type check_mesh_draw(checker *c, expr *e)
             check_expr(c, arg);
         }
     }
+    if (primitive && !check_primitive_args(c, e, count, primitive)) return T_ERR;
+    const int mesh_args = primitive ? e->primitive_args : 2;
     if (!vertex) return T_ERR;
     // A wrap is written after a filter, whichever way the mesh is drawn
-    for (int i = 2; i < count; i++) {
+    for (int i = mesh_args; i < count; i++) {
         const expr *arg = e->args.items[i];
         if (arg->type.kind != TY_ENUM || arg->type.decl != prog->wrap) continue;
         const type before = e->args.items[i - 1]->type;
@@ -9359,7 +9393,7 @@ static type check_mesh_draw(checker *c, expr *e)
         e->mesh_lod_vertex = vertex;
     }
     // A 3D mesh takes the transform that places it; a 2D one is drawn where its vertices are
-    if (!instanced && dims == 3 && (count < 3 || (e->args.items[2]->type.kind != TY_FLOAT4X4 && e->args.items[2]->type.kind != TY_ERROR
+    if (!primitive && !instanced && dims == 3 && (count < 3 || (e->args.items[2]->type.kind != TY_FLOAT4X4 && e->args.items[2]->type.kind != TY_ERROR
                                                  && e->args.items[2]->kind != E_DEFAULT))) {
         diag_error(count < 3 ? e->at : e->args.items[2]->at, "a 3D mesh takes the transform that places it in the world, "
                    "a float4x4, after its indices");
@@ -9376,7 +9410,7 @@ static type check_mesh_draw(checker *c, expr *e)
     // A grid that's no texture, where a texture goes: said here, for every way the mesh is drawn. A grid of numbers
     // is a texture of a frag or vert whose Texture parameter there (shader_given_texture) reads them by its [Raw(T)],
     // and a frag's [Raw] Texture takes a [Raw] grid as it is (check_raw_uses)
-    for (int i = 2, given = 0; i < count; i++) {
+    for (int i = mesh_args, given = 0; i < count; i++) {
         const expr *arg = e->args.items[i];
         const int k = arg->type.kind == TY_TEXTURE || arg->type.kind == TY_GRID ? given++ : -1; // Which texture it is
         // With no frag, the first is what the pixels are drawn with too: colors
@@ -9424,7 +9458,7 @@ static type check_mesh_draw(checker *c, expr *e)
                    type_name(index_type));
         ok = false;
     }
-    for (int i = 2; i < count; i++) {
+    for (int i = mesh_args; i < count; i++) {
         if (e->args.items[i]->kind == E_DEFAULT) {
             diag_error(e->args.items[i]->at, "'default' doesn't say what it stands for here: write the value itself");
             return T_ERR;
@@ -9432,7 +9466,7 @@ static type check_mesh_draw(checker *c, expr *e)
         if (e->args.items[i]->type.kind == TY_ERROR) return T_ERR;
     }
     // A 3D mesh's transform, or an explicit draw's list of instances
-    int at = 2;
+    int at = mesh_args;
     const type f4x4 = {TY_FLOAT4X4, NULL};
     bool transforms = false;
     if (instanced) {
@@ -9483,7 +9517,7 @@ static type check_mesh_draw(checker *c, expr *e)
                 return T_ERR;
             }
         }
-    } else if (dims == 3) {
+    } else if (!primitive && dims == 3) {
         at++; // Its transform, checked above
     }
     // Textures, each with its filter and its wrap. A texture is a Texture, which a grid of colors or of floats
@@ -9590,9 +9624,15 @@ static type check_mesh_draw(checker *c, expr *e)
         const decl *shader = name->type_decl;
         const type on = shader->params.count ? shader->params.items[0].type : T_ERR;
         if (on.kind == TY_STRUCT && on.decl != vertex) {
-            diag_error(name->at, "%s '" STR_FMT "' runs on a " STR_FMT ", and this mesh's vertices are a List<" STR_FMT ">",
-                       shader_word(shader), STR_ARG(shader->name), STR_ARG(on.decl->name), STR_ARG(vertex->name));
-            diag_note("a %s's first parameter is the vertex of the meshes it's drawn with", shader_word(shader));
+            if (primitive) {
+                diag_error(name->at, "%s '" STR_FMT "' runs on a " STR_FMT ", and %s uses Vertex3",
+                           shader_word(shader), STR_ARG(shader->name), STR_ARG(on.decl->name), draw_name);
+                diag_note("take a Vertex3 in the shader, or use Draw.Mesh to draw with your own vertex type");
+            } else {
+                diag_error(name->at, "%s '" STR_FMT "' runs on a " STR_FMT ", and this mesh's vertices are a List<" STR_FMT ">",
+                           shader_word(shader), STR_ARG(shader->name), STR_ARG(on.decl->name), STR_ARG(vertex->name));
+                diag_note("a %s's first parameter is the vertex of the meshes it's drawn with", shader_word(shader));
+            }
             ok = false;
         } else if (on.kind != TY_STRUCT) {
             ok = false; // Its declaration said why
@@ -9616,14 +9656,16 @@ static type check_mesh_draw(checker *c, expr *e)
 
     e->call = CALL_DRAW;
     e->c_callee = NULL;
-    e->arg_want.count = 0;
-    vec_push(e->arg_want, vertices->type);
-    vec_push(e->arg_want, e->gpu_indices ? index_type : index_list);
-    for (int i = 2; i < count; i++) {
+    if (!primitive) {
+        e->arg_want.count = 0;
+        vec_push(e->arg_want, vertices->type);
+        vec_push(e->arg_want, e->gpu_indices ? index_type : index_list);
+    }
+    for (int i = mesh_args; i < count; i++) {
         const expr *arg = e->args.items[i];
         // The textures as the Textures they are, a grid too
         const bool sampled = i >= textures_at && i < textures_end && (arg->type.kind == TY_GRID || arg->type.kind == TY_TEXTURE);
-        vec_push(e->arg_want, i == 2 && dims == 3 && !instanced ? f4x4 : sampled ? ((type){TY_TEXTURE, NULL}) : arg->type);
+        vec_push(e->arg_want, !primitive && i == 2 && dims == 3 && !instanced ? f4x4 : sampled ? ((type){TY_TEXTURE, NULL}) : arg->type);
     }
     const mesh_draw draw = {e, c->method ? c->method : c->system};
     vec_push(prog->mesh_draws, draw);
@@ -11139,7 +11181,8 @@ static type check_method(checker *c, expr *e)
         }
         // Draw is the window's drawing: what a render target has as its methods
         const bool draws = builtin_draw_owner(owner);
-        if (draws && (str_eq_c(e->name, "Mesh") || str_eq_c(e->name, "Instanced") || str_eq_c(e->name, "SkinnedMesh"))) return check_mesh_draw(c, e);
+        if (draws && (str_eq_c(e->name, "Mesh") || str_eq_c(e->name, "Instanced") || str_eq_c(e->name, "SkinnedMesh")
+                      || shaded_primitive(c, e))) return check_mesh_draw(c, e);
         // `default` takes its type from the version of the function the other arguments pick,
         // and [a, b, c] is the list the function takes there. An `out` argument is the variable
         // a version with an `out` parameter makes (check_gui_call): of the others, nothing takes one,
@@ -11657,7 +11700,8 @@ static type check_method(checker *c, expr *e)
             type filled;
             if (check_fill_draw(c, e, &filled, true)) return filled;
         }
-        if (str_eq_c(e->name, "Mesh") || str_eq_c(e->name, "Instanced") || str_eq_c(e->name, "SkinnedMesh")) return check_mesh_draw(c, e);
+        if (str_eq_c(e->name, "Mesh") || str_eq_c(e->name, "Instanced") || str_eq_c(e->name, "SkinnedMesh")
+            || shaded_primitive(c, e)) return check_mesh_draw(c, e);
         if (str_eq_c(e->name, "Blit")) {
             for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
             diag_error(e->at, "a render target has no Blit: a blit names the target it goes into, 'Draw.Blit(source, target, frag)'");

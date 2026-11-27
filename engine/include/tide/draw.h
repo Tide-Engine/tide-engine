@@ -3495,6 +3495,24 @@ void tide_draw_shaded_indirect(tide_draw_list *d, const tide_shader *shader, uin
 // turns its local axes by `rotation` before placing it in the world.
 void tide_draw_cube(tide_draw_list *d, tide_float3 center, tide_float3 size, tide_color color);
 
+typedef enum tide_primitive_kind {
+    TIDE_PRIMITIVE_CUBE, TIDE_PRIMITIVE_SPHERE, TIDE_PRIMITIVE_CYLINDER, TIDE_PRIMITIVE_PLANE
+} tide_primitive_kind;
+
+/* Cached Vertex3 geometry for generated shaded draws. A zero slot is undrawable.
+   Scale is in mesh coordinates (a sphere and cylinder have unit radius). */
+uint32_t tide_draw_primitive_mesh(tide_draw_list *d, tide_primitive_kind kind, tide_float3 scale, tide_color color);
+
+static inline tide_float3 tide_cylinder_scale(const float radius, const float height)
+{
+    return tide_f3(radius, height, radius);
+}
+
+static inline tide_float3 tide_plane_scale(const tide_float2 size)
+{
+    return tide_f3(size.x, 1, size.y);
+}
+
 // A mesh of the program Tide runs inside, drawn by it with a material of its own, placed by `transform` (through the
 // 3D transform that's set), where this call is among the frame's draws: Tide's Draw.UnityMesh. Its camera, its
 // lighting and what its material does are that program's; it goes into the window alone. Nothing for none of

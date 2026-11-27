@@ -4548,6 +4548,31 @@ static void gen_window_index(gen *g, sb *o, const expr *index)
     }
 }
 
+static void gen_primitive_args(gen *g, sb *o, const expr *e)
+{
+    const bool sphere = str_eq_c(e->name, "Sphere");
+    const bool cylinder = str_eq_c(e->name, "Cylinder");
+    const bool plane = str_eq_c(e->name, "Plane");
+    const char *kind = sphere ? "SPHERE" : cylinder ? "CYLINDER" : plane ? "PLANE" : "CUBE";
+    const char *scale = sphere ? "tide_f3_splat" : cylinder ? "tide_cylinder_scale" : plane ? "tide_plane_scale" : NULL;
+    sb_printf(o, ", TIDE_PRIMITIVE_%s, ", kind);
+    gen_as(g, o, e->args.items[0], e->arg_want.items[0]);
+    sb_put(o, ", ");
+    if (scale) sb_printf(o, "%s(", scale);
+    gen_as(g, o, e->args.items[1], e->arg_want.items[1]);
+    if (cylinder) {
+        sb_put(o, ", ");
+        gen_as(g, o, e->args.items[2], e->arg_want.items[2]);
+    }
+    if (scale) sb_put(o, ")");
+    sb_put(o, ", ");
+    const int color = e->primitive_args - 1;
+    if (color > (cylinder ? 3 : 2)) gen_as(g, o, e->args.items[color - 1], e->arg_want.items[color - 1]);
+    else sb_put(o, "tide_identity_q()");
+    sb_put(o, ", ");
+    gen_as(g, o, e->args.items[color], e->arg_want.items[color]);
+}
+
 // Every ordinary Draw call names the window; a receiver names its target.
 // The receiver is evaluated once, while the runtime keeps its settings. A
 // call with neither (draw_dims 0) selects none: there's none such from Tide,
@@ -5711,8 +5736,9 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             sb_printf(o, "tide_shade_%d(", sh->index);
             if (sh->blit) sb_put(o, "tide_draw");
             else gen_draw_list(g, o, e);
+            if (sh->primitive) gen_primitive_args(g, o, e);
             bool blended = false; // A blit's enum is how it blends, which it always takes
-            for (int i = 0; i < e->args.count && e->args.items[i]->bind != BIND_SHADER; i++) {
+            for (int i = e->primitive_args; i < e->args.count && e->args.items[i]->bind != BIND_SHADER; i++) {
                 expr *arg = e->args.items[i];
                 // A mesh's filter and wrap went with its texture
                 const bool sampling = arg->type.kind == TY_ENUM && (arg->type.decl == g->prog->filter || arg->type.decl == g->prog->wrap);
@@ -30255,13 +30281,16 @@ static void gen_shaders(gen *g)
 
         // Draws a mesh through it: what its frag and vert read goes with the instance and the draw
         sb_printf(o, "TIDE_HELPER void tide_shade_%d(tide_draw_list *tide_draw", s);
-        if (!sh->blit) {
+        if (sh->primitive) {
+            sb_put(o, ", tide_primitive_kind tide_kind, tide_float3 tide_center, tide_float3 tide_scale, "
+                      "tide_quaternion tide_rotation, tide_color tide_color_arg");
+        } else if (!sh->blit) {
             sb_put(o, sh->gpu_vertices ? ", tide_gpu_list tide_gpu_vertices" : ", tide_list tide_vertices");
             sb_put(o, sh->gpu_indices ? ", tide_gpu_list tide_gpu_indices" : ", tide_list tide_indices");
         }
         if (sh->gpu_instances) sb_put(o, ", tide_gpu_list tide_items");
         else if (sh->instanced) sb_put(o, ", tide_list tide_items");
-        else if (sh->dims == 3) sb_put(o, ", tide_float4x4 tide_transform");
+        else if (sh->dims == 3 && !sh->primitive) sb_put(o, ", tide_float4x4 tide_transform");
         for (int t = 0; t < sh->given_textures; t++) sb_printf(o, ", tide_texture_ref %s", given_texture_name(t));
         if (sh->skinned) {
             sb_put(o, ", tide_list tide_model_data");
@@ -30277,6 +30306,11 @@ static void gen_shaders(gen *g)
         }
         sb_put(o, ")\n{\n");
         if (sh->blit) sb_put(o, "    tide_draw = tide_draw_render_target(tide_draw, tide_destination);\n");
+        if (sh->primitive) {
+            sb_put(o, "    const uint32_t tide_mesh = tide_draw_primitive_mesh(tide_draw, tide_kind, tide_scale, tide_color_arg);\n"
+                      "    if (!tide_mesh) return;\n"
+                      "    const tide_float4x4 tide_transform = tide_trs_f4x4(tide_center, tide_rotation, tide_scale);\n");
+        }
         // A GPU list's vertices or indices are read on the GPU: the engine is given none of the CPU's for them
         if (sh->gpu_vertices) sb_put(o, "    const tide_list tide_vertices = {0};\n");
         if (sh->gpu_indices) sb_put(o, "    const tide_list tide_indices = {0};\n");
@@ -30443,6 +30477,9 @@ static void gen_shaders(gen *g)
         if (sh->skinned && !sh->instanced) gen_shader_skin_bindings(o, sh);
         if (sh->blit)
             sb_printf(o, "    tide_draw_blit(tide_draw, &tide_shader_%d, (tide_blend)tide_over, %s, %s, tide_textures, %s);\n}\n\n",
+                      s, instance ? "&tide_instance" : "NULL", uniforms ? "&tide_uniforms" : "NULL", sampling.data);
+        else if (sh->primitive)
+            sb_printf(o, "    tide_draw_shaded(tide_draw, &tide_shader_%d, tide_mesh, %s, %s, tide_textures, %s);\n}\n\n",
                       s, instance ? "&tide_instance" : "NULL", uniforms ? "&tide_uniforms" : "NULL", sampling.data);
         else if (sh->instanced && sh->skinned) sb_put(o, "}\n\n");
         else if (sh->instanced)

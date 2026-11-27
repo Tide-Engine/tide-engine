@@ -2015,6 +2015,26 @@ static void run_bias_checks(const char *when)
     }
 }
 
+static void run_primitive_checks(void)
+{
+    local.Art.targetPass = 35;
+    tide_draw_reset(&list);
+    tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
+    tide_gui_end(&gui, &list);
+    local.Art.targetPass = 0;
+    const tide_float2 points[] = {{16.5f, 16.5f}, {48.5f, 16.5f}, {80.5f, 16.5f},
+                                  {112.5f, 16.5f}, {144.5f, 16.5f}, {32.5f, 16.5f}, {176.5f, 16.5f}};
+    const uint32_t wanted[] = {0xFF0000FFu, 0x00FF00FFu, 0x0000FFFFu, 0xFFEB04FFu, 0x000000FFu, 0x000000FFu, 0xFFFFFFFFu};
+    uint32_t got[sizeof wanted / sizeof wanted[0]];
+    tide_platform_read_pixels_as(&list, SIZE, SIZE, 1.0f, points, (int)(sizeof got / sizeof got[0]), got);
+    for (size_t i = 0; i < sizeof got / sizeof got[0]; i++) {
+        const bool good = got[i] == wanted[i];
+        printf("%s: shaded primitive case %zu (0x%08X)\n", good ? "ok" : "FAIL", i, (unsigned)got[i]);
+        if (!good) failures++;
+    }
+}
+
 // The same bytes with and without the mark, plus runtime and compressed sources.
 static void run_linear_checks(const char *when)
 {
@@ -2269,6 +2289,7 @@ static int frame(void *user, const float seconds)
     run_linear_checks(", and changed back");
     run_given_checks("");
     run_given_checks(", again");
+    run_primitive_checks();
     run_prepass_checks(", again");
     run_prewarmed_checks();
 #ifdef __wasm__

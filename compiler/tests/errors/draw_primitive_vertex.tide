@@ -1,0 +1,5 @@
+// expect: frag 'Paint' runs on a Corner, and Sphere uses Vertex3
+// expect: take a Vertex3 in the shader, or use Draw.Mesh to draw with your own vertex type
+struct Corner { float3 position; }
+frag Paint(Corner vertex, out Color color) { color = Color(vertex.position, 1); }
+view Show() { Draw.Sphere(float3(0, 0, 5), 1, Color.white, Paint); }

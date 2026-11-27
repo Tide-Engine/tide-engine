@@ -1,3 +1,9 @@
+## Primitive shader completion (2026-11-27)
+
+After the required arguments of a solid 3D primitive, the language server offers drawing shaders that take
+Vertex3 and values for any shader already named. Built-in help describes the shader suffix. The shader
+completion fixture checks that Sphere offers a Vertex3 frag and skips one for a custom vertex type.
+
 ## Graphs in the IDEs (2026-11-24)
 
 The `.tidegraph` editor for VS Code and JetBrains is `tools/tide-graph/`, one page both host: see

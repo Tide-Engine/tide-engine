@@ -5665,6 +5665,41 @@ view GivenComponents(Art art, Sources sources, mut Coated coated)
     Draw.Transform(float2(128, 32)) { Draw.Mesh(quad, art.faces, Risen, Coating); }
 }
 
+struct PrimitivePaint
+{
+    Color ink;
+}
+
+vert MovePrimitive(mut Vertex3 vertex)
+{
+    vertex.position.x += 2;
+}
+
+frag PaintPrimitive(Vertex3 vertex, PrimitivePaint paint, out Color color)
+{
+    color = vertex.color * paint.ink;
+}
+
+frag TexturePrimitive(Vertex3 vertex, Texture source, out Color color)
+{
+    color = vertex.color * source.Sample(vertex.uv);
+}
+
+[After(GivenComponents)]
+view ShadedPrimitives(Art art, Sources sources)
+{
+    if (art.targetPass != 35) return;
+    Draw.Clear(Color.black); Draw.SetClip(); Draw.SetCull(.None); Draw.SetDepth(.ReadWrite);
+    Draw.SetCamera(float4x4.identity, float4x4.Ortho(256, 256, 0.1, 100));
+    Draw.Sphere(float3(-112, 112, 20), 10, Color.white, PaintPrimitive, PrimitivePaint { ink = Color.red });
+    Draw.Cube(float3(-96, 112, 20), float3(8), quaternion.identity, Color.green, MovePrimitive);
+    Draw.Cylinder(float3(-48, 112, 20), 10, 16, Color.white, sources.blues, Filter.Point, Wrap.Clamp, TexturePrimitive);
+    Draw.window.Plane(float3(-16, 112, 20), float2(16), quaternion.Euler(-90deg, 0, 0), Color.white,
+                      PaintPrimitive, PrimitivePaint { ink = Color.yellow });
+    Draw.Sphere(float3(16, 112, 5), 0, Color.white, PaintPrimitive, PrimitivePaint { ink = Color.white });
+    Draw.Sphere(float3(48, 112, 20), 10, Color.white);
+}
+
 [After(LinearSampling)]
 view GivenTextures(Art art, mut Sources sources)
 {
