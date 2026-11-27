@@ -898,6 +898,12 @@ test('completion items become the nodes the search adds', () => {
     assert.deepEqual(entryOf({ label: 'Run', kind: 20 }).node.fields, { shorthand: true, member: 'Run' });
     assert.equal(entryOf({ label: 'Math', kind: 9 }).node.k, 'name');
     assert.equal(entryOf({ label: 'if', kind: 14 }), null);
+    // The engine's value types are made by calling them, a vector with its numbers, not as a struct's literal
+    assert.deepEqual(entryOf({ label: 'float3', kind: 22, detail: 'built-in type' }).node, { k: 'call', fields: { name: 'float3', args: [] } });
+    assert.deepEqual(entryOf({ label: 'float3', kind: 22, detail: 'built-in type' }).fill, ['0', '0', '0']);
+    assert.deepEqual(entryOf({ label: 'Color', kind: 22, detail: 'built-in type' }).fill, ['1.0', '1.0', '1.0']);
+    assert.deepEqual(entryOf({ label: 'float', kind: 22, detail: 'built-in type' }).node.fields.args, [null]);
+    assert.equal(entryOf({ label: 'Ball', kind: 22, detail: 'component' }).node.k, 'literal');
 });
 
 const tidels = findProgram('tidels', 'TIDE_TIDELS', path.dirname(tidec));
@@ -979,6 +985,30 @@ test("tidels: a graph's text, types, members and diagnostics on its nodes", { sk
         assert.equal(schema.assignLabel('+='), schemaJson.operators.assignInfo['+='].label);
         assert.equal(lang.nextParam(bounce2, 1), '', 'every parameter has its argument');
         assert.equal(lang.nextParam(bounce2, 0), 'by');
+        // An engine's call with an input not wired yet still says what goes in it, by the signature that has as many
+        // parameters: quaternion.Euler's one takes a float3, which the input's picker then offers to make
+        const euler = doc.addNode(g, 'method', 400, 400, { name: 'Euler', args: [null] });
+        doc.connect(g, euler.id, ['object'], doc.addNode(g, 'name', 400, 400, { name: 'quaternion' }).id);
+        const turn = doc.addNode(g, 'var', 600, 400, { name: 'turn' });
+        doc.connect(g, turn.id, ['value'], euler.id);
+        doc.connect(g, empty.id, ['next'], turn.id);
+        server.notify('textDocument/didChange', { textDocument: { uri, version: 21 }, contentChanges: [{ text: doc.text }] });
+        await lang.check();
+        assert.match(lang.text, /quaternion\.Euler\(/);
+        assert.deepEqual(lang.callArgs(euler.id)?.params, ['radians']);
+        assert.deepEqual(lang.callArgs(euler.id).types, ['float3']);
+        // Checked, a built-in call's arguments have the types it took them as
+        const xyz = doc.addNode(g, 'call', 200, 400, { name: 'float3', args: ['1', '2', '3'].map(t => doc.addNode(g, 'int', 0, 400, { text: t }).id) });
+        doc.connect(g, euler.id, ['args', 0], xyz.id);
+        server.notify('textDocument/didChange', { textDocument: { uri, version: 22 }, contentChanges: [{ text: doc.text }] });
+        await lang.check();
+        assert.deepEqual(lang.callArgs(euler.id)?.params, ['radians']);
+        assert.deepEqual(lang.callArgs(euler.id).types, ['float3']);
+        assert.deepEqual(lang.callArgs(xyz.id)?.types, ['float', 'float', 'float']);
+        assert.equal(lang.typeOf(euler.id), 'quaternion');
+        Doc.nodes(g).splice(Doc.nodes(g).indexOf(euler));
+        delete empty.next;
+        doc.reindex();
         // What a name itself has: a namespace's functions
         assert.ok((await lang.membersOfName('Math')).some(i => i.label === 'Abs'));
         Doc.nodes(g).splice(Doc.nodes(g).indexOf(bounce2));

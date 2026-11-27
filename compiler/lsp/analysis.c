@@ -7588,7 +7588,7 @@ static void inlay_hint(jbuf *out, int *written, const loc at, const char *label,
     jb_printf(out, ",\"kind\":%d,\"%s\":true}", kind, before ? "paddingRight" : "paddingLeft");
 }
 
-static int call_param_names(const expr *call, str *names, int max);
+static int call_param_names(const expr *call, str *names, str *types, int max);
 
 void analysis_inlay_hints(const int start_line, const int end_line, jbuf *out)
 {
@@ -7610,7 +7610,7 @@ void analysis_inlay_hints(const int start_line, const int end_line, jbuf *out)
         const decl *command = called_command(call);
         const int most = command ? command->fields.count : call->args.count; // A command's values, or the call's arguments
         str *names = arena_alloc(sizeof(str) * (size_t)(most > 0 ? most : 1));
-        const int count = call_param_names(call, names, most);
+        const int count = call_param_names(call, names, NULL, most);
         for (int n = 0; n < written_count(call); n++) {
             const int k = written_param(call, n);
             const expr *arg = written_arg(call, n);
@@ -13758,12 +13758,63 @@ static const struct {
                           "pixels a level may be off by, as `[LOD(2)]` does on an asset. 3D meshes and models with bones, whose bones are weighed."}},
 };
 
+// Of a call the checker couldn't take, as an editor's call with an input not
+// wired yet is (quaternion.Euler(_graphHole)): the engine's signature with as
+// many parameters as it has arguments, of the types its checked arguments have,
+// else one whose last ones it leaves out. Its parameters' names, and each one's
+// type where every signature that fits agrees on it (`types`, when not NULL).
+static int unresolved_param_names(const expr *call, str *names, str *types, const int max)
+{
+    label_list list = {0};
+    if (call->kind == E_METHOD && call->object && call->object->kind == E_NAME) { // quaternion.Euler(...)
+        builtin_signatures(call->object->name, call->name, collect_label, &list);
+    } else if (call->kind == E_CALL && !call->object) { // float3(...)
+        for (size_t i = 0; i < sizeof call_forms / sizeof call_forms[0]; i++) {
+            if (!str_eq_c(call->name, call_forms[i].name)) continue;
+            for (int f = 0; f < 4 && call_forms[i].forms[f]; f++) vec_push(list.labels, call_forms[i].forms[f]);
+        }
+    }
+    for (int exact = 1; exact >= 0; exact--) {
+        int count = 0;
+        bool any = false;
+        for (int i = 0; i < list.labels.count; i++) {
+            label_params params;
+            parse_label(list.labels.items[i], &params);
+            bool fits = exact ? params.count == call->args.count : params.count > call->args.count;
+            for (int k = 0; fits && k < call->args.count; k++) {
+                fits = call->args.items[k]->type.kind == TY_ERROR || param_fits(params.types[k], call, k);
+            }
+            if (!fits) continue;
+            if (!any) {
+                for (; count < params.count && count < max; count++) {
+                    names[count] = params.names[count];
+                    if (types) types[count] = params.types[count];
+                }
+                any = true;
+            } else if (types) {
+                for (int k = 0; k < count; k++) {
+                    if (k >= params.count || !str_eq(types[k], params.types[k])) types[k] = (str){"", 0};
+                }
+            }
+        }
+        if (any) return count;
+    }
+    return 0;
+}
+
 // The names of the parameters a checked call's arguments go to, in order:
 // the game's function's, or the built-in signature the call took. Returns
-// how many; 0 for calls with none to show, like Spawn(...).
-static int call_param_names(const expr *call, str *names, const int max)
+// how many; 0 for calls with none to show, like Spawn(...). `types`, when not
+// NULL, gets the types a built-in call converted its arguments to, else none.
+static int call_param_names(const expr *call, str *names, str *types, const int max)
 {
     int count = 0;
+    if (types) {
+        for (int k = 0; k < max; k++) {
+            types[k] = k < call->arg_want.count && call->arg_want.items[k].kind != TY_ERROR && !called_command(call)
+                     ? str_from(type_name(call->arg_want.items[k])) : (str){"", 0};
+        }
+    }
     const decl *command = called_command(call);
     if (command) { // Rename("x", 2): what the command is called with
         for (; count < command->fields.count && count < max; count++) names[count] = command->fields.items[count].name;
@@ -13975,7 +14026,10 @@ static int call_param_names(const expr *call, str *names, const int max)
             bool fits = exact ? params.count == call->args.count : params.count > call->args.count;
             for (int k = 0; fits && k < call->args.count; k++) fits = param_fits(params.types[k], call, k);
             if (!fits) continue;
-            for (; count < params.count && count < max; count++) names[count] = params.names[count];
+            for (; count < params.count && count < max; count++) {
+                names[count] = params.names[count];
+                if (types && !types[count].len) types[count] = params.types[count]; // float3(1, 2, 3): its form's
+            }
             return count;
         }
     }
@@ -15526,13 +15580,13 @@ typedef struct graph_types {
     VEC(int) seen;
     jbuf *out;
     int written;
+    void (*visit)(struct graph_types *t, const expr *e); // What's done with each expression of the file, outermost first
 } graph_types;
 
 static void types_stmt(graph_types *t, const stmt *s);
 
-static void types_expr(graph_types *t, const expr *e)
+static void type_of_node(graph_types *t, const expr *e)
 {
-    if (!e) return;
     if (e->at.file == t->file && e->at.line > 0 && e->type.kind != TY_ERROR) {
         const int id = graph_id_at(t->map, e->at);
         bool seen = false;
@@ -15543,6 +15597,12 @@ static void types_expr(graph_types *t, const expr *e)
             jb_string(t->out, type_name(e->type));
         }
     }
+}
+
+static void types_expr(graph_types *t, const expr *e)
+{
+    if (!e) return;
+    t->visit(t, e);
     types_expr(t, e->object);
     types_expr(t, e->lhs);
     types_expr(t, e->rhs);
@@ -15590,7 +15650,7 @@ static void types_decl(graph_types *t, const decl *d)
 
 void analysis_graph_types(jbuf *out)
 {
-    graph_types t = {DOC->src.graph, A.doc, {0}, out, 0};
+    graph_types t = {DOC->src.graph, A.doc, {0}, out, 0, type_of_node};
     jb_put(out, "{");
     for (int i = 0; A.prog && i < A.prog->decls.count; i++) {
         const decl *d = A.prog->decls.items[i];
@@ -15601,6 +15661,36 @@ void analysis_graph_types(jbuf *out)
         if (d->at.file == A.doc) types_decl(&t, d);
     }
     jb_put(out, "}");
+}
+
+static int unresolved_param_names(const expr *call, str *names, str *types, int max);
+
+// A call the checker couldn't take, written as analysis_graph_calls writes the others, unless its node has been
+static void unresolved_call(graph_types *t, const expr *e)
+{
+    enum { MOST = 32 };
+    if ((e->kind != E_CALL && e->kind != E_METHOD) || e->call != CALL_NONE || e->at.file != t->file || e->at.line <= 0) return;
+    const int id = graph_id_at(t->map, e->at);
+    bool seen = !id;
+    for (int i = 0; i < t->seen.count && !seen; i++) seen = t->seen.items[i] == id;
+    if (seen) return;
+    str names[MOST], types[MOST];
+    const int count = unresolved_param_names(e, names, types, MOST);
+    if (count <= 0) return;
+    vec_push(t->seen, id);
+    jb_printf(t->out, "%s\"%d\":{\"params\":[", t->written++ ? "," : "", id);
+    for (int k = 0; k < count; k++) {
+        if (k) jb_put(t->out, ",");
+        jb_string(t->out, str_to_cstr(names[k]));
+    }
+    jb_put(t->out, "],\"types\":[");
+    for (int k = 0; k < count; k++) {
+        if (k) jb_put(t->out, ",");
+        jb_string(t->out, str_to_cstr(types[k]));
+    }
+    jb_put(t->out, "],\"args\":[");
+    for (int k = 0; k < e->args.count && k < count; k++) jb_printf(t->out, "%s%d", k ? "," : "", k);
+    jb_put(t->out, "]}");
 }
 
 // What each call's node calls with: {"<id>": {"params": ["value", "min", "max"], "types": ["float", "", ""],
@@ -15621,8 +15711,8 @@ void analysis_graph_calls(jbuf *out)
         bool again = !id;
         for (int k = 0; k < seen.count && !again; k++) again = seen.items[k] == id;
         if (again) continue;
-        str names[MOST];
-        const int count = call_param_names(call, names, MOST);
+        str names[MOST], builtin[MOST];
+        const int count = call_param_names(call, names, builtin, MOST);
         if (count <= 0) continue;
         vec_push(seen, id);
         const decl *command = called_command(call);
@@ -15638,11 +15728,20 @@ void analysis_graph_calls(jbuf *out)
             if (k) jb_put(out, ",");
             const type t = command && k < command->fields.count ? command->fields.items[k].type
                          : callee && k < callee->params.count ? callee->params.items[k].type : (type){TY_ERROR, NULL};
-            jb_string(out, t.kind == TY_ERROR ? "" : type_name(t));
+            if (t.kind != TY_ERROR) jb_string(out, type_name(t));
+            else if (!command && !callee) jb_string(out, str_to_cstr(builtin[k]));
+            else jb_put(out, "\"\"");
         }
         jb_put(out, "],\"args\":[");
         for (int n = 0; n < written_count(call); n++) jb_printf(out, "%s%d", n ? "," : "", written_param(call, n));
         jb_put(out, "]}");
+    }
+    // Calls the checker couldn't take, as one with an input not wired yet: what the engine's signatures say
+    graph_types t = {map, A.doc, {0}, out, written, unresolved_call};
+    t.seen.items = seen.items; t.seen.count = seen.count; t.seen.cap = seen.cap;
+    for (int i = 0; A.prog && i < A.prog->decls.count; i++) {
+        const decl *d = A.prog->decls.items[i];
+        if (d->at.file == A.doc) types_decl(&t, d);
     }
     jb_put(out, "}");
 }

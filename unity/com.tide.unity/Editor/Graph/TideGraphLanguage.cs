@@ -1051,6 +1051,32 @@ namespace Tide.Editor
                                     return n;
                                 },
                             });
+                        else if (detail == "built-in type")
+                        {
+                            // The engine's value types are made by calling them: float3(0, 0, 0), Color(1, 1, 1), float(...)
+                            var size = System.Text.RegularExpressions.Regex.Match(label, @"^(?:float|int|double)([234])$");
+                            var fill = size.Success ? Enumerable.Repeat("0", size.Groups[1].Value[0] - '0').ToArray()
+                                     : label == "Color" ? new[] { "1.0", "1.0", "1.0" } : null;
+                            list.Add(new GraphSearchEntry
+                            {
+                                Group = "Types", Title = label + "(…)", Keywords = "new value type " + label, Detail = detail,
+                                Make = (doc, graph, at) =>
+                                {
+                                    var call = NewCall(doc, graph, at, label, fill == null ? 1 : 0);
+                                    if (fill == null) return call;
+                                    var args = JValue.NewArray();
+                                    foreach (var text in fill)
+                                    {
+                                        var k = text.Contains(".") ? "float" : "int";
+                                        var n = doc.AddNode(graph, k, at.x, at.y);
+                                        n.Set("text", JValue.Of(text), GraphSchema.NodeOrder(k));
+                                        args.Items.Add(JValue.Of(n.Wire("id")));
+                                    }
+                                    call.Set("args", args, GraphSchema.NodeOrder("call"));
+                                    return call;
+                                },
+                            });
+                        }
                         else list.Add(Name("Types", label, detail));
                         break;
                     default:

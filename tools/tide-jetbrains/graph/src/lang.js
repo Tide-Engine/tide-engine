@@ -407,6 +407,12 @@ ${other || ''}`;
             case KIND.Struct:
             case KIND.Class:
                 if (member) return { title: name, detail, group: G.w('search.members'), node: { k: 'member', fields: { member: name } } };
+                // The engine's value types are made by calling them: float3(0, 0, 0), Color(1, 1, 1), float(...)
+                if (detail === 'built-in type') {
+                    const size = Number(/^(?:float|int|double)([234])$/.exec(name)?.[1]) || 0;
+                    const fill = size ? Array(size).fill('0') : name === 'Color' ? ['1.0', '1.0', '1.0'] : null;
+                    return { title: name + '(…)', detail, group: G.w('search.types'), node: { k: 'call', fields: { name, args: fill ? [] : [null] } }, fill };
+                }
                 return { title: name + ' { }', detail: detail || G.w('search.literal'), group: G.w('search.types'), node: { k: 'literal', fields: { type: name, inits: [] } } };
             case KIND.Enum:
             case KIND.Interface:

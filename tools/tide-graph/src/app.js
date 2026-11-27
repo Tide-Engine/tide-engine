@@ -836,6 +836,8 @@
                 if (!g) return;
                 const node = doc.newNode(entry.node.k, at.x, at.y, entry.node.fields);
                 Doc.nodes(g).push(node);
+                // A vector's or a colour's numbers, in its inputs
+                if (Array.isArray(entry.fill)) node.args = entry.fill.map(t => doc.makeLiteral(g, /^-?\d+$/.test(t) ? 'int' : 'float', t, at));
                 let statement = s.isExec(node.k) ? node : null;
                 // A call where a statement goes: the statement that does it, drawn as one node with it
                 if (!statement && (from?.exec || (entry.statement && !from))) {

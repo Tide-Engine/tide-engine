@@ -337,6 +337,9 @@ public class GraphLanguageTests
         Assert.IsTrue(popup.Entries.Any(e => e.Title == "Hit(ball)" && e.Statement), Titles(popup));
         Assert.IsTrue(popup.Entries.Any(e => e.Title == "Ball { }"), Titles(popup));
         Assert.IsTrue(popup.Entries.Any(e => e.Title == "Math" && e.Group == "Namespaces"), Titles(popup));
+        // An engine's value type is made by calling it, not a name that's no value
+        Assert.IsTrue(popup.Entries.Any(e => e.Title == "float3(…)" && e.Group == "Types"), Titles(popup));
+        Assert.IsFalse(popup.Entries.Any(e => e.Title == "float3"), Titles(popup));
         Assert.AreEqual(1, popup.Entries.Count(e => e.Title == "Get ball"), "a Get of the parameter, once: " + Titles(popup));
         Assert.IsFalse(popup.Entries.Any(e => e.Title == "ball"), "and not as a name too: " + Titles(popup));
         // What's typed is a value in itself

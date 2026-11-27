@@ -1028,3 +1028,27 @@ the package's version lookup gave the newest release, 0.9.0-nightly.7, from befo
   amber; now it does the same (`problemsIn(item, warnings)`). macOS passed every browser test but the Add menu's in
   32 s, and then never ended: `tide_graph_editor` runs with `--test-force-exit`, and the browser's output is let go
   of when it's closed. The Add menu test brings a card into view before its menu (`app.reveal`).
+
+## Making an engine's value: float3(…) (2026-11-27)
+
+The owner, on Unity's board: searching `float3` made a name node that only said "unknown name 'float3'", and wiring
+it into `quaternion.Euler`'s "argument 1" did nothing. Two causes, both fixed:
+
+- **The search took a built-in type as a name** (Unity, `Name("Types", ...)`) or a struct's literal `float3 { }`
+  (the page's `entryOf`), neither of which Tide has. Completion's `built-in type` items are now a call of the type:
+  `float3(…)` makes `float3(0, 0, 0)`, a node whose numbers are in its x, y, z inputs (`fill`: 2 to 4 zeros for a
+  `float`/`int`/`double` vector, `1.0` x 3 for `Color`), and any other (`float`, `quaternion`, `Rect`) a call with one
+  input to pick and "+" for more. The game's structs, components and events stay literals.
+- **An engine's call said no parameter types** (`tide/graphCalls` gave `""` but for the game's functions), and none
+  at all while an input wasn't wired (the checker doesn't take `quaternion.Euler(_graphHole)`, so it isn't in
+  `A.calls`), so its input was "argument 1" of no type and the value picker had no `float3(…)` to offer. Now a checked
+  built-in call's types are what it took its arguments as (`arg_want`), else its form's (`float3(float x, ...)`), and
+  a call the checker couldn't take is answered from the engine's signatures with as many parameters as it has
+  arguments (`unresolved_param_names`: names from the first that fits, a type where all that fit agree), so
+  `quaternion.Euler`'s input is "radians", a `float3`, with `float3(…)` first in its picker. `graph_types` walks with a
+  `visit` for this.
+
+Tests: `lsp_graphs` (`Math.Max(1, 2)`'s types are `int`), the page's model test (Euler with its input empty and
+wired, `float3(1, 2, 3)`'s types, `entryOf` of built-in types), `GraphLanguageTests` (the search's `float3(…)`, no
+`float3` name; not run here: it needs a scratch tide and a batch Unity). The JetBrains snapshot of `app.js` and `lang.js`
+is refreshed.
