@@ -128,6 +128,7 @@ namespace Tide.Editor
                     Params = (c.Arr("params")?.Items ?? new List<JValue>()).Select(p => p.String ?? "").ToArray(),
                     Types = (c.Arr("types")?.Items ?? new List<JValue>()).Select(p => p.String ?? "").ToArray(),
                     Args = (c.Arr("args")?.Items ?? new List<JValue>()).Select(p => p.Kind == JKind.Number ? (int)p.Number : -1).ToArray(),
+                    Rest = string.IsNullOrEmpty(c.Str("rest")) ? null : c.Str("rest"),
                 };
             }
         }
@@ -761,8 +762,32 @@ namespace Tide.Editor
                     }
                     client.Ask("tide/graphCompletion", uri, offset, (items, why2) =>
                     {
-                        finish();
-                        found(Names(c, items), why2);
+                        // What each namespace and engine type has (and an enum, where a value goes), each asked in turn
+                        var flow = c.Pending != null && c.Pending.Exec;
+                        var names = Items(items).Where(i =>
+                        {
+                            var kind = (int)(i.Get("kind")?.Number ?? 0);
+                            return kind == KindModule || (!flow && kind == KindEnum)
+                                || ((kind == KindStruct || kind == KindClass) && i.Str("detail") == "built-in type");
+                        }).Select(i => i.Str("label")).Where(l => !string.IsNullOrEmpty(l)).Distinct().ToList();
+                        var spaces = new List<(string, List<Member>)>();
+                        void Next(int at)
+                        {
+                            if (at >= names.Count)
+                            {
+                                finish();
+                                found(Names(c, items, spaces), why2);
+                                return;
+                            }
+                            var parameters = JValue.NewObject();
+                            parameters.Set("name", JValue.Of(names[at]));
+                            client.Ask("tide/graphMembers", uri, parameters, (has, why3) =>
+                            {
+                                spaces.Add((names[at], Items(has).Where(i => !string.IsNullOrEmpty(i.Str("label"))).Select(Member.Of).ToList()));
+                                Next(at + 1);
+                            });
+                        }
+                        Next(0);
                     });
                 });
             });
@@ -962,13 +987,27 @@ namespace Tide.Editor
             else n.Remove("args");
         }
 
-        // At a place: the names in scope, the game's functions and types, constants, enum members, the built-in
-        // namespaces, as name, call and literal nodes
-        static List<GraphSearchEntry> Names(GraphSearchContext c, JValue completion)
+        // The engine's types made by a call of their name (the spec's constructors): float3(0, 0, 0), Color(1, 1, 1)
+        static readonly System.Text.RegularExpressions.Regex Constructed = new System.Text.RegularExpressions.Regex(
+            @"^(?:byte|char|int|long|float|double|(?:int|float|double)[234]|(?:float|double)([234])x\1|quaternion|Color|Rect|PlayerID)$");
+
+        // The namespaces whose functions act though they give a value (GUI.Button, Session.Join): steps
+        static readonly HashSet<string> Acting = new HashSet<string>
+        {
+            "GUI", "GUILayout", "Session", "Clipboard", "Audio", "File", "Directory", "Storage", "Web", "Visibility", "Cursor", "Application", "Debug",
+        };
+
+        // At a place: the names in scope, the game's functions and types, constants, the engine's value types as
+        // calls of them, as name, call and literal nodes; and the functions of the engine's namespaces and types
+        // (Draw.Circle, Math.Abs, quaternion.Euler) and an enum's choices (Phase.Running), found by their own
+        // names, as a namespace or an enum alone is no value (`spaces`: what each has, by its name). Where a step
+        // goes, no value that does nothing.
+        static List<GraphSearchEntry> Names(GraphSearchContext c, JValue completion, List<(string name, List<Member> members)> spaces)
         {
             var list = new List<GraphSearchEntry>();
             var locals = new HashSet<string>(GraphDocument.Locals(c.Graph).Select(GraphSchema.LocalName));
             var statement = c.Body && (c.Pending == null || c.Pending.Exec);
+            var flowOnly = c.Pending != null && c.Pending.Exec;
             foreach (var item in Items(completion))
             {
                 var label = item.Str("label");
@@ -983,44 +1022,24 @@ namespace Tide.Editor
                     case KindFunction:
                     case KindMethod:
                     {
-                        var names = Parameters(detail, label);
-                        var title = $"{label}({string.Join(", ", names)})";
-                        if (statement)
-                            list.Add(new GraphSearchEntry
-                            {
-                                Group = "Functions", Title = title, Keywords = "call function " + detail, Detail = detail, Statement = true,
-                                Make = (doc, graph, at) =>
-                                {
-                                    var call = NewCall(doc, graph, at - new Vector2(220, -60), label, names.Count);
-                                    var eval = doc.AddNode(graph, "eval", at.x, at.y);
-                                    eval.Set("value", JValue.Of(call.Wire("id")), GraphSchema.NodeOrder("eval"));
-                                    return eval;
-                                },
-                            });
-                        else
-                            list.Add(new GraphSearchEntry
-                            {
-                                Group = "Functions", Title = title, Keywords = "call function " + detail, Detail = detail,
-                                Make = (doc, graph, at) => NewCall(doc, graph, at, label, names.Count),
-                            });
+                        var entry = CallEntry("Functions", label, label, detail, statement, "call function " + detail);
+                        if (entry != null) list.Add(entry);
                         break;
                     }
                     case KindVariable:
                     case KindField:
                     case KindProperty:
-                        if (locals.Contains(label)) continue; // The catalog reads the graph's locals
+                        if (locals.Contains(label) || flowOnly) continue; // The catalog reads the graph's locals
                         list.Add(Name("Names", label, detail));
                         break;
                     case KindConstant:
-                        list.Add(Name("Constants", label, detail));
+                        if (!flowOnly) list.Add(Name("Constants", label, detail));
                         break;
                     case KindModule:
-                        list.Add(Name("Namespaces", label, detail));
-                        break;
                     case KindEnum:
-                        list.Add(Name("Types", label, detail));
-                        break;
+                        continue; // Alone, no value: what they have is offered below, by its own name
                     case KindEnumMember:
+                        if (flowOnly) continue;
                         list.Add(new GraphSearchEntry
                         {
                             Group = "Enum members", Title = "." + label, Keywords = "enum member shorthand " + label + " " + detail, Detail = detail,
@@ -1038,9 +1057,12 @@ namespace Tide.Editor
                     case KindClass:
                     case KindInterface:
                     case KindEvent:
-                        // The game's structs, components and events as values made of them; built-in types by name
+                    {
+                        // A value made is no step
+                        if (flowOnly) continue;
+                        // The game's structs, components and events as values made of them
                         var what = detail.StartsWith("local ") ? detail.Substring(6) : detail;
-                        if (what == "struct" || what == "component" || what == "event" || kind == KindEvent)
+                        if (what == "struct" || what == "component" || what == "event" || kind == KindEvent || (kind != KindInterface && detail.Length == 0))
                             list.Add(new GraphSearchEntry
                             {
                                 Group = "Types", Title = label + " { }", Keywords = "literal value type struct " + label + " " + detail, Detail = detail,
@@ -1051,9 +1073,10 @@ namespace Tide.Editor
                                     return n;
                                 },
                             });
-                        else if (detail == "built-in type")
+                        else if (detail == "built-in type" && Constructed.IsMatch(label))
                         {
-                            // The engine's value types are made by calling them: float3(0, 0, 0), Color(1, 1, 1), float(...)
+                            // The engine's value types are made by calling them: float3(0, 0, 0), Color(1, 1, 1),
+                            // float(...); the others (string, List, Skeleton...) are made otherwise
                             var size = System.Text.RegularExpressions.Regex.Match(label, @"^(?:float|int|double)([234])$");
                             var fill = size.Success ? Enumerable.Repeat("0", size.Groups[1].Value[0] - '0').ToArray()
                                      : label == "Color" ? new[] { "1.0", "1.0", "1.0" } : null;
@@ -1077,14 +1100,97 @@ namespace Tide.Editor
                                 },
                             });
                         }
-                        else list.Add(Name("Types", label, detail));
                         break;
+                    }
                     default:
-                        list.Add(Name("Names", label, detail));
+                        if (!flowOnly) list.Add(Name("Names", label, detail));
                         break;
                 }
             }
+            foreach (var (space, members) in spaces ?? new List<(string, List<Member>)>())
+            {
+                foreach (var m in members)
+                {
+                    // An enum's choice: Phase.Running, a member of the enum's name
+                    if (m.Kind == KindEnumMember)
+                    {
+                        if (flowOnly || !System.Text.RegularExpressions.Regex.IsMatch(m.Label ?? "", @"^[A-Za-z_]\w*$")) continue;
+                        var choice = m.Label;
+                        list.Add(new GraphSearchEntry
+                        {
+                            Group = space, Title = space + "." + choice, Keywords = choice + " " + space, Detail = m.Detail,
+                            Make = (doc, graph, at) =>
+                            {
+                                var name = doc.AddNode(graph, "name", at.x - 120, at.y);
+                                name.Set("name", JValue.Of(space), GraphSchema.NodeOrder("name"));
+                                var n = doc.AddNode(graph, "member", at.x, at.y);
+                                var order = GraphSchema.NodeOrder("member");
+                                n.Set("object", JValue.Of(name.Wire("id")), order);
+                                n.Set("member", JValue.Of(choice), order);
+                                return n;
+                            },
+                        });
+                        continue;
+                    }
+                    if (m.Kind != KindFunction && m.Kind != KindMethod) continue;
+                    var fn = (m.Label ?? "").Split('(')[0];
+                    if (fn.Length == 0) continue;
+                    var gives = ResultOf(m.Detail);
+                    // Where a step goes, what does something: what gives nothing, and GUI's, Session's and the like
+                    // as they act; not what only works a value out (Math.Abs, Scene.IsPrepared), unless it fills an
+                    // `out` variable (int.TryParse)
+                    var acts = (space != "Math" && gives == "") || Acting.Contains(space) || System.Text.RegularExpressions.Regex.IsMatch(m.Detail ?? "", @"[(,]\s*out\s");
+                    if (flowOnly && !acts) continue;
+                    // Where a value goes, what gives one (Math's all do, though those of any number don't say which)
+                    if (!statement && space != "Math" && gives == "") continue;
+                    var entry = CallEntry(space, $"{space}.{fn}", fn, m.Detail, statement && acts, fn + " " + space);
+                    if (entry != null) list.Add(entry);
+                }
+            }
             return list;
+        }
+
+        // A call's entry: a step that calls it (one that takes code with a place for it, GUILayout.Vertical { }),
+        // or a value; null for one that takes code where a value goes. Its type parameters, where it's called with
+        // its own (Json.Read<T>), are asked once it's put down.
+        static GraphSearchEntry CallEntry(string group, string name, string label, string detail, bool statement, string keywords)
+        {
+            var (names, block) = Signature(detail, label);
+            if (block && !statement) return null;
+            var typeParams = System.Text.RegularExpressions.Regex.Match(detail ?? "", @"^[\w.]+<([\w, ]+)>\(");
+            var entry = new GraphSearchEntry
+            {
+                Group = group, Title = $"{name}({string.Join(", ", names)})" + (block ? " { }" : ""), Keywords = keywords, Detail = detail, Statement = statement,
+                TypeParams = typeParams.Success ? typeParams.Groups[1].Value.Split(',').Select(t => t.Trim()).ToArray() : null,
+            };
+            if (statement)
+                entry.Make = (doc, graph, at) =>
+                {
+                    var call = NewCall(doc, graph, at - new Vector2(220, -60), name, names.Count);
+                    var eval = doc.AddNode(graph, "eval", at.x, at.y);
+                    var order = GraphSchema.NodeOrder("eval");
+                    eval.Set("value", JValue.Of(call.Wire("id")), order);
+                    if (block) eval.SetFlag("withBlock", true, order);
+                    return eval;
+                };
+            else entry.Make = (doc, graph, at) => NewCall(doc, graph, at, name, names.Count);
+            return entry;
+        }
+
+        // What a function gives, by its signature: its type, "" for one that gives nothing, null when it doesn't say
+        // (`Math.Sin(x)`)
+        internal static string ResultOf(string detail)
+        {
+            var text = (detail ?? "").Split('\n')[0].Trim();
+            var arrow = System.Text.RegularExpressions.Regex.Match(text, @"->\s*(.+)$");
+            if (arrow.Success) return arrow.Groups[1].Value.Split(new[] { " (" }, StringSplitOptions.None)[0].Trim();
+            var typed = System.Text.RegularExpressions.Regex.Match(text, @"^(.+?)\s+[A-Za-z_][\w.]*\s*\(.*\)$");
+            if (typed.Success)
+            {
+                var last = typed.Groups[1].Value.Split(' ').Last();
+                return last == "void" ? "" : last;
+            }
+            return System.Text.RegularExpressions.Regex.IsMatch(text, @"^[A-Za-z_][\w.]*\s*\(.*\)$") ? "" : null;
         }
 
         static GraphSearchEntry Name(string group, string label, string detail)
@@ -1099,22 +1205,41 @@ namespace Tide.Editor
                 },
             };
 
-        // The parameters' names of a signature, `void Bounce(float height, int times = 1)` → height, times
-        internal static List<string> Parameters(string detail, string name)
+        // The parameters' names of a signature a call writes, `void Bounce(float height, int times = 1)` → height
+        internal static List<string> Parameters(string detail, string name) => Signature(detail, name).names;
+
+        // What a call of a signature writes: its parameters' names, and whether it takes code in a block
+        // (`GUILayout.Vertical(Block content)`), which isn't one of them. Not the parts in brackets nor ones with a
+        // default, which a call leaves out ("Scene.IsPrepared(scene[, PlayerID player])" → scene); one of any
+        // number ("components...") once.
+        internal static (List<string> names, bool block) Signature(string detail, string name)
         {
             var names = new List<string>();
-            if (string.IsNullOrEmpty(detail)) return names;
+            var block = false;
+            if (string.IsNullOrEmpty(detail)) return (names, false);
             detail = detail.Split('\n')[0];
             var at = detail.IndexOf(name + "(", StringComparison.Ordinal);
             var open = at >= 0 ? at + name.Length : detail.IndexOf('(', Math.Max(0, detail.IndexOf(name, StringComparison.Ordinal)));
-            if (open < 0) return names;
+            if (open < 0) return (names, false);
             var depth = 0;
+            var skipping = 0;
             var part = new StringBuilder();
             for (var i = open + 1; i < detail.Length; i++)
             {
                 var ch = detail[i];
-                if (ch == '(' || ch == '<' || ch == '[' || ch == '{') depth++;
-                if ((ch == ')' || ch == '>' || ch == ']' || ch == '}') && depth > 0)
+                if (ch == '[')
+                {
+                    skipping++;
+                    continue;
+                }
+                if (ch == ']')
+                {
+                    if (skipping > 0) skipping--;
+                    continue;
+                }
+                if (skipping > 0) continue;
+                if (ch == '(' || ch == '<' || ch == '{') depth++;
+                if ((ch == ')' || ch == '>' || ch == '}') && depth > 0)
                 {
                     depth--;
                     part.Append(ch);
@@ -1122,15 +1247,20 @@ namespace Tide.Editor
                 }
                 if (ch == ')' || (ch == ',' && depth == 0))
                 {
-                    var p = ParameterName(part.ToString());
-                    if (p != null) names.Add(p);
+                    var p = part.ToString().Trim();
                     part.Clear();
+                    if (p.StartsWith("Block ", StringComparison.Ordinal)) block = true;
+                    else if (p.Length > 0 && p.IndexOf('=') < 0)
+                    {
+                        var n = ParameterName(p);
+                        if (n != null) names.Add(n);
+                    }
                     if (ch == ')') break;
                     continue;
                 }
                 part.Append(ch);
             }
-            return names;
+            return (names, block);
         }
 
         static string ParameterName(string p)

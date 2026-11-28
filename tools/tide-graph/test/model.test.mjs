@@ -888,8 +888,17 @@ test("a value that is one literal is edited by its type's control", () => {
 });
 
 test('completion items become the nodes the search adds', () => {
-    const { entryOf, paramNames } = G.lang;
-    assert.deepEqual(paramNames({ detail: 'void Bounce(float by, List<int> xs = [])' }), ['by', 'xs']);
+    const { entryOf, paramNames, signatureOf } = G.lang;
+    // What a call writes: not what it can leave out (a default, a part in brackets), a parameter of any number once,
+    // and a GUI container's block as the code in it
+    assert.deepEqual(paramNames({ detail: 'void Bounce(float by, List<int> xs = [])' }), ['by']);
+    assert.deepEqual(paramNames({ detail: 'Scene.IsPrepared(scene[, player]) -> bool' }), ['scene']);
+    assert.deepEqual(paramNames({ detail: 'Draw.Blit(Texture source[, Texture textures...], RenderTarget destination[, Blend blend], frag shader[, values])' }), ['source', 'destination', 'shader']);
+    assert.deepEqual(paramNames({ detail: 'Spawn(components...) -> Entity' }), ['components']);
+    assert.deepEqual(signatureOf({ detail: 'GUILayout.Area(Anchor anchor, Block content)' }), { names: ['anchor'], block: true });
+    const area = entryOf({ label: 'Area', kind: 3, detail: 'GUILayout.Area(Anchor anchor, Block content)' }, { flow: true });
+    assert.deepEqual([area.title, area.block, area.node.fields.args], ['Area(anchor) { }', true, [null]]);
+    assert.equal(entryOf({ label: 'Area', kind: 3, detail: 'GUILayout.Area(Anchor anchor, Block content)' }), null, 'code in a block is no value');
     const method = entryOf({ label: 'Bounce', kind: 2, detail: 'void Bounce(float by)' }, { member: true });
     assert.deepEqual(method.node, { k: 'method', fields: { name: 'Bounce', args: [null] } });
     assert.deepEqual(entryOf({ label: 'speed', kind: 5, detail: 'float' }, { member: true }).node, { k: 'member', fields: { member: 'speed' } });
@@ -907,6 +916,9 @@ test('completion items become the nodes the search adds', () => {
     // What Tide can't write isn't offered: an engine type with no constructor, a literal of what's no struct, a value
     // as a step
     assert.equal(entryOf({ label: 'string', kind: 22, detail: 'built-in type' }), null);
+    assert.equal(entryOf({ label: 'bool', kind: 22, detail: 'built-in type' }), null, 'bool has no constructor');
+    assert.equal(entryOf({ label: 'float2x3', kind: 22, detail: 'built-in type' }), null);
+    assert.deepEqual(entryOf({ label: 'float3x3', kind: 22, detail: 'built-in type' }).node.fields.args, [null]);
     assert.equal(entryOf({ label: 'Skeleton', kind: 22, detail: 'built-in type' }), null);
     assert.equal(entryOf({ label: 'List', kind: 22, detail: 'generic type' }), null);
     assert.equal(entryOf({ label: 'float3', kind: 22, detail: 'built-in type' }, { flow: true }), null);
@@ -1051,49 +1063,145 @@ test('tidels: what the search offers is something Tide takes', { skip: !tidels &
     const game = path.join(scratch, 'offers');
     fs.mkdirSync(game, { recursive: true });
     fs.writeFileSync(path.join(game, 'main.tide'), 'component Ball { float3 velocity; float speed; }\nenum Phase { Waiting, Running }\nconst float GRAVITY = 9.8;\n'
-        + 'float Twice(float x) { return x * 2; }\nevent Hit { Entity who; }\nscene Main { }\n');
-    const doc = Doc.empty(schema);
-    const s = doc.newElement('system', false, 'Probe');
-    s.params.push({ id: doc.newId(), mode: 'mut', type: 'Ball', name: 'ball' });
-    doc.decls.push(s);
-    doc.reindex();
-    const g = s.body;
-    const file = path.join(game, 'probe.tidegraph');
-    fs.writeFileSync(file, doc.text);
+        + 'float Twice(float x) { return x * 2; }\nevent Hit { Entity who; }\nstruct Save { int level; }\nscene Main { }\n');
     const server = startServer(tidels, game);
     try {
         await server.ready;
-        const uri = fileUri(file);
-        const lang = new G.Lang((method, params) => server.request(method, params));
-        lang.uri = uri;
-        server.notify('textDocument/didOpen', { textDocument: { uri, languageId: 'json', version: 1, text: doc.text } });
-        await lang.check();
-        const steps = (await lang.completion(lang.placeFor({ after: 0 }, s.id))).map(i => G.lang.entryOf(i, { flow: true })).filter(e => e && e.node.k === 'call');
-        const values = (await lang.completion(lang.placeFor(null, s.id))).map(i => G.lang.entryOf(i, {})).filter(Boolean);
-        assert.ok(steps.length >= 3 && values.length > 20, `${steps.length} steps, ${values.length} values`);
-        // Each as a statement of its own: a step as it is, a value as a local's
-        let last = null;
-        const made = [];
-        for (const [i, e] of [...steps.map(e => [e, true]), ...values.map(e => [e, false])].entries()) {
-            const [entry, step] = e;
-            const node = doc.addNode(g, entry.node.k, 0, i * 100, structuredClone(entry.node.fields));
-            if (entry.fill) node.args = entry.fill.map(t => doc.makeLiteral(g, /^-?\d+$/.test(t) ? 'int' : 'float', t, { x: 0, y: i * 100 }));
+        // In a system and in a view, which draw: what's offered by its name there, and the namespaces' and the
+        // engine's types' functions found by theirs
+        for (const kind of ['system', 'view']) {
+            const doc = Doc.empty(schema);
+            const s = doc.newElement(kind, false, 'Probe');
+            s.params.push({ id: doc.newId(), mode: kind === 'system' ? 'mut' : 'read', type: 'Ball', name: 'ball' });
+            doc.decls.push(s);
             doc.reindex();
-            const statement = step ? doc.addNode(g, 'eval', 200, i * 100) : doc.addNode(g, 'var', 200, i * 100, { name: 'v' + i });
-            doc.connect(g, statement.id, ['value'], node.id);
-            if (last) doc.connect(g, last.id, ['next'], statement.id); else doc.setEntry(g, statement.id);
-            last = statement;
-            made.push({ title: entry.title, ids: [node.id, statement.id, ...(node.args || []).filter(Boolean)] });
+            const g = s.body;
+            const file = path.join(game, `${kind}.tidegraph`);
+            fs.writeFileSync(file, doc.text);
+            const uri = fileUri(file);
+            const lang = new G.Lang((method, params) => server.request(method, params));
+            lang.uri = uri;
+            server.notify('textDocument/didOpen', { textDocument: { uri, languageId: 'json', version: 1, text: doc.text } });
+            await lang.check();
+            const offered = async flow => {
+                const items = await lang.completion(lang.placeFor(flow ? { after: 0 } : null, s.id));
+                return [...items.map(i => G.lang.entryOf(i, { flow })).filter(Boolean), ...await G.lang.namespaceCalls(lang, items, flow)];
+            };
+            const steps = (await offered(true)).filter(e => e.node.k === 'call');
+            const values = await offered(false);
+            assert.ok(steps.length >= 10 && values.length > 100, `${kind}: ${steps.length} steps, ${values.length} values`);
+            // Each as a statement of its own: a step as it is (one that takes code with a place for it), a value as
+            // a local's
+            let last = null;
+            const made = [];
+            for (const [i, e] of [...steps.map(e => [e, true]), ...values.map(e => [e, false])].entries()) {
+                const [entry, step] = e;
+                const node = doc.addNode(g, entry.node.k, 0, i * 100, structuredClone(entry.node.fields));
+                // (a call of a type's is asked its type as it's put down: Json.Read<Save>)
+                if (entry.typeParams) node.typeArgs = entry.typeParams.map(() => 'Save');
+                if (entry.fill) node.args = entry.fill.map(t => doc.makeLiteral(g, /^-?\d+$/.test(t) ? 'int' : 'float', t, { x: 0, y: i * 100 }));
+                const ids = [node.id];
+                if (entry.object) {
+                    const object = doc.addNode(g, 'name', -100, i * 100, { name: entry.object });
+                    doc.connect(g, node.id, ['object'], object.id);
+                    ids.push(object.id);
+                }
+                doc.reindex();
+                const statement = step ? doc.addNode(g, 'eval', 200, i * 100, entry.block ? { withBlock: true } : undefined) : doc.addNode(g, 'var', 200, i * 100, { name: 'v' + i });
+                doc.connect(g, statement.id, ['value'], node.id);
+                if (last) doc.connect(g, last.id, ['next'], statement.id); else doc.setEntry(g, statement.id);
+                last = statement;
+                made.push({ title: entry.title, ids: [...ids, statement.id, ...(node.args || []).filter(Boolean)] });
+            }
+            const before = server.notifications.length;
+            server.notify('textDocument/didChange', { textDocument: { uri, version: 2 }, contentChanges: [{ text: doc.text }] });
+            const published = await server.until(m => server.notifications.indexOf(m) >= before && m.method === 'textDocument/publishDiagnostics' && m.params.uri.toLowerCase() === uri.toLowerCase());
+            // Problems that aren't an input left to pick, by what was offered. define(NAME, default)'s default is a
+            // constant, so an empty one is said so; a GUITheme or a Sound belongs to this machine, and a system isn't.
+            const allowed = new Set(['define(NAME, default)', 'defined(NAME)', ...(kind === 'system' ? ['GUITheme { }', 'Sound { }'] : [])]);
+            const wrong = made.filter(m => !allowed.has(m.title)).flatMap(m => published.params.diagnostics
+                .filter(d => d.severity === 1 && m.ids.includes(d.data?.node) && d.data?.port === undefined).map(d => `${m.title}: ${d.message}`));
+            assert.deepEqual(wrong, [], kind);
         }
-        const before = server.notifications.length;
-        server.notify('textDocument/didChange', { textDocument: { uri, version: 2 }, contentChanges: [{ text: doc.text }] });
-        const published = await server.until(m => server.notifications.indexOf(m) >= before && m.method === 'textDocument/publishDiagnostics' && m.params.uri.toLowerCase() === uri.toLowerCase());
-        // Problems that aren't an input left to pick, by what was offered. define(NAME, default)'s default is a
-        // constant, so an empty one is said so; a GUITheme or a Sound belongs to this machine, and this is a system.
-        const allowed = new Set(['define(NAME, default)', 'defined(NAME)', 'GUITheme { }', 'Sound { }']);
-        const wrong = made.filter(m => !allowed.has(m.title)).flatMap(m => published.params.diagnostics
-            .filter(d => d.severity === 1 && m.ids.includes(d.data?.node) && d.data?.port === undefined).map(d => `${m.title}: ${d.message}`));
-        assert.deepEqual(wrong, []);
+    } finally {
+        server.child.kill();
+    }
+});
+
+// Every call the search offers, put down with nothing in its inputs, in each kind of code: what tidels says each
+// input is. Without it an input says "argument 1", or a type's name (Math.Dot's "float2"), and its picker can't put
+// what fits first.
+test('tidels: every input of a call the search offers is named, and says what it takes where Tide does', { skip: !tidels && 'no tidels built' }, async () => {
+    const game = path.join(scratch, 'inputs');
+    fs.mkdirSync(game, { recursive: true });
+    fs.writeFileSync(path.join(game, 'main.tide'), 'component Ball { float3 velocity; float speed; }\nenum Phase { Waiting, Running }\n'
+        + 'float Twice(float x) { return x * 2; }\nevent Hit { Entity who; }\nscene Main { }\n');
+    const server = startServer(tidels, game);
+    const TYPES = /^(?:bool|byte|char|int|long|float|double|string|(?:int|float|double)[234](?:x[234])?|quaternion|Color|Rect|Entity)$/;
+    try {
+        await server.ready;
+        const seen = {};
+        for (const kind of ['system', 'view', 'function']) {
+            const doc = Doc.empty(schema);
+            const s = doc.newElement(kind, false, 'Probe');
+            if (kind === 'system') s.params.push({ id: doc.newId(), mode: 'mut', type: 'Ball', name: 'ball' });
+            doc.decls.push(s);
+            doc.reindex();
+            const file = path.join(game, `${kind}.tidegraph`);
+            fs.writeFileSync(file, doc.text);
+            const uri = fileUri(file);
+            const lang = new G.Lang((method, params) => server.request(method, params));
+            lang.uri = uri;
+            server.notify('textDocument/didOpen', { textDocument: { uri, languageId: 'json', version: 1, text: doc.text } });
+            await lang.check();
+            // What the search offers as a step and as a value, the namespaces' functions with them
+            const calls = [];
+            for (const flow of [true, false]) {
+                const items = await lang.completion(lang.placeFor(flow ? { after: 0 } : null, s.id));
+                const entries = [...items.map(i => G.lang.entryOf(i, { flow })).filter(Boolean), ...await G.lang.namespaceCalls(lang, items, flow)];
+                for (const e of entries) if (e.node.k === 'call' && !calls.some(c => c.node.fields.name === e.node.fields.name)) calls.push({ ...e, flow });
+            }
+            assert.ok(calls.length > 100, `${kind}: ${calls.length} calls offered`);
+            const g = s.body;
+            let last = null;
+            const made = [];
+            for (const [i, e] of calls.entries()) {
+                const node = doc.addNode(g, 'call', 0, i * 100, structuredClone(e.node.fields));
+                doc.reindex();
+                const statement = e.flow ? doc.addNode(g, 'eval', 200, i * 100, e.block ? { withBlock: true } : undefined) : doc.addNode(g, 'var', 200, i * 100, { name: 'v' + i });
+                doc.connect(g, statement.id, ['value'], node.id);
+                if (last) doc.connect(g, last.id, ['next'], statement.id); else doc.setEntry(g, statement.id);
+                last = statement;
+                made.push([e, node]);
+            }
+            server.notify('textDocument/didChange', { textDocument: { uri, version: 2 }, contentChanges: [{ text: doc.text }] });
+            await lang.check();
+            const wrong = [];
+            for (const [e, node] of made) {
+                const c = lang.callArgs(node.id);
+                if (!node.args.length) continue;
+                if (!c) { wrong.push(`${e.title}: tidels says nothing of its inputs`); continue; }
+                for (let k = 0; k < node.args.length; k++) {
+                    const name = c.params[c.at(k)];
+                    if (!name) wrong.push(`${e.title}: input ${k + 1} has no name`);
+                    else if (TYPES.test(name)) wrong.push(`${e.title}: input ${k + 1} is named by its type, ${name}`);
+                }
+                seen[e.title] = c.params.map((p, k) => `${p}:${c.types[k] || ''}`).join(', ') + (c.rest ? `, ${c.rest}...` : '');
+            }
+            assert.deepEqual(wrong, [], kind);
+        }
+        // What they take: the one type, one of several, any number or vector, or a kind of the game's declarations
+        assert.equal(seen['Draw.Circle(center, radius, color)'], 'center:float2, radius:float, color:Color');
+        assert.match(seen['Math.Dot(a, b)'], /^a:float2\|float3\|float4\|.*quaternion, b:/);
+        assert.match(seen['Math.Abs(x)'], /^x:float\|float2\|float3\|float4\|.*Color$/);
+        assert.equal(seen['quaternion.Euler(radians)'], 'radians:float3');
+        // ...with what a call can leave out, which the node offers to add, and one that takes any number
+        assert.equal(seen['Spawn(components)'], 'components:component, components...');
+        assert.equal(seen['Math.Perlin(point)'], 'point:float2|float3, seed:int');
+        assert.equal(seen['Send(event)'], 'event:event');
+        assert.equal(seen['Scene.IsPrepared(scene)'], 'scene:scene, player:PlayerID');
+        assert.equal(seen['GUILayout.Area(anchor) { }'], 'anchor:Anchor|Rect');
+        assert.equal(seen['Json.Read(json)'], 'json:string|List<byte>');
     } finally {
         server.child.kill();
     }

@@ -1395,7 +1395,7 @@
                     let why = null;
                     if (!f.fitsPort(d.from, port)) {
                         const inp = port.input ? port : d.from;
-                        why = f.isPlace(inp) ? f.changeable(f.startOf(port.input ? d.from : port)).why : w('why.takes', { input: port.label || w('it'), type: f.expectedType(inp) || w('why.somethingElse') });
+                        why = f.isPlace(inp) ? f.changeable(f.startOf(port.input ? d.from : port)).why : w('why.takes', { input: port.label || w('it'), type: G.pickers.typeWords(f.expectedType(inp)) || w('why.somethingElse') });
                     }
                     if (!why) {
                         this.app.edit(doc => {

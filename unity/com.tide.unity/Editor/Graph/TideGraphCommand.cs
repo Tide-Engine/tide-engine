@@ -173,6 +173,7 @@ namespace Tide.Editor
     {
         public string[] Params = Array.Empty<string>(), Types = Array.Empty<string>();
         public int[] Args = Array.Empty<int>();
+        public string Rest; // The parameter that takes any number (Spawn's components), or null
 
         // The parameter the argument at `index` goes to: its name and type, or nulls
         public (string name, string type) At(int index)

@@ -1006,6 +1006,13 @@
                 if (other && this.typeOfValue(other)) return this.typeOfValue(other);
             }
             if (n.k === 'var' && p.key === 'value' && n.type) return n.type;
+            // Not takes yes or no; minus and ~ give what they're given, so take what's taken where they go
+            if (n.k === 'unary' && p.key === 'value') {
+                if (n.op === '!') return 'bool';
+                const at = this.readerPort(n.id);
+                const t = at ? this.expectedType(at) : null;
+                if (t) return t;
+            }
             if (n.k === 'return' && p.key === 'value') {
                 const t = this.item?.accessor ? this.item.property?.type : this.item?.value.returnType;
                 if (t && t !== 'void') return t;
@@ -1018,6 +1025,19 @@
             }
             const w = this.wireOf(p);
             return w ? this.typeOfValue(w) : null;
+        }
+
+        // The input a node's value goes into: the first that's wired to it, or null
+        readerPort(id) {
+            const g = this.graph;
+            if (!g) return null;
+            if (g.root === id) return { node: RESULT, input: true, exec: false, path: null };
+            for (const n of Doc.nodes(g)) {
+                for (const p of this.schema.ports(n)) {
+                    if (p.input && !p.exec && p.path && this.schema.wire(n, p.path) === id) return p;
+                }
+            }
+            return null;
         }
 
         // The type of a value by its node: what tidels found, or what the file says of a parameter or a local
@@ -1395,7 +1415,7 @@
             // An operator's other side says what goes in by what's there: a number times a vector
             const n = inp.node > 0 ? this.analysis.byId.get(inp.node) : null;
             if (n?.k === 'binary' && !['&&', '||'].includes(n.op)) return true;
-            return G.pickers.fits(this.schema, have, want, t => !!this.app.lang.declares(t) || !!this.doc.typeDecl(t));
+            return G.pickers.fits(this.schema, have, want, t => this.app.lang.declares(t) || this.doc.typeDecl(t)?.value?.kind || !!this.doc.typeDecl(t));
         }
 
         // The inputs a pin is linked to, or the output an input is: [port]
@@ -1481,13 +1501,13 @@
             return { x: x0, y: y0 };
         }
 
-        // Where a Get `w` wide goes for an input: just left of it, at its height, where nothing is
-        spotLeftOf(inp, w, extra = []) {
+        // Where a Get `w` wide (and `h` high) goes for an input: just left of it, at its height, where nothing is
+        spotLeftOf(inp, w, extra = [], h = 28) {
             const at = inp.node === RESULT ? null : this.at(portKey(inp));
             const reader = inp.node > 0 ? Doc.nodeIn(this.graph, inp.node) : null;
             const x = at ? at.x - this.nodeX + this.origin.x : Number(reader?.x) || 0;
             const y = at ? at.y - PAD + this.origin.y : (Number(reader?.y) || 0) + 36;
-            return this.freeSpot({ x: Math.round(x - w - 46), y: Math.round(y - 14) }, { w, h: 28 }, new Set(), extra, { left: true });
+            return this.freeSpot({ x: Math.round(x - w - 46), y: Math.round(y - 14) }, { w, h }, new Set(), extra, { left: true });
         }
 
         // After an edit put nodes left of or above where the nodes started: the frame's own place moves by as much
@@ -1727,7 +1747,8 @@
                     // A pin under the pointer says what it is, and that it's dragged from
                     const wants = p.port.input && !type ? this.expectedType(p.port) : null;
                     const label = p.port.label || W('value.input');
-                    const what = type ? `${label}: ${type}` : wants ? W('pin.wants', { input: label, article: article(wants), type: wants }) : label;
+                    const words = G.pickers.typeWords(wants);
+                    const what = type ? `${label}: ${type}` : wants ? W('pin.wants', { input: label, article: article(words), type: words }) : label;
                     p.dot.title = W('pin.connect', { what });
                     p.dot.dataset.typed = '1';
                 }

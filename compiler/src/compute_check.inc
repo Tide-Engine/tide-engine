@@ -443,6 +443,7 @@ static type check_gpu_static(checker *c, expr *e)
                   "count on the GPU)");
         return T_ERR;
     }
+    if (!kernel && graph_hole(e->args.items[0])) return T_ERR;
     if (!kernel) {
         diag_error(e->args.items[0]->at, "GPU.Run runs a kernel, a 'compute' declaration, by its name");
         return T_ERR;

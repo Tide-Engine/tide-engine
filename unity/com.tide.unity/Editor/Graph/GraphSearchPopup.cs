@@ -217,7 +217,8 @@ namespace Tide.Editor
                 e.Command();
                 return;
             }
-            board.Insert(frame, e, at, pending, context.Wrap);
+            var made = board.Insert(frame, e, at, pending, context.Wrap);
+            if (made != null && e.TypeParams != null && e.TypeParams.Length > 0) board.AskTypeArg(frame, made, e.TypeParams[0], at);
         }
     }
 }

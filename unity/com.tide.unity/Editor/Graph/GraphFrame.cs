@@ -330,6 +330,17 @@ namespace Tide.Editor
                 if (!string.IsNullOrEmpty(result) && result != "void") return result;
             }
             else if (GraphSchema.Spec(k)?.Declares != null && key == "value" && !string.IsNullOrEmpty(owner.Str("type"))) return owner.Str("type");
+            // Not takes yes or no; minus and ~ give what they're given, so take what's taken where they go
+            else if (k == "unary" && key == "value" && path.Parts.Length == 1)
+            {
+                if (owner.Str("op") == "!") return "bool";
+                if (Readers.TryGetValue(id, out var readers) && readers.Count > 0)
+                {
+                    var (reader, at) = readers[0];
+                    var taken = reader == ResultId ? Wanted(null, at) : ById.TryGetValue(reader, out var r) ? Wanted(r, at) : null;
+                    if (taken != null) return taken;
+                }
+            }
             else if (k == "binary" && path.Parts.Length == 1 && (key == "lhs" || key == "rhs"))
             {
                 // Both sides of an "and" are true or false; of the rest, numbers and vectors mix, so nothing's said
@@ -952,6 +963,18 @@ namespace Tide.Editor
         // Where the nodes just made for an input go (in an edit, once they're wired): what's shown in an input or a
         // title where its reader is, as tidec's layout has it; the Gets left of the node whose input it is, at the
         // input's row, one after another (Get ball, then position, then x), in free space
+        // Where a node `size` big that works out what goes in an input goes, as drawn: left of the input, at its
+        // height, where nothing is, so what's worked out reads from left to right into what reads it, as the code
+        // does (Math.Abs(x) > 160: x, Abs, then >)
+        internal Vector2 BesideInput(JValue owner, WirePath path, Vector2 size)
+        {
+            var view = owner != null ? ReaderOf(owner.Wire("id")) ?? ViewOf(owner.Wire("id")) : Result;
+            if (view == null) return FreePlace(origin, size);
+            var row = path != null ? view.Q("in:" + path) : null;
+            var rowY = row != null && !float.IsNaN(row.layout.height) && row.layout.height > 0 ? row.ChangeCoordinatesTo(view, Vector2.zero).y : 26;
+            return FreePlace(view.Shown + new Vector2(-size.x - 56, rowY - 14), size);
+        }
+
         internal void PlaceMade(JValue owner, WirePath path, IList<int> made)
         {
             var g = Graph;

@@ -26,9 +26,19 @@ namespace Tide.Editor
         // Whether a value of a type goes where another is taken: the same type (an optional takes its type), or a
         // number that widens by itself (the spec's: byte and int to long, float and double; float to double). A
         // type that isn't known fits: the check says.
-        public static bool Fits(string have, string want)
+        // A type of several, as the language server says an engine's function takes ("float2|float3"): any of
+        // them. A kind of the game's declarations (Spawn's "component"): one of that kind, where `kindOf` says
+        // what kind a type is. A type parameter (Json.Write's T): anything.
+        public static bool Fits(string have, string want, Func<string, string> kindOf = null)
         {
             if (string.IsNullOrEmpty(have) || string.IsNullOrEmpty(want)) return true;
+            if (want.IndexOf('|') >= 0) return want.Split('|').Any(t => Fits(have, t, kindOf));
+            if (want == "component" || want == "event" || want == "scene")
+            {
+                var kind = kindOf?.Invoke(have.Trim().TrimEnd('?'));
+                return string.IsNullOrEmpty(kind) || kind == want;
+            }
+            if (want.Length == 1 && char.IsUpper(want[0])) return true;
             have = have.Trim();
             if (have.StartsWith("const ")) have = have.Substring(6).Trim();
             want = want.Trim().TrimEnd('?');
@@ -38,6 +48,16 @@ namespace Tide.Editor
             if (have == "int") return want == "long" || want == "float" || want == "double";
             if (have == "float" || have == "long") return want == "double";
             return false;
+        }
+
+        // What a wanted type is called: itself, or of several ("float2|float3"), "float2 or float3", and of many,
+        // what they are
+        public static string Words(string type)
+        {
+            if (string.IsNullOrEmpty(type) || type.IndexOf('|') < 0) return type;
+            var list = type.Split('|');
+            if (list.Length > 4) return GraphSchema.Word(list.Contains("Color") ? "type.numbersOrColour" : "type.numbers");
+            return string.Join(", ", list.Take(list.Length - 1)) + " " + GraphSchema.Word("or") + " " + list[list.Length - 1];
         }
 
         public static bool IsWhole(string type) => GraphSchema.ValueControl(type) == "whole";

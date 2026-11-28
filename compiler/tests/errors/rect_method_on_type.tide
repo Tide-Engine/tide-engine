@@ -1,0 +1,6 @@
+// expect: 'Contains' is a rect's own: call it on one
+scene Main { }
+view Hover()
+{
+    if (Rect.Contains(float2(0, 0))) Draw.Circle(float2(0, 0), 1, Color.red);
+}

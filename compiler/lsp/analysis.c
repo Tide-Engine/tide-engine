@@ -2807,7 +2807,7 @@ static const method_form scene_calls[] = {
     {"Switch", "Scene.Switch(scene, components...)",
      "Unloads every scene loaded in this world, then loads this one and returns its entity, at the end of the tick. Entities in no scene stay."},
     {"Unload", "Scene.Unload(scene)", "Unloads a scene at the end of the tick, destroying every entity in it."},
-    {"IsPrepared", "Scene.IsPrepared(scene[, player]) -> bool",
+    {"IsPrepared", "Scene.IsPrepared(scene[, PlayerID player]) -> bool",
      "Whether this machine has prepared the scene, or the server has acknowledged a player's readiness. Games choose their own waiting and timeout policy."},
 };
 
@@ -9255,7 +9255,8 @@ static void complete_members(completion *c, const int dot, const loc at, const o
             // Cursor.: views lock it and read whether it holds; the input's Sample only reads
             const bool cursor = str_eq_c(base, "Cursor");
             if (cursor && !frame && !(sc.in_input && !sc.in_sanitize)) return;
-            builtin_visit v = {c, cursor && !frame};
+            // Color.'s and Rect.'s: their constants, as their functions are a value's own (glow.WithAlpha)
+            builtin_visit v = {c, (cursor && !frame) || str_eq_c(base, "Color") || str_eq_c(base, "Rect")};
             builtin_list_members(base, add_builtin_member, &v);
             if (str_eq_c(base, "Draw")) {
                 item(c, "window", CK_PROPERTY, "RenderTarget", "The window as a render target: what Draw's own calls draw into.", NULL);
@@ -13758,46 +13759,196 @@ static const struct {
                           "pixels a level may be off by, as `[LOD(2)]` does on an asset. 3D meshes and models with bones, whose bones are weighed."}},
 };
 
-// Of a call the checker couldn't take, as an editor's call with an input not
-// wired yet is (quaternion.Euler(_graphHole)): the engine's signature with as
-// many parameters as it has arguments, of the types its checked arguments have,
-// else one whose last ones it leaves out. Its parameters' names, and each one's
-// type where every signature that fits agrees on it (`types`, when not NULL).
-static int unresolved_param_names(const expr *call, str *names, str *types, const int max)
+// The engine's forms of a call, by its owner's name and its own (Scene.Load, Json.Read, Draw.Circle), or by its
+// name alone (float3, Spawn): each one it could mean, for a call the checker couldn't take
+static void forms_by_name(const str owner, const str name, label_list *list)
 {
-    label_list list = {0};
-    if (call->kind == E_METHOD && call->object && call->object->kind == E_NAME) { // quaternion.Euler(...)
-        builtin_signatures(call->object->name, call->name, collect_label, &list);
-    } else if (call->kind == E_CALL && !call->object) { // float3(...)
+    if (!owner.len) {
         for (size_t i = 0; i < sizeof call_forms / sizeof call_forms[0]; i++) {
-            if (!str_eq_c(call->name, call_forms[i].name)) continue;
-            for (int f = 0; f < 4 && call_forms[i].forms[f]; f++) vec_push(list.labels, call_forms[i].forms[f]);
+            if (!str_eq_c(name, call_forms[i].name)) continue;
+            for (int f = 0; f < 4 && call_forms[i].forms[f]; f++) vec_push(list->labels, call_forms[i].forms[f]);
+        }
+        return;
+    }
+    builtin_signatures(owner, name, collect_label, list);
+    static const struct {
+        const char *owner;
+        const method_form *forms;
+        size_t count;
+    } tables[] = {
+#define TABLE(owner, forms) {owner, forms, sizeof forms / sizeof forms[0]}
+        TABLE("Scene", scene_calls),
+        TABLE("Session", session_calls),
+        TABLE("Json", json_calls),
+        TABLE("HumanoidRig", humanoid_rig_calls),
+        TABLE("RetargetMap", retarget_map_calls),
+        TABLE("Audience", audience_static_calls),
+        TABLE("Visibility", visibility_static_calls),
+        TABLE("Storage", storage_calls),
+        TABLE("Storage", storage_awaited_calls),
+        TABLE("Wait", wait_calls),
+#undef TABLE
+    };
+    for (size_t t = 0; t < sizeof tables / sizeof tables[0]; t++) {
+        if (!str_eq_c(owner, tables[t].owner)) continue;
+        for (size_t i = 0; i < tables[t].count; i++) {
+            if (str_eq_c(name, tables[t].forms[i].name)) vec_push(list->labels, tables[t].forms[i].form);
         }
     }
+    if (str_eq_c(owner, "string") && str_eq_c(name, "FromBytes")) vec_push(list->labels, FROM_BYTES_FORM);
+    if (str_eq_c(owner, "Clipboard") && str_eq_c(name, "Copy")) vec_push(list->labels, CLIPBOARD_COPY_FORM);
+    if (str_eq_c(owner, "GPU") && str_eq_c(name, "Run")) vec_push(list->labels, "GPU.Run(kernel, over[, values])");
+    if (str_eq_c(owner, "Draw") && str_eq_c(name, "Blit")) vec_push(list->labels, BLIT_FORM);
+}
+
+// A form as a call writes it: leaving out every part in brackets, or (`all`) with every one of them
+// ("Scene.IsPrepared(scene[, player])" is "Scene.IsPrepared(scene)", or "Scene.IsPrepared(scene, player)"), and a
+// parameter of any number ("components...") as a parameter of that name. Returns that one's place, or -1.
+static int label_without_brackets(const char *label, const bool all, sb *out)
+{
+    int skipping = 0, depth = 0, commas = 0, variadic = -1;
+    bool inside = false;
+    for (const char *p = label; *p; p++) {
+        if (*p == '[') {
+            if (!all) skipping++;
+            continue;
+        }
+        if (*p == ']') {
+            if (!all && skipping) skipping--;
+            continue;
+        }
+        if (skipping) continue;
+        if (p[0] == '.' && p[1] == '.' && p[2] == '.') {
+            if (variadic < 0) variadic = commas;
+            p += 2;
+            continue;
+        }
+        if (*p == '(' && !inside) inside = true;
+        else if (inside && (*p == '<' || *p == '(')) depth++;
+        else if (inside && (*p == '>' || *p == ')') && depth) depth--;
+        else if (inside && *p == ',' && !depth) commas++;
+        sb_putn(out, p, 1);
+    }
+    return variadic;
+}
+
+enum { MOST_FORM_PARAMS = 32 };
+
+// How many of a form's parameters every call writes: not one with a default, nor a GUI container's block
+static int required_params(const char *plain)
+{
+    const label_spans spans = label_split(plain);
+    int required = 0;
+    for (int i = 0; i < spans.count; i++) {
+        const char *start = plain + spans.items[i].start, *end = plain + spans.items[i].end;
+        const char *value = strstr(start, " = ");
+        if ((value && value < end) || strncmp(start, "Block ", 6) == 0) continue;
+        required++;
+    }
+    return required;
+}
+
+// Of a call the checker couldn't take, as an editor's call with an input not
+// wired yet is (quaternion.Euler(_graphHole)): the engine's form with as many
+// parameters as it has arguments, of the types its checked arguments have, else
+// one whose last ones it leaves out. Its parameters' names, and each one's type
+// (`types`, when not NULL): the one every form that fits takes there, or those
+// they take between bars ("float2|float3|float4"), or none when one takes anything;
+// "component", "event" or "scene" for one that takes the game's declaration of that kind.
+// The parameters a call can leave out (`seed = 0`, `[, player]`) are among them, and
+// `rest`, when not NULL, is the name of one that takes any number, or empty.
+static int unresolved_param_names(const expr *call, str *names, str *types, str *rest, const int max)
+{
+    if (rest) *rest = (str){"", 0};
+    label_list forms = {0};
+    const bool owned = call->kind == E_METHOD && call->object && call->object->kind == E_NAME; // quaternion.Euler(...)
+    if (owned) forms_by_name(call->object->name, call->name, &forms);
+    else if (call->kind == E_CALL && !call->object) forms_by_name((str){"", 0}, call->name, &forms); // float3(...)
+    // Each form as calls write it: without the parts in brackets, and with them
+    label_list list = {0};
+    VEC(int) variadics = {0};
+    VEC(int) required = {0}; // What a call of each writes: the parameters outside its brackets with no default
+    for (int i = 0; i < forms.labels.count; i++) {
+        const char *label = forms.labels.items[i];
+        int written = 0;
+        for (int all = 0; all < (strchr(label, '[') ? 2 : 1); all++) {
+            sb plain = {0};
+            const int variadic = label_without_brackets(label, all, &plain);
+            if (!all) written = required_params(plain.data);
+            vec_push(list.labels, plain.data);
+            vec_push(variadics, variadic);
+            vec_push(required, written);
+        }
+    }
+    // Math's functions of any number, vector or colour (Abs, Lerp) say no type: it's any of those
+    static const char *const numbers = "float|float2|float3|float4|int2|int3|int4|double|double2|double3|double4|Color";
+    const bool math = owned && str_eq_c(call->object->name, "Math");
+    const int argc = call->args.count;
+    const int most = max < MOST_FORM_PARAMS ? max : MOST_FORM_PARAMS;
     for (int exact = 1; exact >= 0; exact--) {
         int count = 0;
         bool any = false;
+        sb alternatives[MOST_FORM_PARAMS] = {{0}};
+        bool anything[MOST_FORM_PARAMS] = {0}; // A form that fits takes anything there
         for (int i = 0; i < list.labels.count; i++) {
             label_params params;
             parse_label(list.labels.items[i], &params);
-            bool fits = exact ? params.count == call->args.count : params.count > call->args.count;
-            for (int k = 0; fits && k < call->args.count; k++) {
-                fits = call->args.items[k]->type.kind == TY_ERROR || param_fits(params.types[k], call, k);
+            if (params.count < 0) continue;
+            const int variadic = variadics.items[i];
+            const int least = required.items[i] < params.count ? required.items[i] : params.count;
+            // A parameter of any number takes the arguments past the others', or none of them; a form fits as many
+            // arguments as it has parameters, down to those every call writes
+            const bool counted = variadic >= 0 ? (exact ? argc >= params.count - 1 : argc < params.count - 1)
+                               : exact ? least <= argc && argc <= params.count : params.count > argc;
+            bool fits = counted;
+            for (int k = 0; fits && k < argc; k++) {
+                const int param = variadic >= 0 && k >= variadic ? variadic : k;
+                if (param >= params.count) break;
+                fits = call->args.items[k]->type.kind == TY_ERROR || param_fits(params.types[param], call, k);
             }
             if (!fits) continue;
-            if (!any) {
-                for (; count < params.count && count < max; count++) {
-                    names[count] = params.names[count];
-                    if (types) types[count] = params.types[count];
+            const int shown = variadic >= 0 && argc > params.count ? argc : params.count;
+            for (int k = 0; k < shown && k < most; k++) {
+                const int param = variadic >= 0 && k >= variadic ? variadic : k;
+                str type_text = params.types[param];
+                if (!type_text.len && math) type_text = str_from(numbers);
+                // Spawn's, Send's and Scene's say what they take by their names: what kind of the game's declarations
+                if (!type_text.len) {
+                    const str n = params.names[param];
+                    type_text = str_eq_c(n, "components") ? str_from("component") : str_eq_c(n, "event") ? str_from("event")
+                              : str_eq_c(n, "scene") ? str_from("scene") : type_text;
                 }
-                any = true;
-            } else if (types) {
-                for (int k = 0; k < count; k++) {
-                    if (k >= params.count || !str_eq(types[k], params.types[k])) types[k] = (str){"", 0};
+                if (k >= count) { // The first form that has this parameter names it
+                    names[k] = params.names[param];
+                    if (type_text.len) sb_putn(&alternatives[k], type_text.ptr, (size_t)type_text.len);
+                    else anything[k] = true;
+                    continue;
                 }
+                if (!type_text.len) {
+                    anything[k] = true;
+                    continue;
+                }
+                // Another form's type there, each once
+                bool known = false;
+                for (const char *at = alternatives[k].data; at && *at && !known;) {
+                    const char *bar = strchr(at, '|');
+                    const size_t n = bar ? (size_t)(bar - at) : strlen(at);
+                    known = n == (size_t)type_text.len && memcmp(at, type_text.ptr, n) == 0;
+                    at = bar ? bar + 1 : NULL;
+                }
+                if (known) continue;
+                if (alternatives[k].len) sb_put(&alternatives[k], "|");
+                sb_putn(&alternatives[k], type_text.ptr, (size_t)type_text.len);
             }
+            if (shown > count) count = shown < most ? shown : most;
+            if (rest && variadic >= 0 && variadic < params.count) *rest = params.names[variadic];
+            any = true;
         }
-        if (any) return count;
+        if (!any) continue;
+        for (int k = 0; types && k < count; k++) {
+            types[k] = !anything[k] && alternatives[k].len ? (str){alternatives[k].data, (int)alternatives[k].len} : (str){"", 0};
+        }
+        return count;
     }
     return 0;
 }
@@ -15663,19 +15814,21 @@ void analysis_graph_types(jbuf *out)
     jb_put(out, "}");
 }
 
-static int unresolved_param_names(const expr *call, str *names, str *types, int max);
+static int unresolved_param_names(const expr *call, str *names, str *types, str *rest, int max);
 
-// A call the checker couldn't take, written as analysis_graph_calls writes the others, unless its node has been
+// A call the checker couldn't take (one with an input not wired yet), or took with no names to show of its own
+// (Spawn, Scene.Load), written as analysis_graph_calls writes the others, unless its node already has been
 static void unresolved_call(graph_types *t, const expr *e)
 {
     enum { MOST = 32 };
-    if ((e->kind != E_CALL && e->kind != E_METHOD) || e->call != CALL_NONE || e->at.file != t->file || e->at.line <= 0) return;
+    if ((e->kind != E_CALL && e->kind != E_METHOD) || e->at.file != t->file || e->at.line <= 0) return;
     const int id = graph_id_at(t->map, e->at);
     bool seen = !id;
     for (int i = 0; i < t->seen.count && !seen; i++) seen = t->seen.items[i] == id;
     if (seen) return;
     str names[MOST], types[MOST];
-    const int count = unresolved_param_names(e, names, types, MOST);
+    str rest;
+    const int count = unresolved_param_names(e, names, types, &rest, MOST);
     if (count <= 0) return;
     vec_push(t->seen, id);
     jb_printf(t->out, "%s\"%d\":{\"params\":[", t->written++ ? "," : "", id);
@@ -15690,13 +15843,19 @@ static void unresolved_call(graph_types *t, const expr *e)
     }
     jb_put(t->out, "],\"args\":[");
     for (int k = 0; k < e->args.count && k < count; k++) jb_printf(t->out, "%s%d", k ? "," : "", k);
-    jb_put(t->out, "]}");
+    jb_put(t->out, "]");
+    if (rest.len) {
+        jb_put(t->out, ",\"rest\":");
+        jb_string(t->out, str_to_cstr(rest));
+    }
+    jb_put(t->out, "}");
 }
 
 // What each call's node calls with: {"<id>": {"params": ["value", "min", "max"], "types": ["float", "", ""],
 // "args": [0, 1, 2]}}: the callee's parameters' names (the game's function's, or the built-in form the call
-// took), their types where the game declares them, and the parameter each written argument goes to. Calls with
-// no names to show (Spawn(...)) aren't in it.
+// took), their types where the game declares them, and the parameter each written argument goes to; and "rest",
+// the name of one that takes any number (Spawn's "components"), where there is one. Of a call the checker couldn't
+// take, or took with no names of its own, the engine's forms' (unresolved_call).
 void analysis_graph_calls(jbuf *out)
 {
     enum { MOST = 32 };

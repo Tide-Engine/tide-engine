@@ -1617,8 +1617,8 @@ namespace Tide.Editor
             if (graph == null) return null;
             var port = new GraphPort { Node = owner != null ? owner.Wire("id") : GraphFrame.ResultId, Input = true, Path = path };
             var view = owner != null ? frame.ReaderOf(owner.Wire("id")) ?? frame.ViewOf(owner.Wire("id")) : frame.Result;
-            // Below and left of it, off the line its flow runs along, where nothing is
-            var at = frame.FreePlace(view != null ? view.Shown + new Vector2(-240, view.SizeNow.y + 30) : frame.Origin, new Vector2(220, 90));
+            // Left of the input, at its height, where nothing is
+            var at = view != null ? frame.BesideInput(owner, path, new Vector2(220, 90)) : frame.FreePlace(frame.Origin, new Vector2(220, 90));
             // What's in the input now is the new node's first input: wobble.frequency, worked out, is "wobble.frequency * …"
             var context = new GraphSearchContext { Doc = Doc, Graph = graph, Slot = frame.Slot, Window = Window, Pending = port, Frame = frame, Wrap = frame.WireAt(owner, path) };
             var popup = new GraphSearchPopup(this, frame, context, at);
@@ -1741,6 +1741,22 @@ namespace Tide.Editor
                 note.Set("text", JValue.Of("Note"));
                 list.Items.Add(note);
             }, frame.Id);
+        }
+
+        // A call of a type's own (Json.Read<T>): which type, asked as soon as it's put down, as it's no call without it
+        internal void AskTypeArg(GraphFrame frame, JValue made, string param, Vector2 frameLocal)
+        {
+            var call = made.Str("k") == "eval" ? GraphDocument.NodeIn(frame.Graph, made.Wire("value")) : made;
+            if (call == null) return;
+            var id = call.Wire("id");
+            var name = call.Str("name") ?? "";
+            var request = new GraphTypeRequest { Title = GraphSchema.Word("search.typeArg", "param", param, "name", name) };
+            var picker = new GraphTypePicker(Window, request, t => Window.Edit("Type of " + name, () =>
+            {
+                var n = GraphDocument.NodeIn(frame.Graph, id);
+                n?.Set("typeArgs", JValue.Strings(new[] { t }), GraphSchema.NodeOrder(n.Str("k")));
+            }, frame.Id));
+            Window.Open(picker, new Rect(frame.LocalToWorld(frameLocal), Vector2.zero));
         }
 
         internal GraphTypePicker PickType(GraphTypeRequest request, VisualElement from, Action<string> picked)

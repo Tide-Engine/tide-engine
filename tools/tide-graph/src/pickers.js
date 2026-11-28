@@ -304,34 +304,6 @@
             : { title: m.name, key: 'm:' + m.name, detail: m.type, group: w('search.of', { type }), color: G.ui.typeColor(m.type) || s.color('member'), node: { k: 'member', fields: { member: m.name } }, first: true }));
     }
 
-    // The functions of the namespaces offered at a place (Draw.Circle, Debug.Log, Math.Clamp), as calls the search
-    // finds by their own names: a namespace alone is no step and no value. Where a step goes, every one; where a
-    // value goes, those that give one.
-    async function namespaceCalls(lang, items, flow) {
-        const spaces = items.filter(i => (i.kind === G.lang.KIND.Module || (!flow && i.kind === G.lang.KIND.Enum)) && typeof i.label === 'string');
-        const lists = await Promise.all(spaces.map(i => lang.membersOfName(i.label).then(m => [i.label, m])));
-        const out = [];
-        for (const [space, members] of lists) {
-            for (const m of members) {
-                // An enum's choice: Phase.Running, a member of the enum's name
-                if (m.kind === G.lang.KIND.EnumMember && !flow) {
-                    const choice = String(m.label || '');
-                    if (/^[A-Za-z_]\w*$/.test(choice)) out.push({ title: `${space}.${choice}`, detail: space, group: space, keywords: `${choice} ${space}`, key: 'c:' + space + '.' + choice, node: { k: 'member', fields: { member: choice } }, object: space, documentation: m.documentation });
-                    continue;
-                }
-                if (m.kind !== G.lang.KIND.Function && m.kind !== G.lang.KIND.Method) continue;
-                const fn = String(m.label || '').replace(/\(.*$/, '');
-                // (Math's functions all give a value, though those of any number or vector don't say which)
-                if (!fn || (!flow && space !== 'Math' && resultIn(m.detail) === '')) continue;
-                const params = G.lang.paramNames(m);
-                const name = `${space}.${fn}`;
-                out.push({ title: `${name}(${params.join(', ')})`, detail: m.detail, group: space, keywords: `${fn} ${space}`, key: 'c:' + name,
-                    node: { k: 'call', fields: { name, args: params.map(() => null) } }, statement: flow, params, documentation: m.documentation });
-            }
-        }
-        return out;
-    }
-
     function nodeSearch(app, frame, clientX, clientY, context) {
         const ed = app.editor;
         const g = frame.graph;
@@ -358,7 +330,7 @@
                     const have = new Set(entries.map(e => e.title));
                     const own = items.map(i => G.lang.entryOf(i, { flow })).filter(e => e && !have.has(e.title) && (!flow || e.node.k === 'call'))
                         .map(e => ({ ...e, key: 'c:' + e.title, summary: undefined }));
-                    return [...own, ...await namespaceCalls(lang, items, flow)];
+                    return [...own, ...await G.lang.namespaceCalls(lang, items, flow)];
                 });
             }
         }
@@ -397,15 +369,34 @@
 
     // Whether a value of type `have` can go where `want` is taken, as far as the page can tell: a number goes where
     // a number does, not where a tick or a vector does; something with fields (a component, a struct) isn't a number;
-    // and a number isn't one of the game's own types (`declared(type)`). What the page can't tell (a generic's T,
+    // and a number isn't one of the game's own types (`declared(type)`, which says its kind). Where a kind of the
+    // game's declarations is taken (Spawn's components), one of that kind. What the page can't tell (a generic's T,
     // an alias) fits.
     function fits(schema, have, want, declared) {
         if (!have || !want || have === want) return true;
+        // One of several (an engine's function of any vector): any of them
+        if (want.includes('|')) return want.split('|').some(t => fits(schema, have, t, declared));
+        if (KINDS.includes(want)) {
+            const kind = declared(have);
+            return !kind || kind === true || kind === want;
+        }
         const a = schema.control(have), b = schema.control(want);
         if (!a && !b) return true;
         if (!b) return !declared(want);
         if (!a) return false;
         return FAMILY[a] === FAMILY[b] && a !== 'vector' && a !== 'colour';
+    }
+
+    // The kinds of the game's declarations an engine's call takes one of (tide/graphCalls)
+    const KINDS = ['component', 'event', 'scene'];
+
+    // What a wanted type is called: itself, or of several (tide/graphCalls's "float2|float3"), "float2 or float3",
+    // and of many, what they are
+    function typeWords(type) {
+        if (!type || !type.includes('|')) return type;
+        const list = type.split('|');
+        if (list.length > 4) return w(list.includes('Color') ? 'type.numbersOrColour' : 'type.numbers');
+        return list.length === 1 ? list[0] : `${list.slice(0, -1).join(', ')} ${w('or')} ${list[list.length - 1]}`;
     }
 
     // Whether a type opens to fields: one with no control of its own (a component, a struct), a vector's x y z, a
@@ -414,18 +405,6 @@
         if (!type) return false;
         const c = schema.control(type);
         return !c || c === 'vector' || c === 'colour';
-    }
-
-    // What a function gives, by its completion item's detail (the game's "int Twice(int amount)", the engine's
-    // "Spawn(components...) -> Entity"): its type, '' for one that gives nothing (it's no value), null when the
-    // detail doesn't say
-    function resultIn(detail) {
-        const text = String(detail || '').trim();
-        const gives = /->\s*(.+)$/.exec(text);
-        if (gives) return gives[1].trim();
-        const typed = /^(.+?)\s+[A-Za-z_][\w.]*\s*\(.*\)$/.exec(text);
-        if (typed) return typed[1].split(/\s+/).pop() === 'void' ? '' : typed[1].split(/\s+/).pop();
-        return /^[A-Za-z_][\w.]*\s*\(.*\)$/.test(text) ? '' : null;
     }
 
     // The type a completion item's detail says: "const float" -> float, "float" -> float
@@ -444,13 +423,16 @@
         const readerNode = port.node > 0 ? frame.analysis.byId.get(port.node) : null;
         // What an operator works on says what's typed into it, not what fits: a vector takes a number times it
         const hint = readerNode?.k === 'binary' && !['&&', '||'].includes(readerNode.op);
-        const want = frame.expectedType(port);
+        // What the input takes: a type, or one of several ("float2|float3"), which is what fits, though the type's own
+        // values (a colour's, an enum's choices) are only offered for one
+        const wanted = frame.expectedType(port);
+        const want = wanted && !wanted.includes('|') ? wanted : null;
         // What Set changes is a place: something this code has, or a field of it. Nothing typed, nothing worked out.
         const place = readerNode?.k === 'assign' && port.key === 'target';
-        const declared = t => !!lang.declares(t) || doc.declared(['struct', 'enum', 'alias', 'component', 'singleton', 'event', 'input', 'scene']).some(d => d.name === t);
+        const declared = t => lang.declares(t) || doc.declared(['struct', 'enum', 'alias', 'component', 'singleton', 'event', 'input', 'scene']).find(d => d.name === t)?.kind || false;
         // What doesn't fit is left out, and counted (`skip()`): the list then ends with a way to see it too
         let loose = false, left = 0;
-        const fit = type => loose || hint || fits(s, type, want, declared);
+        const fit = type => loose || hint || fits(s, type, wanted, declared);
         const skip = () => { left++; return true; };
         // (An enum has choices, not fields: it opens to nothing)
         const open = type => opens(s, type) && lang.declares(type) !== 'enum' && !doc.enumMembers(type);
@@ -471,13 +453,11 @@
         // What a pick puts in the input
         const put = make => frame.setInput(port, make);
         const pathOf = (b, more) => (d, graph, at) => d.makePath(graph, b.start, [...b.members, ...(more ? [more] : [])], at);
-        // A node wired in goes under its reader, to the left, where nothing else is
-        const under = at => {
-            const wired = reader ? s.dataWires(Doc.nodeIn(g, reader) || {}).filter(w => !frame.analysis.folded.has(w)).length : 0;
-            return frame.freeSpot({ x: at.x - 240, y: at.y + (frame.sizes.get(frame.statementOf(reader))?.h || 96) + 16 + 96 * wired });
-        };
+        // A node wired in goes left of the input it's in, at its height, where nothing else is: what's worked out
+        // reads from left to right into what reads it, as the code does (Math.Abs(x) > 160: x, Abs, then >)
+        const under = () => frame.spotLeftOf(port, 200, [], 96);
         const nodeOf = (k, fields, wrap) => (d, graph, at) => {
-            const where = under(at);
+            const where = under();
             const n = d.newNode(k, where.x, where.y, fields);
             Doc.nodes(graph).push(n);
             // What was there goes on as the first thing the new node works on: frequency -> frequency × …
@@ -485,7 +465,7 @@
             return n.id;
         };
         const methodOf = (b, name, count) => (d, graph, at) => {
-            const where = under(at);
+            const where = under();
             const n = d.newNode('method', where.x, where.y, { name, args: Array(count).fill(null) });
             Doc.nodes(graph).push(n);
             s.setWire(n, ['object'], d.makePath(graph, b.start, b.members, where));
@@ -593,7 +573,7 @@
                     to.push({ title: name, key: 'n:' + name, detail: w('value.functions'), summary: item.detail, group, help, start: { name }, named: true, drill: true, stay: true, into: true });
                 } else if (item.kind === KIND.Function || item.kind === KIND.Method) {
                     // A call is offered where what it gives can go: not one that gives nothing
-                    const gives = resultIn(item.detail);
+                    const gives = G.lang.resultIn(item.detail);
                     if (gives === '' || (gives && !fit(gives) && skip())) continue;
                     const params = G.lang.paramNames(item);
                     to.push({ title: `${name}(${params.join(', ')})`, key: 'f:' + name, detail: gives || w('value.call'), group, color: colour(gives) || s.color('call'), help, keywords: name, make: nodeOf('call', { name, args: params.map(() => null) }) });
@@ -605,9 +585,9 @@
             // Found by what's typed: the namespaces' functions that give what fits (Abs finds Math.Abs), and the
             // wanted type's own constants (red finds Color.red, zero float3.zero)
             if (!place) {
-                for (const e of await namespaceCalls(lang, items, false)) {
+                for (const e of await G.lang.namespaceCalls(lang, items, false)) {
                     if (e.node.k !== 'call') continue; // An enum's choices are offered where one goes, above
-                    const gives = resultIn(e.detail);
+                    const gives = G.lang.resultIn(e.detail);
                     if (gives && !fit(gives) && skip()) continue;
                     rest.push({ title: e.title, key: 'f:' + e.node.fields.name, detail: gives || w('value.call'), group: REST, color: colour(gives) || s.color('call'), help: docOf(e), keywords: e.keywords, typed: true, make: nodeOf('call', e.node.fields) });
                 }
@@ -638,7 +618,7 @@
                 const name = String(item.label || '').replace(/\(.*$/, '');
                 if (!name) continue;
                 if (item.kind === KIND.Method || item.kind === KIND.Function) {
-                    const gives = resultIn(item.detail);
+                    const gives = G.lang.resultIn(item.detail);
                     if (place || gives === '' || (gives && !fit(gives) && skip())) continue;
                     const params = G.lang.paramNames(item);
                     out.push({ title: `${name}(${params.join(', ')})`, key: 'm:' + name, detail: gives || w('value.call'), color: colour(gives) || s.color('method'), help: docOf(item), keywords: name, make: methodOf(b, name, params.length) });
@@ -661,7 +641,7 @@
             if (!base) {
                 const game = gameEntries();
                 p.reset({
-                    entries: top(lastGame), title: place ? w('value.change.title') : w(want ? 'value.title.typed' : 'value.title', { input: label, article: /^[aeiou]/i.test(want || '') ? w('an') : w('a'), type: want }),
+                    entries: top(lastGame), title: place ? w('value.change.title') : w(wanted ? 'value.title.typed' : 'value.title', { input: label, article: /^[aeiou]/i.test(typeWords(wanted) || '') ? w('an') : w('a'), type: typeWords(wanted) }),
                     placeholder: place ? w('value.search') : s.control(want) === 'whole' || s.control(want) === 'decimal' ? w('value.search.number') : s.control(want) === 'text' ? w('value.search.text') : want ? w('value.search') : w('value.search.any'),
                     more: game.then(entries => { lastGame = entries; if (!base) p.refill(top(entries)); return []; }),
                 });
@@ -807,5 +787,5 @@
         });
     }
 
-    G.pickers = { addMenu, addEntries, typePicker, needsPicker, valuePicker, nodeSearch, jumpTo, contents, nameFor, lowerFirst, fits, typeIn };
+    G.pickers = { addMenu, addEntries, typePicker, needsPicker, valuePicker, nodeSearch, jumpTo, contents, nameFor, lowerFirst, fits, typeIn, typeWords };
 })(globalThis.TideGraph = globalThis.TideGraph || {});

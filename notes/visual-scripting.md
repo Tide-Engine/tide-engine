@@ -660,7 +660,10 @@ those is nothing).
 ""], "args": [0, 1, 2]}}` for every checked call of the document: the callee's parameters' names
 (`call_param_names`, as inlay hints have them: the game's function's or command's, or the built-in form the call
 took), their types where the game declares them (empty for a built-in's), and the parameter each written argument
-goes to. Calls with no names to show (`Spawn(...)`) aren't in it.
+goes to. (2026-11-28) Every call is in it: one the checker couldn't take (an input not wired) or took with no
+names of its own (`Spawn`) has the engine's forms' (`unresolved_call`), with what it can leave out among its
+`params`, types of several between bars (`"float2|float3"`) or a kind (`"component"`), and `"rest"`, the name of a
+parameter that takes any number (`"components"`); see "Closing the rebuild's gaps".
 
 **`tide/graphNames`** (2026-11-25): `{"game": {"Ball": "component", "Heal": "function"}, "packages": {...}}`,
 what the game itself declares (and its packages), by name as the document writes it (`name_for`), with its
@@ -1096,18 +1099,93 @@ What rebuilding found, all fixed (the web page and its JetBrains copy):
   numbers, vectors, matrices, `quaternion`, `Color`, `Rect`, `PlayerID`), literals of the game's structs, components
   and events (an event's too, `Hit { }`, which was a name), and neither as a step.
 
-Found and not fixed (each a decision or bigger work):
+Found and not fixed then, each fixed in the next section: worked-out nodes stacked downwards, Negate's and Spawn's
+inputs said no type, engine calls with no input names (`Scene.Load`, `Json.Read`...) or named by type (`Math.Dot`'s
+"float2"), and Unity's window had none of the above.
 
-- **Worked-out nodes stack downwards**: each node "Work it out…" makes goes below-left of its reader, so
-  `Math.Abs(body.position.x) > 160` is a staircase down the frame, which grows off screen to the left. Left to right
-  in a row would read as the code does; it's the placement in `pickers.js` `nodeOf`/`under`, not tidec's layout.
-- **Some inputs don't say their type**: Negate's (`What goes in 'value'?`, no type) and Spawn's (`'value'`, where
-  Spawn's parameter is `components`), so their pickers can't put what fits first.
-- **Engine calls with no input names at all**: `Scene.Load`, `Scene.Switch`, `Scene.IsPrepared`, `Json.Read`,
-  `Json.Write`, `string.FromBytes`, `HumanoidRig.Auto`, `RetargetMap.Create` (their `tide/graphCalls` entry is
-  missing, so their inputs are "argument 1"); and `Math.Dot`, `Length`, `Mul`... name their inputs by type
-  (`float2`, `float2`), as their signatures have no names.
-- **Unity's window** has its own search and picker (`TideGraphLanguage.cs`, `GraphValuePicker.cs`) and wasn't
-  rebuilt-through; the same gaps (namespace functions by name, bool comparisons, constants, the field picker) are
-  likely there. Its rebuild needs a scratch tide and a batch Unity.
+## Closing the rebuild's gaps (2026-11-28, later)
 
+The owner: "let's close all the gaps, no stone left unturned". The list above, and what an audit of every call the
+search offers found on the way.
+
+**Every engine call names its inputs and says what they take** (`tidels`, `analysis.c`):
+
+- `builtins.c` named the Math signatures that had no names (`Dot(a, b)`, `Length(vector)`, `Reflect(direction,
+  normal)`, `Mul(rotation, vector)`, `Transform(matrix, point)`...; `named()`), which had read "float2", "float2".
+- `unresolved_param_names` takes its forms from `forms_by_name`: the built-in table, `call_forms` (Spawn, Send,
+  define, the constructors) and the LSP's own tables (`scene_calls`, `session_calls`, `json_calls`, `humanoid_rig_calls`,
+  `retarget_map_calls`, Audience's and Visibility's, Storage's, Wait's, `string.FromBytes`, `Clipboard.Copy`, `GPU.Run`,
+  `BLIT_FORM`). A form with brackets is two (`label_without_brackets`: without the parts in them and with them), a
+  parameter of any number (`components...`) one that takes the rest, and a form fits as many arguments as it has
+  parameters down to those every call writes (`required_params`: not a default, not a block), so a call's inputs
+  include what it can leave out (`Math.Perlin`'s `seed`, `Scene.IsPrepared`'s `player`) for the node's **+** to add.
+- Where the forms that fit disagree on a type, it's each of theirs between bars (`Math.Dot`'s `a` is
+  `float2|float3|float4|double2|double3|double4|quaternion`); Math's functions of any number, which say no types, are
+  `float|float2|...|Color`; an untyped `components`, `event` or `scene` is that kind of the game's declarations.
+- `unresolved_call` writes any call not already written (it took only `CALL_NONE`), so a call the checker took with
+  no names of its own (Spawn, Scene.Load) is answered too, with `"rest"`, the parameter that takes any number.
+  `Scene.IsPrepared`'s form types its `player` (`PlayerID`).
+
+**The checker** (`check.c`):
+
+- `Color.WithAlpha(0.5)` and `Rect.Contains(p)`, a value's methods called on the type's name, were taken and
+  generated C that didn't compile (the receiver missing). An error now says to call them on one
+  (`errors/color_method_on_type.tide`, `rect_method_on_type.tide`); completion of `Color.` and `Rect.` lists their
+  constants only, so neither editor offers them as calls.
+- An input with no wire said more than that in `defined(...)`, `Draw.Blit`'s frag, `Draw.Clear`'s value and
+  `GPU.Run`'s kernel (`graph_hole`): their own messages took the hole for a wrong argument.
+
+**The page** (and its JetBrains copy):
+
+- `signatureOf` (`lang.js`): what a call writes, without its brackets' parts and its defaults, a parameter of any
+  number once, and a GUI container's `Block content` as the code in it: such a call is a step only, made with
+  `withBlock` (`GUILayout.Vertical() { }`).
+- `namespaceCalls` moved to `lang.js` (the model tests run it) and takes the engine's types too (`quaternion.Euler`,
+  `float4x4.Ortho`, `RenderTarget.Window`: built-in types' functions), where a step goes only what acts (it gives
+  nothing, or it's GUI's, Session's, Audio's, files'..., `ACTING`, or it fills an `out`), never Math's; a call of a
+  type of its own (`Json.Read<T>`) asks it when it's put down (`typeParams`, `search.typeArg`).
+- `CONSTRUCTED` is the spec's constructors exactly: no `bool(…)` ("bool has no constructor"), no `float2x3(…)`.
+- A type of several fits where any of them does (`fits`), and is said in words (`typeWords`: "float2, float3 or
+  float4", "number or vector", "number, vector or colour"); a kind (`component`) fits a type the game declares as one.
+  Negate's input takes what's taken where it goes (`expectedType`, `readerPort`); Not's a bool.
+- `nextParam` offers `rest` once each parameter has its argument: Spawn's **+ components**.
+- **Layout**: a node made for an input goes left of the input, at its height (`frame.spotLeftOf(port, 200, [], 96)`),
+  not below-left of its reader: `body.position.x` → `Math.Abs` → `Greater than` → `If` in a row.
+
+**Unity's window**, the same: `TideGraphLanguage.Names` offers no namespace or enum alone, no constructor but the
+spec's, no value as a step, and asks what each namespace, engine type and (for a value) enum has, for their functions
+and choices by name (`CallEntry`, `Signature`, `ResultOf`, `Acting`); a block call is a step with `withBlock`; a call
+of its own type asks it (`GraphBoard.AskTypeArg`); `GraphCall.Rest` keeps Spawn's **+**; `GraphValues.Fits` takes a
+type of several and a kind, `Words` says them; `Wanted` gives Negate's; the value picker finds the namespaces' and
+types' functions that fit by name once something's typed; a worked-out node goes left of its input
+(`GraphFrame.BesideInput`). And one of its own, found by rebuilding there: a literal's **+ field** added a field
+called `value`, which `Body` hasn't; it asks which of the type's fields now (`GraphNodeView.PickField`: the file's
+declaration's, else `tide/graphMembers` of the type), as the page does.
+
+Tests:
+
+- `tidels: every input of a call the search offers is named, and says what it takes where Tide does` (model test):
+  every call offered in a system, a view and a function, put down empty, has a `tide/graphCalls` entry naming each
+  input with no type's name, and the types of a few are pinned (`Draw.Circle`'s, `Math.Dot`'s, `Math.Abs`'s, Spawn's
+  with its rest, `Scene.IsPrepared`'s with `player`, `GUILayout.Area`'s, `Json.Read`'s). It found the unnamed Math
+  signatures, `bool(…)` (no entry: no constructor), Spawn's and Scene's missing entries, and `quaternion.Euler`
+  missing from the search.
+- `tidels: what the search offers is something Tide takes` now runs in a system and in a view, with the namespaces'
+  and types' functions and the enums' choices; it found `Scene.IsPrepared` offered as a step, `Json.Read` without its
+  type, `Color.WithAlpha` as a call, and the hole messages above.
+- `rebuild.test.mjs` checks the layout: each `Math.Abs` left of its `>` at its height, each `>` left of its `If`.
+- `GraphLanguageTests.TheSearchOffersWhatCompletionDoes` (Unity): no `Math` alone, `Math.Abs(x)` a value,
+  `Debug.Log(text)` and `Spawn(components)` steps, `quaternion.Euler(radians)`, no `bool(…)` or `string`, no value as
+  a step. `SignaturesGiveTheirParametersNames`: brackets, defaults, a block, `ResultOf`, `Fits` of several and of a
+  kind, `Words`.
+- `GraphLanguageTests.FirstBallIsMadeInTheWindowAlone` (Unity), the page's rebuild in the window: first-ball from an
+  empty file through what the window offers (the cards and a starting value; the handler's event and `with Main`;
+  `Spawn` of `Body { velocity = float2(160, 120) }` by the field picker, and `Ball { }` by Spawn's **+**; the Set's
+  `+=` of a Multiply; `Math.Abs` found by "Abs", Greater worked out, Negate's input a float; `Draw.Circle` by
+  "Circle", `Color.red` by "red"), each Abs left of its `>` at its height, no problems, and tidec compiles it.
+
+Run (2026-11-28): `tide_graph_editor` (its model tests, the 12 browser tests, the rebuild), `tidels_tests`, the compiler's 2805 error
+tests, `tidec_graph_*`, the e2e games the changed checks touch (image clears, render colors, view corrections,
+directives); Unity 6000.6 EditMode `GraphLanguageTests`, `GraphTests`, `GraphSchemaTests` with `-nographics` (61 of
+65, the 4 that need a graphics device skipped), and those 4 with the rebuild on a desktop of their own with one (5 of
+5). Not run: the docs build (a linked `node_modules` couldn't resolve monaco-editor here; CI's Docs job builds it).

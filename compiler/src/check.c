@@ -4244,6 +4244,15 @@ static type check_depth_array_read(const checker *c, expr *e);
 
 // Constructors of built-in types: float(x), int3(1), float4(v.xy, 0, 1),
 // quaternion(x, y, z, w), float3x3(c0, c1, c2) and friends.
+// Whether an argument is a graph's input with no wire, which its lowering has said (graph.h): what a call takes
+// there is nothing more to say of
+static bool graph_hole(const expr *arg)
+{
+    if (!arg || arg->kind != E_NAME || !str_eq_c(arg->name, GRAPH_HOLE)) return false;
+    const source *src = diag_source(arg->at.file);
+    return src && src->graph && src->graph->holes;
+}
+
 static type check_construct(checker *c, expr *e, const type target)
 {
     // float3(define(X, 0), ...): a define's value reads as a part of the vector, the color or the quaternion, a float
@@ -7561,6 +7570,10 @@ static type check_symbol_call(checker *c, expr *e, const type want)
         return e->type = T_ERR;
     }
     const str name = e->args.items[0]->name;
+    if (str_eq_c(name, GRAPH_HOLE)) { // A graph's input with no wire, which its lowering said (graph.h)
+        const source *src = diag_source(e->at.file);
+        if (src && src->graph && src->graph->holes) return e->type = T_ERR;
+    }
     // tide's versions and the packages' symbols never have a value, in any build: they're defined()'s to read
     const bool tide_version = name.len >= 5 && memcmp(name.ptr, "TIDE_", 5) == 0;
     if (valued && (tide_version || (name.len >= 8 && memcmp(name.ptr, "PACKAGE_", 8) == 0))) {
@@ -9057,6 +9070,7 @@ static type check_blit(checker *c, expr *e)
             ok = false;
         }
     }
+    if ((!frag || !frag->is_frag) && graph_hole(e->args.items[last])) return T_ERR;
     if (!frag || !frag->is_frag) {
         diag_error(e->args.items[last]->at, "Blit names a frag last, like 'Draw.Blit(source, destination, Blur)'");
         diag_note("or before the struct of values it gives the frag: 'Draw.Blit(source, destination, Blur, BlurParams { ... })'");
@@ -11003,6 +11017,7 @@ static bool check_image_clear(checker *c, expr *e, type *result)
     }
     for (int i = 0; i < e->args.count; i++) {
         const type t = e->args.items[i]->type;
+        if (t.kind == TY_ERROR) return true; // Said already, or an input with no wire
         if (t.kind != TY_COLOR && t.kind != TY_FLOAT && t.kind != TY_FLOAT2 && t.kind != TY_FLOAT4 && t.kind != TY_INT) {
             diag_error(e->args.items[i]->at, "an image clear is a Color, float, float2, float4 or int; use the type its format stores");
             return true;
@@ -11152,6 +11167,14 @@ static type check_method(checker *c, expr *e)
     if (names_builtin_owner(c, e->object)) {
         const str owner = e->object->name;
         if (builtin_old_draw_owner(owner)) return old_draw_owner(c, e);
+        // Color.WithAlpha(0.5): a Color's and a Rect's functions are every one a value's own, called on it
+        if (str_eq_c(owner, "Color") || str_eq_c(owner, "Rect")) {
+            const bool color = str_eq_c(owner, "Color");
+            diag_error(e->at, "'" STR_FMT "' is a %s's own: call it on one", STR_ARG(e->name), color ? "color" : "rect");
+            diag_note(color ? "like 'glow." STR_FMT "(...)', or 'Color.red." STR_FMT "(...)'" : "like 'slot." STR_FMT "(...)', or 'Screen.rect." STR_FMT "(...)'",
+                      STR_ARG(e->name), STR_ARG(e->name));
+            return T_ERR;
+        }
         if (str_eq_c(owner, "Json")) return check_json_call(c, e);
         const bool io = str_eq_c(owner, "File") || str_eq_c(owner, "Directory");
         const bool flush = str_eq_c(owner, "Storage");

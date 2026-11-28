@@ -1,0 +1,7 @@
+// expect: 'WithAlpha' is a color's own: call it on one
+scene Main { }
+view Glow()
+{
+    Color faded = Color.WithAlpha(0.5);
+    Draw.Circle(float2(0, 0), 1, faded);
+}

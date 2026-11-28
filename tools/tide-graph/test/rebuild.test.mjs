@@ -191,7 +191,7 @@ describe('a game made in the editor alone', { skip }, () => {
             await p.key('Enter');
             await need('Setup', 'Main', 'only with');
             await says(/Setup\(with Main\)/, 'the handler only with Main');
-            await step(await arrow('Setup'), 'Spawn', 'Spawn(components...)');
+            await step(await arrow('Setup'), 'Spawn', 'Spawn(components)');
             await picker(`${frame('Setup')}.querySelector('.tg-node:not(.tg-entry) .tg-port.tg-in:has(.tg-pick)')`);
             await p.type('Body');
             await pickIn('.tg-value-picker', 'Body { … }');
@@ -249,6 +249,19 @@ describe('a game made in the editor alone', { skip }, () => {
                 await work(`${inputs('Bounce')}.filter(x => x.querySelector('.tg-op') && x.querySelector('.tg-pick'))[0]`, 'Negate', 'Negate');
                 await read(empty('Bounce', 'value'), ['body.', 'velocity.', axis]);
                 await says(new RegExp(`if \\(Math\\.Abs\\(body\\.position\\.${axis}\\) > 160\\) \\{\\s*body\\.velocity\\.${axis} = -body\\.velocity\\.${axis};`), `Bounce on ${axis}`);
+            }
+            // What's worked out goes left of what reads it, at its height, as the code reads: Abs then >, then the
+            // If, not a staircase down the frame
+            if (process.env.TIDE_GRAPH_SHOTS) await p.shot(path.join(process.env.TIDE_GRAPH_SHOTS, 'rebuild-bounce.png'));
+            const placed = await p.evaluate(`(() => {
+                const g = app.editor.doc.declared(['system']).map(d => app.editor.doc.get(d.id)).find(d => d.name === 'Bounce').body;
+                const at = id => g.nodes.find(n => n.id === id);
+                return g.nodes.filter(n => n.k === 'binary' && n.op === '>').map(b => ({ b, a: at(b.lhs), i: g.nodes.find(n => n.k === 'if' && n.cond === b.id) }));
+            })()`);
+            assert.equal(placed.length, 2);
+            for (const { a, b, i } of placed) {
+                assert.ok(a.x < b.x && Math.abs(a.y - b.y) < 80, `Abs at ${a.x},${a.y} is left of > at ${b.x},${b.y}, at its height`);
+                assert.ok(b.x < i.x && Math.abs(b.y - i.y) < 120, `> at ${b.x},${b.y} is left of the If at ${i.x},${i.y}, at its height`);
             }
 
             // view DrawBalls(Body body, with Ball) { Draw.Circle(body.position, body.radius, Color.red); }

@@ -847,7 +847,8 @@
                 let statement = s.isExec(node.k) ? node : null;
                 // A call where a statement goes: the statement that does it, drawn as one node with it
                 if (!statement && (from?.exec || (entry.statement && !from))) {
-                    statement = doc.newNode('eval', at.x, at.y);
+                    // (one that takes code, GUILayout.Vertical, with a place for it)
+                    statement = doc.newNode('eval', at.x, at.y, entry.block ? { withBlock: true } : undefined);
                     Doc.nodes(g).push(statement);
                     node.x = at.x - 200;
                     doc.reindex();
@@ -904,6 +905,16 @@
             if (own && !entry.detail && !entry.hidden) {
                 const key = ['name', 'member', 'text'].find(k => typeof own[k] === 'string');
                 if (key && !entry.node.fields?.[key]) this.board.focusSoon(`${own.id}:${key}`, true);
+            }
+            // A call of a type's (Json.Read<T>): which type, asked at once, as the call is no call without it
+            if (own && entry.typeParams?.length && !own.typeArgs?.length) {
+                const box = this.board.frameOf(frame.slot)?.views.get(made.id)?.el?.getBoundingClientRect();
+                G.pickers.typePicker(this, { x: box ? box.left : 200, y: box ? box.bottom + 4 : 200,
+                    title: w('search.typeArg', { name: own.name || '', param: entry.typeParams[0] }),
+                    onPick: t => this.edit(doc => {
+                        const n = doc.get(own.id);
+                        if (n) G.json.set(n, 'typeArgs', [t], s.nodeOrder(n.k));
+                    }) });
             }
         }
 

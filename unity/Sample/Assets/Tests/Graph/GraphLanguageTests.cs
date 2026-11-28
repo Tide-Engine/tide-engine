@@ -336,10 +336,17 @@ public class GraphLanguageTests
         yield return Answered(popup);
         Assert.IsTrue(popup.Entries.Any(e => e.Title == "Hit(ball)" && e.Statement), Titles(popup));
         Assert.IsTrue(popup.Entries.Any(e => e.Title == "Ball { }"), Titles(popup));
-        Assert.IsTrue(popup.Entries.Any(e => e.Title == "Math" && e.Group == "Namespaces"), Titles(popup));
-        // An engine's value type is made by calling it, not a name that's no value
+        // A namespace alone is no value: its functions are found by their own names, a step where they act and a
+        // value where they work one out; and an engine type's own (quaternion.Euler)
+        Assert.IsFalse(popup.Entries.Any(e => e.Title == "Math"), Titles(popup));
+        Assert.IsTrue(popup.Entries.Any(e => e.Title == "Math.Abs(x)" && !e.Statement), Titles(popup));
+        Assert.IsTrue(popup.Entries.Any(e => e.Title == "Debug.Log(text)" && e.Statement), Titles(popup));
+        Assert.IsTrue(popup.Entries.Any(e => e.Title == "quaternion.Euler(radians)"), Titles(popup));
+        // An engine's value type is made by calling it, not a name that's no value; one with no constructor isn't
+        // offered
         Assert.IsTrue(popup.Entries.Any(e => e.Title == "float3(…)" && e.Group == "Types"), Titles(popup));
         Assert.IsFalse(popup.Entries.Any(e => e.Title == "float3"), Titles(popup));
+        Assert.IsFalse(popup.Entries.Any(e => e.Title == "bool(…)" || e.Title == "string(…)" || e.Title == "string"), Titles(popup));
         Assert.AreEqual(1, popup.Entries.Count(e => e.Title == "Get ball"), "a Get of the parameter, once: " + Titles(popup));
         Assert.IsFalse(popup.Entries.Any(e => e.Title == "ball"), "and not as a name too: " + Titles(popup));
         // What's typed is a value in itself
@@ -351,6 +358,9 @@ public class GraphLanguageTests
         yield return Answered(popup);
         Assert.IsTrue(popup.Entries.Any(e => e.Title == "Hit(ball)"), Titles(popup));
         Assert.IsFalse(popup.Entries.Any(e => e.Title == "Ball { }"), "an arrow takes no value");
+        // ...and a step does something: Spawn, by the one name its inputs have; not Math.Abs, a value made
+        Assert.IsTrue(popup.Entries.Any(e => e.Title == "Spawn(components)" && e.Statement), Titles(popup));
+        Assert.IsFalse(popup.Entries.Any(e => e.Title == "Math.Abs(x)" || e.Title == "float3(…)" || e.Title == "Scene.IsPrepared(scene)"), "values do nothing as steps: " + Titles(popup));
         window.ClosePopup(popup);
 
         // A wire from the parameter's own pin, which no node reads there yet: what the ball has, and the file as it was
@@ -815,13 +825,265 @@ public class GraphLanguageTests
     [Test]
     public void SignaturesGiveTheirParametersNames()
     {
-        CollectionAssert.AreEqual(new[] { "height", "times" }, TideGraphLanguage.Parameters("void Bounce(float height, int times = 1)", "Bounce"));
+        // What a call writes: not what it can leave out (a default, a part in brackets), nor a GUI container's block,
+        // which is the code in it
+        CollectionAssert.AreEqual(new[] { "height" }, TideGraphLanguage.Parameters("void Bounce(float height, int times = 1)", "Bounce"));
+        CollectionAssert.AreEqual(new[] { "scene" }, TideGraphLanguage.Parameters("Scene.IsPrepared(scene[, PlayerID player]) -> bool", "IsPrepared"));
+        CollectionAssert.AreEqual(new[] { "source", "destination", "shader" },
+            TideGraphLanguage.Parameters("Draw.Blit(Texture source[, Texture textures...], RenderTarget destination[, Blend blend], frag shader[, values])", "Blit"));
+        var (area, block) = TideGraphLanguage.Signature("GUILayout.Area(Anchor anchor, Block content)", "Area");
+        CollectionAssert.AreEqual(new[] { "anchor" }, area);
+        Assert.IsTrue(block);
+        Assert.AreEqual("", TideGraphLanguage.ResultOf("Draw.Circle(float2 center, float radius, Color color)"));
+        Assert.AreEqual("quaternion", TideGraphLanguage.ResultOf("quaternion.Euler(float3 radians) -> quaternion (+1 version)"));
+        Assert.AreEqual("float", TideGraphLanguage.ResultOf("float Twice(float x)"));
+        // A type of several fits where one of them does, and is said in words; a kind, where it's the type's
+        Assert.IsTrue(GraphValues.Fits("float3", "float2|float3|float4"));
+        Assert.IsFalse(GraphValues.Fits("bool", "float2|float3|float4"));
+        Assert.AreEqual("float2, float3 or float4", GraphValues.Words("float2|float3|float4"));
+        Assert.IsTrue(GraphValues.Fits("Ball", "component", t => t == "Ball" ? "component" : null));
+        Assert.IsFalse(GraphValues.Fits("Hit", "component", t => t == "Hit" ? "event" : null));
         CollectionAssert.AreEqual(new[] { "a", "b" }, TideGraphLanguage.Parameters("T Max<T>(T a, T b)", "Max"));
         CollectionAssert.AreEqual(new[] { "components" }, TideGraphLanguage.Parameters("Spawn(components...) -> Entity", "Spawn"));
         CollectionAssert.AreEqual(new[] { "m" }, TideGraphLanguage.Parameters("void Put(Map<int, float> m)", "Put"));
         CollectionAssert.IsEmpty(TideGraphLanguage.Parameters("void Run()", "Run"));
         if (Application.platform == RuntimePlatform.WindowsEditor) Assert.AreEqual("file:///C:/a%20b/c.tidegraph", TideLanguageClient.UriOf("C:/a b/c.tidegraph"));
         Assert.IsTrue(TideLanguageClient.SameUri("file:///C:/a%20b/c.tidegraph", "file:///C:/a b/c.tidegraph"));
+    }
+
+    // ---------------------------------------------------------------------------------------------------------
+    // A whole game made in the window from an empty file, with only what it offers: docs/examples/first-ball.tide,
+    // as the page's own test makes it (tools/tide-graph/test/rebuild.test.mjs). The cards and their fields; a
+    // handler on Spawned, only with Main, that spawns a Body with its velocity set and a Ball (Spawn's + adds the
+    // second); a Set of what's multiplied; two Ifs of Math.Abs(...) > 160 (Abs found by its name, Greater worked
+    // out) with a negated Set in each; a view's Draw.Circle (found by its name) in Color.red (found by "red"). What
+    // it writes is that game, with no problems, and tidec compiles it.
+    [UnityTest]
+    public IEnumerator FirstBallIsMadeInTheWindowAlone()
+    {
+        NeedTidels();
+        var game = GameIn("GraphFirstBall");
+        foreach (var old in Directory.GetFiles(game, "*.tidegraph").Concat(Directory.GetFiles(game, "*.tide"))) File.Delete(old);
+        var path = Path.Combine(game, "Ball.tidegraph");
+        File.WriteAllText(path, TideGraphImporter.EmptyText, new UTF8Encoding(false));
+        using var logged = new Logged();
+        var window = TideGraphWindow.Open(path);
+        GraphShots.Size(window);
+        yield return Checked(window);
+        var board = window.Board;
+        string Problems() => string.Join("; ", window.Checked.Diagnostics.Select(d => $"@{d.Id} {d.Message}"));
+        JValue Newest(int code, string k) => GraphDocument.Nodes(board.Frame(code).Graph).Items.Last(n => n.Str("k") == k);
+
+        // The cards: a component's fields by its +, each named and its type picked; a starting value typed
+        int Card(string kind, string name)
+        {
+            var id = board.AddDeclaration(kind);
+            GraphShots.Enter(board.Card(id).Q<TextField>("name"), name);
+            Assert.AreEqual(name, window.Doc.Get(id).Str("name"));
+            return id;
+        }
+        int Field(int card, string name, string type)
+        {
+            var id = board.Card(card).AddField();
+            GraphShots.Enter(board.Card(card).Q<TextField>("name" + id), name);
+            GraphShots.Click(board.Card(card).Q<GraphTypeChip>("type" + id));
+            Assert.IsTrue(((GraphTypePicker)window.Popup).Choose(type), type);
+            return id;
+        }
+        var body = Card("component", "Body");
+        Field(body, "position", "float2");
+        Field(body, "velocity", "float2");
+        var radius = Field(body, "radius", "float");
+        GraphShots.Enter(board.Card(body).Q("row" + radius).Q<VisualElement>(className: "tg-row-value").Q<TextField>(), "20");
+        Card("component", "Ball");
+        Card("scene", "Main");
+        yield return CheckedAgain(window);
+        Assert.IsFalse(window.Checked.Diagnostics.Any(d => d.Severity == "error"), Problems());
+
+        // Code: a frame and what it takes
+        int Code(string kind, string name, params (string type, string mode)[] needs)
+        {
+            var id = board.AddDeclaration(kind);
+            GraphShots.Enter(board.Frame(id).Q<GraphName>("name").Field, name);
+            foreach (var (type, mode) in needs) board.Frame(id).AddParam(window.Doc.Get(id).Arr("params"), type, mode);
+            return id;
+        }
+        // A step from an arrow (the entry's, or a node's way out), found by what's typed
+        IEnumerator Step(int code, int after, string way, string typed, string title)
+        {
+            var frame = board.Frame(code);
+            var from = after == 0 ? frame.Entry.Ports.First(p => p.Port.Exec).Port
+                : frame.ViewOf(after).Ports.First(p => p.Port.Exec && !p.Port.Input && p.Port.Path?.Key == way).Port;
+            var search = board.OpenSearch(frame, frame.FreePlace(new Vector2(300, 60), new Vector2(200, 80)), from);
+            yield return Answered(search);
+            search.Type(typed);
+            Assert.IsTrue(search.Pick(title), $"'{title}' for '{typed}': " + Titles(search));
+        }
+        // An input's picker
+        GraphValuePicker Values(int code, int owner, WirePath at)
+        {
+            var frame = board.Frame(code);
+            var node = GraphDocument.NodeIn(frame.Graph, owner);
+            return board.PickValue(frame, node, at, at.ToString(), (VisualElement)frame.ReaderOf(owner) ?? frame);
+        }
+        // What goes in it: what's opened first, then what's found by what's typed
+        IEnumerator Put(int code, int owner, WirePath at, string[] opens, string typed, string title)
+        {
+            var values = Values(code, owner, at);
+            yield return Until(() => !values.Asking, "what can go in " + at);
+            foreach (var part in opens)
+            {
+                Assert.IsTrue(values.Choose(part), $"'{part}' in {at}: " + Titles(values));
+                yield return Until(() => !values.Asking, "what " + part + " has");
+            }
+            if (typed != null) values.Type(typed);
+            yield return Until(() => !values.Asking, "what's found by " + typed);
+            Assert.IsTrue(values.Choose(title), $"'{title}' in {at}: " + Titles(values));
+        }
+        // ...or worked out: a node found by what's typed
+        IEnumerator Work(int code, int owner, WirePath at, string typed, string title)
+        {
+            var values = Values(code, owner, at);
+            yield return Until(() => !values.Asking, "what can go in " + at);
+            Assert.IsTrue(values.Choose(GraphSchema.Word("menu.work")), Titles(values));
+            var search = (GraphSearchPopup)window.Popup;
+            yield return Answered(search);
+            search.Type(typed);
+            // (an operator's title has its sign after it: "Multiply *")
+            var entry = search.Entries.FirstOrDefault(e => e.Title == title) ?? search.Entries.FirstOrDefault(e => e.Title.StartsWith(title + " "));
+            Assert.IsTrue(entry != null && search.Pick(entry.Title), $"'{title}' for '{typed}': " + Titles(search));
+        }
+        void Type(int code, int owner, WirePath at, string text)
+        {
+            var frame = board.Frame(code);
+            frame.TypeInto(GraphDocument.NodeIn(frame.Graph, owner), at, text, frame);
+        }
+
+        // event(Spawned) Setup(with Main) { Spawn(Body { velocity = float2(160, 120) }, Ball); }
+        var setup = Code("handler", "Setup");
+        GraphShots.Click(board.Frame(setup).Entry.Q<GraphTypeChip>("event"));
+        var events = (GraphTypePicker)window.Popup;
+        yield return Asked(events);
+        Assert.IsTrue(events.Choose("Spawned"), Titles(events));
+        board.Frame(setup).AddParam(window.Doc.Get(setup).Arr("params"), "Main", "with");
+        yield return Step(setup, 0, null, "Spawn", "Spawn(components)");
+        yield return CheckedAgain(window);
+        var spawn = Newest(setup, "call");
+        // Its input takes a component of the game's
+        Assert.AreEqual("component", board.Frame(setup).Wanted(spawn, new WirePath("args", 0)));
+        yield return Work(setup, spawn.Wire("id"), new WirePath("args", 0), "Body", "Body { }");
+        var literal = Newest(setup, "literal");
+        // A field of what Body has, picked
+        GraphShots.Click(board.Frame(setup).ViewOf(literal.Wire("id")).Q<Button>("add:" + GraphSchema.Word("add.field")));
+        var fields = (GraphOptionList)window.Popup;
+        yield return Until(() => string.IsNullOrEmpty(fields.Status), "what Body has");
+        CollectionAssert.AreEqual(new[] { "position", "velocity", "radius" }, fields.Shown.Select(o => o.Title).ToList());
+        Assert.IsTrue(fields.Pick("velocity"));
+        yield return CheckedAgain(window);
+        yield return Work(setup, literal.Wire("id"), new WirePath("inits", 0, "value"), "float2", "float2(…)");
+        var vector = Newest(setup, "call");
+        Type(setup, vector.Wire("id"), new WirePath("args", 0), "160");
+        Type(setup, vector.Wire("id"), new WirePath("args", 1), "120");
+        // Spawn takes any number of components: its + adds another
+        yield return CheckedAgain(window);
+        GraphShots.Click(board.Frame(setup).ViewOf(GraphDocument.Nodes(board.Frame(setup).Graph).Items.First(n => n.Str("k") == "eval").Wire("id")).Q<Button>("add:argument"));
+        yield return CheckedAgain(window);
+        yield return Work(setup, spawn.Wire("id"), new WirePath("args", 1), "Ball", "Ball { }");
+        yield return CheckedAgain(window);
+        StringAssert.Contains("Spawn(Body { velocity = float2(160, 120) }, Ball { });", window.Checked.Text, Problems());
+
+        // system Move(mut Body body, Time time) { body.position += body.velocity * time.dt; }
+        var move = Code("system", "Move", ("Body", "mut"), ("Time", "read"));
+        yield return Step(move, 0, null, "Set", "Set");
+        var set = Newest(move, "assign");
+        yield return Put(move, set.Wire("id"), new WirePath("target"), new[] { "body" }, null, "position");
+        yield return CheckedAgain(window);
+        GraphShots.Click(board.Frame(move).ViewOf(set.Wire("id")).Q("in:value").Q<Button>("op"));
+        var ops = (GraphOptionList)window.Popup;
+        yield return Until(() => string.IsNullOrEmpty(ops.Status), "which operators work");
+        Assert.IsTrue(ops.Shown.Any(o => (string)o.Data == "+="), Titles(ops));
+        ops.Pick(ops.Shown.First(o => (string)o.Data == "+="));
+        yield return Work(move, set.Wire("id"), new WirePath("value"), "Multiply", "Multiply");
+        var times = Newest(move, "binary");
+        yield return Put(move, times.Wire("id"), new WirePath("lhs"), new string[0], "velocity", "body.velocity");
+        yield return Put(move, times.Wire("id"), new WirePath("rhs"), new string[0], "dt", "time.dt");
+        yield return CheckedAgain(window);
+        StringAssert.Contains("body.position += body.velocity * time.dt;", window.Checked.Text, Problems());
+
+        // system Bounce(mut Body body, with Ball): for each axis, if (Math.Abs(body.position.x) > 160) body.velocity.x = -body.velocity.x;
+        var bounce = Code("system", "Bounce", ("Body", "mut"), ("Ball", "with"));
+        var after = 0;
+        foreach (var axis in new[] { "x", "y" })
+        {
+            yield return Step(bounce, after, "next", "If", "If");
+            var branch = Newest(bounce, "if");
+            after = branch.Wire("id");
+            yield return Work(bounce, after, new WirePath("cond"), "Greater", "Greater than");
+            var greater = Newest(bounce, "binary");
+            // An engine's function found by its own name, which takes any number or vector
+            yield return Put(bounce, greater.Wire("id"), new WirePath("lhs"), new string[0], "Abs", "Math.Abs(x)");
+            yield return CheckedAgain(window);
+            var abs = GraphDocument.NodeIn(board.Frame(bounce).Graph, Newest(bounce, "binary").Wire("lhs"));
+            StringAssert.Contains("|", board.Frame(bounce).Wanted(abs, new WirePath("args", 0)), "Abs takes one of several");
+            yield return Put(bounce, abs.Wire("id"), new WirePath("args", 0), new[] { "body" }, axis, "body.position." + axis);
+            Type(bounce, greater.Wire("id"), new WirePath("rhs"), "160");
+            // Worked out left of what reads it, at its height
+            Assert.Less(GraphDocument.PlaceOf(abs).x, GraphDocument.PlaceOf(greater).x, "Math.Abs left of >");
+            Assert.Less(Mathf.Abs(GraphDocument.PlaceOf(abs).y - GraphDocument.PlaceOf(greater).y), 80f, "at its height");
+            Assert.Less(GraphDocument.PlaceOf(greater).x, GraphDocument.PlaceOf(branch).x, "> left of the If");
+            yield return Step(bounce, after, "then", "Set", "Set");
+            var flip = Newest(bounce, "assign");
+            yield return Put(bounce, flip.Wire("id"), new WirePath("target"), new[] { "body" }, axis, "body.velocity." + axis);
+            yield return Work(bounce, flip.Wire("id"), new WirePath("value"), "Negate", "Negate");
+            var negate = Newest(bounce, "unary");
+            // Negate's input takes what the Set changes, once it's checked
+            yield return CheckedAgain(window);
+            Assert.AreEqual("float", board.Frame(bounce).Wanted(negate, new WirePath("value")));
+            yield return Put(bounce, negate.Wire("id"), new WirePath("value"), new[] { "body" }, axis, "body.velocity." + axis);
+            yield return CheckedAgain(window);
+            StringAssert.Contains($"if (Math.Abs(body.position.{axis}) > 160)", window.Checked.Text, Problems());
+            StringAssert.Contains($"body.velocity.{axis} = -body.velocity.{axis};", window.Checked.Text, Problems());
+        }
+
+        // view DrawBalls(Body body, with Ball) { Draw.Circle(body.position, body.radius, Color.red); }
+        var draw = Code("view", "DrawBalls", ("Body", "read"), ("Ball", "with"));
+        yield return Step(draw, 0, null, "Circle", "Draw.Circle(center, radius, color)");
+        yield return CheckedAgain(window);
+        var circle = Newest(draw, "call");
+        yield return Put(draw, circle.Wire("id"), new WirePath("args", 0), new string[0], "position", "body.position");
+        yield return Put(draw, circle.Wire("id"), new WirePath("args", 1), new string[0], "radius", "body.radius");
+        yield return Put(draw, circle.Wire("id"), new WirePath("args", 2), new string[0], "red", "Color.red");
+        yield return CheckedAgain(window);
+
+        // That game, with no problems; and tidec compiles it
+        Assert.IsFalse(window.Checked.Diagnostics.Any(d => d.Severity == "error"), Problems());
+        var made = window.Checked.Text.Replace("\r\n", "\n");
+        foreach (var line in new[]
+        {
+            "component Body", "float2 position;", "float2 velocity;", "float radius = 20;", "component Ball", "scene Main",
+            "Setup(with Main)", "Spawn(Body { velocity = float2(160, 120) }, Ball { });",
+            "system Move(mut Body body, Time time)", "body.position += body.velocity * time.dt;",
+            "system Bounce(mut Body body, with Ball)", "view DrawBalls(Body body, with Ball)", "Draw.Circle(body.position, body.radius, Color.red);",
+        })
+            StringAssert.Contains(line, made);
+        StringAssert.Contains("event(Spawned", made);
+        if (tidec == null) Assert.Ignore("No tidec: build this checkout's (cmake --build --preset sanitize --target tidec) or set TIDE_TIDEC");
+        var source = Path.Combine(game, "made");
+        Directory.CreateDirectory(Path.Combine(source, "out"));
+        File.WriteAllText(Path.Combine(source, "main.tide"), made);
+        var tidecRun = new System.Diagnostics.ProcessStartInfo(tidec, $"\"{Path.Combine(source, "main.tide")}\" -o \"{Path.Combine(source, "out")}\"")
+        {
+            UseShellExecute = false, RedirectStandardError = true, RedirectStandardOutput = true, CreateNoWindow = true,
+        };
+        tidecRun.EnvironmentVariables["TIDE_HIDDEN"] = "1";
+        using (var compiled = System.Diagnostics.Process.Start(tidecRun))
+        {
+            var said = compiled.StandardError.ReadToEnd() + compiled.StandardOutput.ReadToEnd();
+            compiled.WaitForExit();
+            Assert.AreEqual(0, compiled.ExitCode, "tidec compiles it: " + said + "\n" + made);
+        }
+        window.Close();
+        File.Delete(path);
     }
 
     // ---------------------------------------------------------------------------------------------------------

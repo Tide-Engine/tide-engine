@@ -455,7 +455,7 @@ namespace Tide.Editor
                 GraphCall callee = null;
                 Window.Checked?.Calls.TryGetValue(call.Wire("id"), out callee);
                 var given = call.Arr("args")?.Items.Count ?? 0;
-                add.style.display = callee != null && given >= callee.Params.Length ? DisplayStyle.None : DisplayStyle.Flex;
+                add.style.display = callee != null && given >= callee.Params.Length && callee.Rest == null ? DisplayStyle.None : DisplayStyle.Flex;
             }
             foreach (var (label, owner, path) in argLabels)
             {
@@ -1020,13 +1020,56 @@ namespace Tide.Editor
             if (spec == null || n.Str("k") == "interp") return null;
             var grower = GrowersOf(n, spec).FirstOrDefault(g => g.key == key);
             if (grower.add == null) return null;
-            var b = GraphLook.Plain(() => Frame.Edit(GraphMenu.AddA(grower.what), grower.add), "tg-port-add");
+            Button b = null;
+            // A value's field is one its type has: asked which, of those it doesn't set yet
+            if (n.Str("k") == "literal" && key == "inits") b = GraphLook.Plain(() => PickField(n.Wire("id"), b), "tg-port-add");
+            else b = GraphLook.Plain(() => Frame.Edit(GraphMenu.AddA(grower.what), grower.add), "tg-port-add");
             if (inline) b.AddToClassList("tg-port-add-inline");
             b.text = inline ? "+" : "+ " + grower.what;
             b.tooltip = GraphSchema.Word("add.another", "what", grower.what);
             b.name = "add:" + grower.what;
             if (key == "args" && (n.Str("k") == "call" || n.Str("k") == "method")) argGrowers.Add((b, n, grower.what));
             return b;
+        }
+
+        // The field a value of a type sets next, picked from what its type has that it doesn't set yet: the file's
+        // own declaration's fields, or what the language server says a value of it has. A name it hasn't is no field.
+        void PickField(int literal, VisualElement from)
+        {
+            var n = Frame.ById.TryGetValue(literal, out var found) ? found : null;
+            if (n == null) return;
+            var type = n.Str("type") ?? "";
+            var set = new HashSet<string>((n.Arr("inits")?.Items ?? new List<JValue>()).Select(i => i.Str("name")));
+            var list = new GraphOptionList(GraphSchema.Word("add.field.which"), null, GraphSchema.Word("value.search"), 260);
+            void Add(string name) => Frame.Edit(GraphMenu.AddA(GraphSchema.Word("add.field")), () =>
+            {
+                var node = GraphDocument.NodeIn(Frame.Graph, literal);
+                if (node == null) return;
+                var a = node.Arr("inits");
+                if (a == null) node.Set("inits", a = JValue.NewArray(), GraphSchema.NodeOrder("literal"));
+                var item = JValue.NewObject();
+                item.Set("name", JValue.Of(name));
+                item.Set("value", JValue.Null());
+                a.Items.Add(item);
+            });
+            void Fill(IEnumerable<(string name, string type)> fields)
+            {
+                list.Status = null;
+                list.Set(fields.Where(f => !string.IsNullOrEmpty(f.name) && !set.Contains(f.name)).Select(f =>
+                {
+                    var field = f.name;
+                    return new GraphOption { Title = field, Detail = f.type, Dot = string.IsNullOrEmpty(f.type) ? (Color?)null : TideGraphTypes.ColorOf(f.type, Frame.Board.Light), Pick = () => Add(field) };
+                }).ToList());
+            }
+            var own = Frame.Doc.Elements.FirstOrDefault(x => x.Role == GraphRole.Decl && x.Value.Str("name") == type)?.Value;
+            if (own != null) Fill((own.Arr("members")?.Items ?? new List<JValue>()).Where(m => m.Str("kind") == "field").Select(m => (m.Str("name"), m.Str("type"))));
+            else
+            {
+                list.Status = GraphSchema.Word("picker.asking.game");
+                TideGraphLanguage.MembersOfType(Window, type, (members, why) => Fill((members ?? new List<TideGraphLanguage.Member>())
+                    .Where(m => !m.Callable && m.Kind != TideGraphLanguage.KindKeyword && m.Kind != TideGraphLanguage.KindSnippet).Select(m => (m.Label, m.Type))));
+            }
+            Window.Open(list, from);
         }
 
         // A text a node holds: a number's, a text's, a character's, Tide's

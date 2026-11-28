@@ -140,7 +140,7 @@
             const c = this.calls[id] ?? this.calls[String(id)];
             if (!c || !Array.isArray(c.params)) return null;
             const args = Array.isArray(c.args) ? c.args : [];
-            return { params: c.params, types: c.types || [], at: i => (typeof args[i] === 'number' ? args[i] : i) };
+            return { params: c.params, types: c.types || [], rest: typeof c.rest === 'string' ? c.rest : '', at: i => (typeof args[i] === 'number' ? args[i] : i) };
         }
 
         // What an input is called on its node: the schema's word for its key (`portInfo`), a call's argument by its
@@ -210,14 +210,15 @@ ${other || ''}`;
             }
         }
 
-        // The parameter a call's next argument would be for (tide/graphCalls): its name; '' when every parameter has
-        // its argument; null when tidels hasn't said what the call takes
+        // The parameter a call's next argument would be for (tide/graphCalls): its name, or once each has its
+        // argument the one that takes any number (Spawn's components); '' when there's none to add; null when
+        // tidels hasn't said what the call takes
         nextParam(node, count) {
             const c = this.callArgs(node.id);
             if (!c) return null;
             const used = new Set();
             for (let i = 0; i < count; i++) used.add(c.at(i));
-            return c.params.find((_, i) => !used.has(i)) || '';
+            return c.params.find((_, i) => !used.has(i)) || c.rest || '';
         }
 
         // What tidels offers where an element's own text starts, which is where its type is written (a field's, a
@@ -350,18 +351,27 @@ ${other || ''}`;
         return c?.value ?? null;
     }
 
-    // The parameters' names of a completion's signature: `void Bounce(float by)` -> ['by']
-    function paramNames(item) {
+    // What a call of a completion's signature writes: its parameters' names (`void Bounce(float by)` -> ['by']),
+    // and whether it takes code in a block (`GUILayout.Vertical(Block content)`), which isn't one of them. Not the
+    // parts in brackets nor ones with a default, which a call leaves out ("Scene.IsPrepared(scene[, player])" ->
+    // ['scene']); one of any number ("components...") once.
+    function signatureOf(item) {
         const text = item.detail || item.label || '';
         const open = text.indexOf('(');
-        if (open < 0) return [];
+        if (open < 0) return { names: [], block: false };
         let depth = 0, close = -1;
         for (let i = open; i < text.length; i++) {
             if ('(<['.includes(text[i])) depth++;
             else if (')>]'.includes(text[i]) && --depth === 0) { close = i; break; }
         }
-        const inside = text.slice(open + 1, close < 0 ? text.length : close).trim();
-        if (!inside) return [];
+        // Without what's in brackets
+        let inside = '', skipping = 0;
+        for (const c of text.slice(open + 1, close < 0 ? text.length : close)) {
+            if (c === '[') skipping++;
+            else if (c === ']') skipping = Math.max(0, skipping - 1);
+            else if (!skipping) inside += c;
+        }
+        inside = inside.trim();
         const parts = [];
         depth = 0;
         let start = 0;
@@ -370,17 +380,26 @@ ${other || ''}`;
             if (c === undefined || (c === ',' && depth === 0)) {
                 parts.push(inside.slice(start, i).trim());
                 start = i + 1;
-            } else if ('(<['.includes(c)) depth++;
-            else if (')>]'.includes(c)) depth--;
+            } else if ('(<'.includes(c)) depth++;
+            else if (')>'.includes(c)) depth--;
         }
-        return parts.map(p => {
-            const words = p.replace(/=.*$/, '').trim().split(/\s+/);
-            return words[words.length - 1] || 'arg';
-        });
+        const names = [];
+        let block = false;
+        for (const part of parts) {
+            if (!part || part.includes('=')) continue;
+            const words = part.replace(/\.\.\./g, '').trim().split(/\s+/);
+            if (words.length > 1 && words[words.length - 2] === 'Block') { block = true; continue; }
+            names.push(words[words.length - 1] || 'arg');
+        }
+        return { names, block };
+    }
+
+    function paramNames(item) {
+        return signatureOf(item).names;
     }
 
     // The engine's types made by a call of their name (the spec's constructors), and the kinds written as a literal
-    const CONSTRUCTED = /^(?:bool|byte|char|int|long|float|double|(?:int|float|double)[234](?:x[234])?|quaternion|Color|Rect|PlayerID)$/;
+    const CONSTRUCTED = /^(?:byte|char|int|long|float|double|(?:int|float|double)[234]|(?:float|double)([234])x\1|quaternion|Color|Rect|PlayerID)$/;
     const LITERAL = ['struct', 'component', 'event'];
 
     // A completion item as what the search adds: a node kind and its fields, or null for one it doesn't offer.
@@ -394,9 +413,12 @@ ${other || ''}`;
             case KIND.Method:
             case KIND.Function:
             case KIND.Constructor: {
-                const args = paramNames(item).map(() => null);
+                const { names, block } = signatureOf(item);
+                // One that takes code (GUILayout.Vertical) is a step with its code in it, and no value
+                if (block && !flow) return null;
+                const args = names.map(() => null);
                 const node = member ? { k: 'method', fields: { name, args } } : { k: 'call', fields: { name, args } };
-                return { title: name + '(' + paramNames(item).join(', ') + ')', detail, group: member ? G.w('search.members') : G.w('search.functions'), node, statement: flow, params: paramNames(item) };
+                return { title: name + '(' + names.join(', ') + ')' + (block ? ' { }' : ''), detail, group: member ? G.w('search.members') : G.w('search.functions'), node, statement: flow, block, params: names };
             }
             case KIND.Field:
             case KIND.Property:
@@ -425,12 +447,11 @@ ${other || ''}`;
                 if (flow || (detail && !LITERAL.includes(String(detail).replace(/^local /, '')))) return null;
                 return { title: name + ' { }', detail: detail || G.w('search.literal'), group: G.w('search.types'), node: { k: 'literal', fields: { type: name, inits: [] } } };
             case KIND.Module:
-                // A namespace alone is no value: its functions are offered by their own names (pickers.js,
-                // namespaceCalls)
+                // A namespace alone is no value: its functions are offered by their own names (namespaceCalls)
                 if (!member) return null;
                 return { title: name, detail, group: G.w('search.members'), node: { k: 'member', fields: { member: name } } };
             case KIND.Enum:
-                // An enum alone is no value: its choices are offered by their own names (pickers.js, namespaceCalls)
+                // An enum alone is no value: its choices are offered by their own names (namespaceCalls)
                 if (!member) return null;
             // fall through
             case KIND.Interface:
@@ -441,6 +462,57 @@ ${other || ''}`;
         }
     }
 
+    // What a function gives, by its completion item's detail (the game's "int Twice(int amount)", the engine's
+    // "Spawn(components...) -> Entity"): its type, '' for one that gives nothing (it's no value), null when the
+    // detail doesn't say
+    function resultIn(detail) {
+        const text = String(detail || '').trim();
+        const gives = /->\s*(.+)$/.exec(text);
+        if (gives) return gives[1].trim();
+        const typed = /^(.+?)\s+[A-Za-z_][\w.]*\s*\(.*\)$/.exec(text);
+        if (typed) return typed[1].split(/\s+/).pop() === 'void' ? '' : typed[1].split(/\s+/).pop();
+        return /^[A-Za-z_][\w.]*\s*\(.*\)$/.test(text) ? '' : null;
+    }
+
+    // The functions of the namespaces offered at a place (Draw.Circle, Debug.Log, Math.Clamp), and of the engine's
+    // types (quaternion.Euler, float4x4.Ortho, RenderTarget.Window), as calls the search finds by their own names: a
+    // namespace alone is no step and no value. Where a step goes, every one; where a value goes, those that give one.
+    // The namespaces whose functions act though they give a value (GUI.Button, Session.Join)
+    const ACTING = ['GUI', 'GUILayout', 'Session', 'Clipboard', 'Audio', 'File', 'Directory', 'Storage', 'Web', 'Visibility', 'Cursor', 'Application', 'Debug'];
+
+    async function namespaceCalls(lang, items, flow) {
+        const engineType = i => (i.kind === KIND.Struct || i.kind === KIND.Class) && i.detail === 'built-in type';
+        const spaces = items.filter(i => (i.kind === KIND.Module || engineType(i) || (!flow && i.kind === KIND.Enum)) && typeof i.label === 'string');
+        const lists = await Promise.all(spaces.map(i => lang.membersOfName(i.label).then(m => [i.label, m])));
+        const out = [];
+        for (const [space, members] of lists) {
+            for (const m of members) {
+                // An enum's choice: Phase.Running, a member of the enum's name
+                if (m.kind === KIND.EnumMember && !flow) {
+                    const choice = String(m.label || '');
+                    if (/^[A-Za-z_]\w*$/.test(choice)) out.push({ title: `${space}.${choice}`, detail: space, group: space, keywords: `${choice} ${space}`, key: 'c:' + space + '.' + choice, node: { k: 'member', fields: { member: choice } }, object: space, documentation: m.documentation });
+                    continue;
+                }
+                if (m.kind !== KIND.Function && m.kind !== KIND.Method) continue;
+                const fn = String(m.label || '').replace(/\(.*$/, '');
+                // (Math's functions all give a value, though those of any number or vector don't say which)
+                if (!fn || (!flow && space !== 'Math' && resultIn(m.detail) === '')) continue;
+                const { names: params, block } = signatureOf(m);
+                if (block && !flow) continue;
+                // Where a step goes, those that do something: what gives nothing, and what GUI, Session, Audio,
+                // files and the like give as they act; not what only works a value out (Math.Abs,
+                // Scene.IsPrepared, Json.Write), unless it fills an `out` variable (int.TryParse)
+                if (flow && (space === 'Math' || (resultIn(m.detail) !== '' && !ACTING.includes(space) && !/[(,]\s*out\s/.test(String(m.detail || ''))))) continue;
+                const name = `${space}.${fn}`;
+                // A type of its own it's called with, like Json.Read<T>'s
+                const typeParams = /^[\w.]+<([\w, ]+)>\(/.exec(String(m.detail || ''))?.[1].split(/\s*,\s*/) || null;
+                out.push({ title: `${name}(${params.join(', ')})${block ? ' { }' : ''}`, detail: m.detail, group: space, keywords: `${fn} ${space}`, key: 'c:' + name,
+                    node: { k: 'call', fields: { name, args: params.map(() => null) } }, statement: flow, block, params, typeParams, documentation: m.documentation });
+            }
+        }
+        return out;
+    }
+
     G.Lang = Lang;
-    G.lang = { entryOf, paramNames, hoverText, KIND };
+    G.lang = { entryOf, paramNames, signatureOf, hoverText, resultIn, namespaceCalls, KIND };
 })(globalThis.TideGraph = globalThis.TideGraph || {});

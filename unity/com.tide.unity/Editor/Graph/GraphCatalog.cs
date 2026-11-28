@@ -33,6 +33,7 @@ namespace Tide.Editor
         public bool Reads; // A Get of something the code takes, or of a local
         public string Variable, Type; // A Get's or a Set's variable, and its type
         public string Op;  // The operator a node of an operator is made with
+        public string[] TypeParams; // A call's own type parameters (Json.Read<T>): asked once it's put down
         public Func<GraphDocument, JValue, Vector2, JValue> Make;
         public Action<JValue> Apply;
         public Action Command;

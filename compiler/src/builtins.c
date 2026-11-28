@@ -364,6 +364,13 @@ static void add_widget(const char *name, const type result, const char *c, const
     add_gui("GUILayout", name, result, c_name, params, gui, doc);
 }
 
+// Its parameters' names, as calls and editors show them: "a, b"
+static signature *named(signature *s, const char *param_names)
+{
+    s->param_names = param_names;
+    return s;
+}
+
 static void describe(signature *s, const char *param_names, const char *doc)
 {
     s->param_names = param_names;
@@ -437,20 +444,20 @@ static void build_signatures(void)
 
     for (int n = 2; n <= 4; n++) {
         const type v = vector_type(true, n);
-        add("Math", "Dot", T_F, c_function("dot", v), 2, v, v, T_NONE);
-        add("Math", "Length", T_F, c_function("length", v), 1, v, T_NONE, T_NONE);
-        add("Math", "LengthSq", T_F, c_function("lengthsq", v), 1, v, T_NONE, T_NONE);
-        add("Math", "Distance", T_F, c_function("distance", v), 2, v, v, T_NONE);
-        add("Math", "DistanceSq", T_F, c_function("distancesq", v), 2, v, v, T_NONE);
+        named(add("Math", "Dot", T_F, c_function("dot", v), 2, v, v, T_NONE), "a, b");
+        named(add("Math", "Length", T_F, c_function("length", v), 1, v, T_NONE, T_NONE), "vector");
+        named(add("Math", "LengthSq", T_F, c_function("lengthsq", v), 1, v, T_NONE, T_NONE), "vector");
+        named(add("Math", "Distance", T_F, c_function("distance", v), 2, v, v, T_NONE), "a, b");
+        named(add("Math", "DistanceSq", T_F, c_function("distancesq", v), 2, v, v, T_NONE), "a, b");
         describe(add("Math", "Normalize", v, c_function("normalize", v), 1, v, T_NONE, T_NONE), "vector",
                  "The vector at length 1. One too short to have a direction, like a move with no key held, gives "
                  "zero, never NaN.");
-        add("Math", "Reflect", v, c_function("reflect", v), 2, v, v, T_NONE);
-        add("Math", "Csum", T_F, c_function("csum", v), 1, v, T_NONE, T_NONE);
-        add("Math", "Cmin", T_F, c_function("cmin", v), 1, v, T_NONE, T_NONE);
-        add("Math", "Cmax", T_F, c_function("cmax", v), 1, v, T_NONE, T_NONE);
+        named(add("Math", "Reflect", v, c_function("reflect", v), 2, v, v, T_NONE), "direction, normal");
+        named(add("Math", "Csum", T_F, c_function("csum", v), 1, v, T_NONE, T_NONE), "vector");
+        named(add("Math", "Cmin", T_F, c_function("cmin", v), 1, v, T_NONE, T_NONE), "vector");
+        named(add("Math", "Cmax", T_F, c_function("cmax", v), 1, v, T_NONE, T_NONE), "vector");
     }
-    add("Math", "Cross", T_F3, "tide_cross_f3", 2, T_F3, T_F3, T_NONE);
+    named(add("Math", "Cross", T_F3, "tide_cross_f3", 2, T_F3, T_F3, T_NONE), "a, b");
     for (int n = 1; n <= 4; n++) {
         const type v = vector_type(false, n);
         const type f = vector_type(true, n);
@@ -533,36 +540,36 @@ static void build_signatures(void)
     for (int n = 2; n <= 4; n++) {
         const type v = double_vector_type(n);
         const type scalar = {TY_DOUBLE, NULL};
-        add("Math", "Dot", scalar, c_function("dot", v), 2, v, v, T_NONE);
-        add("Math", "Length", scalar, c_function("length", v), 1, v, T_NONE, T_NONE);
-        add("Math", "LengthSq", scalar, c_function("lengthsq", v), 1, v, T_NONE, T_NONE);
-        add("Math", "Distance", scalar, c_function("distance", v), 2, v, v, T_NONE);
-        add("Math", "DistanceSq", scalar, c_function("distancesq", v), 2, v, v, T_NONE);
+        named(add("Math", "Dot", scalar, c_function("dot", v), 2, v, v, T_NONE), "a, b");
+        named(add("Math", "Length", scalar, c_function("length", v), 1, v, T_NONE, T_NONE), "vector");
+        named(add("Math", "LengthSq", scalar, c_function("lengthsq", v), 1, v, T_NONE, T_NONE), "vector");
+        named(add("Math", "Distance", scalar, c_function("distance", v), 2, v, v, T_NONE), "a, b");
+        named(add("Math", "DistanceSq", scalar, c_function("distancesq", v), 2, v, v, T_NONE), "a, b");
         describe(add("Math", "Normalize", v, c_function("normalize", v), 1, v, T_NONE, T_NONE), "vector",
                  "A double vector at length 1; a squared length at or below the smallest normal double, or NaN, gives zero.");
-        add("Math", "Reflect", v, c_function("reflect", v), 2, v, v, T_NONE);
-        add("Math", "Csum", scalar, c_function("csum", v), 1, v, T_NONE, T_NONE);
-        add("Math", "Cmin", scalar, c_function("cmin", v), 1, v, T_NONE, T_NONE);
-        add("Math", "Cmax", scalar, c_function("cmax", v), 1, v, T_NONE, T_NONE);
+        named(add("Math", "Reflect", v, c_function("reflect", v), 2, v, v, T_NONE), "direction, normal");
+        named(add("Math", "Csum", scalar, c_function("csum", v), 1, v, T_NONE, T_NONE), "vector");
+        named(add("Math", "Cmin", scalar, c_function("cmin", v), 1, v, T_NONE, T_NONE), "vector");
+        named(add("Math", "Cmax", scalar, c_function("cmax", v), 1, v, T_NONE, T_NONE), "vector");
     }
-    add("Math", "Cross", double_vector_type(3), "tide_cross_d3", 2, double_vector_type(3), double_vector_type(3), T_NONE);
+    named(add("Math", "Cross", double_vector_type(3), "tide_cross_d3", 2, double_vector_type(3), double_vector_type(3), T_NONE), "a, b");
 
     // Quaternions
-    add("Math", "Dot", T_F, "tide_dot_q", 2, T_Q, T_Q, T_NONE);
+    named(add("Math", "Dot", T_F, "tide_dot_q", 2, T_Q, T_Q, T_NONE), "a, b");
     describe(add("Math", "Normalize", T_Q, "tide_normalize_q", 1, T_Q, T_NONE, T_NONE), "rotation",
              "The quaternion at length 1, which a rotation has to be. One too short, like a field nothing set, "
              "gives the identity, never NaN.");
-    add("Math", "Mul", T_Q, "tide_mul_q", 2, T_Q, T_Q, T_NONE);
-    add("Math", "Mul", T_F3, "tide_rotate_q", 2, T_Q, T_F3, T_NONE);
-    add("Math", "Rotate", T_F3, "tide_rotate_q", 2, T_Q, T_F3, T_NONE);
-    add("Math", "Inverse", T_Q, "tide_inverse_q", 1, T_Q, T_NONE, T_NONE);
-    add("Math", "Conjugate", T_Q, "tide_conjugate_q", 1, T_Q, T_NONE, T_NONE);
-    add("Math", "Slerp", T_Q, "tide_slerp_q", 3, T_Q, T_Q, T_F);
-    add("Math", "Nlerp", T_Q, "tide_nlerp_q", 3, T_Q, T_Q, T_F);
-    add("Math", "Forward", T_F3, "tide_forward_q", 1, T_Q, T_NONE, T_NONE);
-    add("Math", "Up", T_F3, "tide_up_q", 1, T_Q, T_NONE, T_NONE);
-    add("Math", "Right", T_F3, "tide_right_q", 1, T_Q, T_NONE, T_NONE);
-    add("Math", "Angle", T_F, "tide_angle_q", 2, T_Q, T_Q, T_NONE);
+    named(add("Math", "Mul", T_Q, "tide_mul_q", 2, T_Q, T_Q, T_NONE), "a, b");
+    named(add("Math", "Mul", T_F3, "tide_rotate_q", 2, T_Q, T_F3, T_NONE), "rotation, vector");
+    named(add("Math", "Rotate", T_F3, "tide_rotate_q", 2, T_Q, T_F3, T_NONE), "rotation, vector");
+    named(add("Math", "Inverse", T_Q, "tide_inverse_q", 1, T_Q, T_NONE, T_NONE), "rotation");
+    named(add("Math", "Conjugate", T_Q, "tide_conjugate_q", 1, T_Q, T_NONE, T_NONE), "rotation");
+    named(add("Math", "Slerp", T_Q, "tide_slerp_q", 3, T_Q, T_Q, T_F), "a, b, t");
+    named(add("Math", "Nlerp", T_Q, "tide_nlerp_q", 3, T_Q, T_Q, T_F), "a, b, t");
+    named(add("Math", "Forward", T_F3, "tide_forward_q", 1, T_Q, T_NONE, T_NONE), "rotation");
+    named(add("Math", "Up", T_F3, "tide_up_q", 1, T_Q, T_NONE, T_NONE), "rotation");
+    named(add("Math", "Right", T_F3, "tide_right_q", 1, T_Q, T_NONE, T_NONE), "rotation");
+    named(add("Math", "Angle", T_F, "tide_angle_q", 2, T_Q, T_Q, T_NONE), "a, b");
 
     // Matrices
     for (int n = 2; n <= 4; n++) {
@@ -570,14 +577,14 @@ static void build_signatures(void)
         const type v = vector_type(true, n);
         char mul_vec[64];
         snprintf(mul_vec, sizeof mul_vec, "tide_mul_%s_%s", type_suffix(m), type_suffix(v));
-        add("Math", "Mul", m, c_function("mul", m), 2, m, m, T_NONE);
-        add("Math", "Mul", v, mul_vec, 2, m, v, T_NONE);
-        add("Math", "Transpose", m, c_function("transpose", m), 1, m, T_NONE, T_NONE);
-        add("Math", "Inverse", m, c_function("inverse", m), 1, m, T_NONE, T_NONE);
-        add("Math", "Determinant", T_F, c_function("determinant", m), 1, m, T_NONE, T_NONE);
+        named(add("Math", "Mul", m, c_function("mul", m), 2, m, m, T_NONE), "a, b");
+        named(add("Math", "Mul", v, mul_vec, 2, m, v, T_NONE), "matrix, vector");
+        named(add("Math", "Transpose", m, c_function("transpose", m), 1, m, T_NONE, T_NONE), "matrix");
+        named(add("Math", "Inverse", m, c_function("inverse", m), 1, m, T_NONE, T_NONE), "matrix");
+        named(add("Math", "Determinant", T_F, c_function("determinant", m), 1, m, T_NONE, T_NONE), "matrix");
     }
-    add("Math", "Transform", T_F3, "tide_transform_f4x4", 2, T_F4X4, T_F3, T_NONE);
-    add("Math", "Rotate", T_F3, "tide_rotate_f4x4", 2, T_F4X4, T_F3, T_NONE);
+    named(add("Math", "Transform", T_F3, "tide_transform_f4x4", 2, T_F4X4, T_F3, T_NONE), "matrix, point");
+    named(add("Math", "Rotate", T_F3, "tide_rotate_f4x4", 2, T_F4X4, T_F3, T_NONE), "matrix, vector");
 
     // Double matrices
     for (int n = 2; n <= 4; n++) {
@@ -585,14 +592,14 @@ static void build_signatures(void)
         const type v = double_vector_type(n);
         char mul_vec[64];
         snprintf(mul_vec, sizeof mul_vec, "tide_mul_%s_%s", type_suffix(m), type_suffix(v));
-        add("Math", "Mul", m, c_function("mul", m), 2, m, m, T_NONE);
-        add("Math", "Mul", v, mul_vec, 2, m, v, T_NONE);
-        add("Math", "Transpose", m, c_function("transpose", m), 1, m, T_NONE, T_NONE);
-        add("Math", "Inverse", m, c_function("inverse", m), 1, m, T_NONE, T_NONE);
-        add("Math", "Determinant", T_D, c_function("determinant", m), 1, m, T_NONE, T_NONE);
+        named(add("Math", "Mul", m, c_function("mul", m), 2, m, m, T_NONE), "a, b");
+        named(add("Math", "Mul", v, mul_vec, 2, m, v, T_NONE), "matrix, vector");
+        named(add("Math", "Transpose", m, c_function("transpose", m), 1, m, T_NONE, T_NONE), "matrix");
+        named(add("Math", "Inverse", m, c_function("inverse", m), 1, m, T_NONE, T_NONE), "matrix");
+        named(add("Math", "Determinant", T_D, c_function("determinant", m), 1, m, T_NONE, T_NONE), "matrix");
     }
-    add("Math", "Transform", double_vector_type(3), "tide_transform_d4x4", 2, double_matrix_type(4), double_vector_type(3), T_NONE);
-    add("Math", "Rotate", double_vector_type(3), "tide_rotate_d4x4", 2, double_matrix_type(4), double_vector_type(3), T_NONE);
+    named(add("Math", "Transform", double_vector_type(3), "tide_transform_d4x4", 2, double_matrix_type(4), double_vector_type(3), T_NONE), "matrix, point");
+    named(add("Math", "Rotate", double_vector_type(3), "tide_rotate_d4x4", 2, double_matrix_type(4), double_vector_type(3), T_NONE), "matrix, vector");
 
     // Ways to build quaternions and matrices
     describe(add("quaternion", "AxisAngle", T_Q, "tide_axisangle_q", 2, T_F3, T_F, T_NONE),

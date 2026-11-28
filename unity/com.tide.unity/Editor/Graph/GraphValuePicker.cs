@@ -58,7 +58,23 @@ namespace Tide.Editor
         internal string PathText => string.Join("", parts.Select((p, i) => i == 0 && p.Kind != "shorthand" ? p.Name : "." + p.Name));
 
         static bool Simple(string type) => GraphSchema.ValueControl(type) is string c && (c == "whole" || c == "decimal" || c == "tick" || c == "text" || c == "char");
-        bool Fits(string have) => everything || GraphValues.Fits(have, wanted);
+        bool Fits(string have) => everything || GraphValues.Fits(have, wanted, KindOf);
+
+        // What kind of the game's declarations a type is (its own, or a package's), as the last check said
+        string KindOf(string type)
+        {
+            var c = Window.Checked;
+            if (c?.Game != null && c.Game.TryGetValue(type, out var k)) return k;
+            return c?.Packages != null && c.Packages.TryGetValue(type, out var p) ? p : null;
+        }
+
+        // The one type the input takes, not one of several ("float2|float3"): the type whose own values (its
+        // choices, its constants, a vector's numbers) are offered
+        string Single => wanted != null && wanted.IndexOf('|') < 0 ? wanted : null;
+
+        // Engine namespaces and types, whose functions are found by their own names (Abs, Euler)
+        static bool IsSpace(TideGraphLanguage.Member m) => m.Kind == TideGraphLanguage.KindModule
+            || ((m.Kind == TideGraphLanguage.KindStruct || m.Kind == TideGraphLanguage.KindClass) && m.Detail == "built-in type");
         static string Key(GraphFrame.Part p) => p.Space ? "name:" + p.Name : p.Type;
 
         // ---------------------------------------------------------------------------------------------------------
@@ -113,7 +129,7 @@ namespace Tide.Editor
                 options.Add(new GraphOption
                 {
                     Title = GraphSchema.Word("value.all"), Detail = hidden == 1 ? "1 more" : hidden + " more", Section = GraphSchema.Word("value.else"), KeepOpen = true, Data = "everything",
-                    Help = $"Listed here is what's a {wanted}, which '{label}' takes. The rest can be picked too: the check says if it's wrong.",
+                    Help = $"Listed here is what's a {GraphValues.Words(wanted)}, which '{label}' takes. The rest can be picked too: the check says if it's wrong.",
                     Pick = () =>
                     {
                         everything = true;
@@ -122,11 +138,12 @@ namespace Tide.Editor
                 });
             // The type it takes is in the title: "What goes in 'amount'? A float."
             var typedTitle = !string.IsNullOrEmpty(wanted);
-            var article = GraphSchema.Word(typedTitle && "aeiou".IndexOf(char.ToLowerInvariant(wanted[0])) >= 0 ? "an" : "a");
-            Title = parts.Count == 0 ? Changing ? GraphSchema.Word("value.change.title") : GraphSchema.Word(typedTitle ? "value.title.typed" : "value.title", "input", label, "article", article, "type", wanted) : GraphSchema.Word("value.which", "name", PathText);
+            var words = GraphValues.Words(wanted);
+            var article = GraphSchema.Word(typedTitle && "aeiou".IndexOf(char.ToLowerInvariant(words[0])) >= 0 ? "an" : "a");
+            Title = parts.Count == 0 ? Changing ? GraphSchema.Word("value.change.title") : GraphSchema.Word(typedTitle ? "value.title.typed" : "value.title", "input", label, "article", article, "type", words) : GraphSchema.Word("value.which", "name", PathText);
             // What's typed searches, and is a value of its own where the input takes a number or a text; what a Set
             // changes is only found
-            var control = GraphSchema.ValueControl(wanted);
+            var control = GraphSchema.ValueControl(Single);
             Placeholder = GraphSchema.Word(Changing ? "value.search" : control == "whole" || control == "decimal" ? "value.search.number" : control == "text" ? "value.search.text" : wanted != null ? "value.search" : "value.search.any");
             HelpText = parts.Count > 0 ? null : Changing ? "What this code takes to change, a local that can be changed, or a field of one." : null;
             Status = asking > 0 ? GraphSchema.Word("picker.asking.game") : null;
@@ -161,7 +178,7 @@ namespace Tide.Editor
             members.TryGetValue(type, out var has);
             var fields = has?.Where(m => !m.Callable && m.Kind != TideGraphLanguage.KindKeyword && m.Kind != TideGraphLanguage.KindSnippet).ToList();
             // What a Set changes: a vector or a colour is a value to change as it is; a struct opens to its fields
-            var exact = wanted != null ? GraphValues.Fits(type, wanted) : Changing && GraphSchema.ValueControl(type) != null;
+            var exact = wanted != null ? GraphValues.Fits(type, wanted, KindOf) : Changing && GraphSchema.ValueControl(type) != null;
             var opens = has == null || has.Count > 0;
             if (!exact && wanted != null && !everything && fields != null && !fields.Any(f => Fits(f.Type) || !Simple(f.Type)) && !has.Any(m => m.Callable && Fits(m.Result)))
             {
@@ -253,7 +270,7 @@ namespace Tide.Editor
                 return;
             }
             options.AddRange(typed);
-            var control = GraphSchema.ValueControl(wanted);
+            var control = GraphSchema.ValueControl(Single);
             if (control == "tick")
                 foreach (var tick in new[] { "true", "false" })
                 {
@@ -262,7 +279,7 @@ namespace Tide.Editor
                 }
             // An enum's choices: this file's own, or what the language server says the type's name has; and a
             // type's own constants (Color.white)
-            var named = wanted?.TrimEnd('?');
+            var named = Single?.TrimEnd('?');
             var choices = named != null ? Doc.EnumMembers(named) : null;
             if (named != null && !Simple(named) && named.IndexOfAny(new[] { '<', '[' }) < 0)
             {
@@ -270,7 +287,7 @@ namespace Tide.Editor
                 if (members.TryGetValue("name:" + named, out var own))
                 {
                     if (choices == null && own.Any(m => m.Kind == TideGraphLanguage.KindEnumMember)) choices = own.Where(m => m.Kind == TideGraphLanguage.KindEnumMember).Select(m => m.Label).ToList();
-                    foreach (var constant in own.Where(m => m.Kind == TideGraphLanguage.KindConstant && GraphValues.Fits(m.Type, wanted)))
+                    foreach (var constant in own.Where(m => m.Kind == TideGraphLanguage.KindConstant && GraphValues.Fits(m.Type, wanted, KindOf)))
                     {
                         var path2 = new List<GraphFrame.Part> { new GraphFrame.Part { Kind = "name", Name = named, Space = true }, new GraphFrame.Part { Kind = "member", Name = constant.Label, Type = constant.Type } };
                         options.Add(new GraphOption { Title = named + "." + constant.Label, Section = named, Priority = 3, Dot = TideGraphTypes.ColorOf(wanted, Light), Pick = () => Take(path2) });
@@ -347,6 +364,29 @@ namespace Tide.Editor
                 {
                     var part = new GraphFrame.Part { Kind = "name", Name = space.Label, Space = true };
                     options.Add(new GraphOption { Title = space.Label, Detail = GraphLook.FirstLine(space.Detail, 40) + "  ›", Help = space.Detail, Section = engine, Searched = true, KeepOpen = true, Pick = () => Open(part) });
+                }
+                // ...and the functions of the namespaces and the engine's types that give what fits, found by their
+                // own names once something's typed (Abs finds Math.Abs, Euler quaternion.Euler)
+                foreach (var space in scope.Where(IsSpace))
+                {
+                    if (!members.TryGetValue("name:" + space.Label, out var spaceHas)) continue;
+                    var part = new GraphFrame.Part { Kind = "name", Name = space.Label, Space = true };
+                    foreach (var f in spaceHas.Where(m => m.Kind == TideGraphLanguage.KindFunction || m.Kind == TideGraphLanguage.KindMethod))
+                    {
+                        // (Math's all give a value, though those of any number don't say which)
+                        var gives = space.Label == "Math" ? null : TideGraphLanguage.ResultOf(f.Detail);
+                        if (gives == "" || (gives != null && !Fits(gives))) continue;
+                        var (names, block) = TideGraphLanguage.Signature(f.Detail, f.Label);
+                        if (block) continue;
+                        var name = f.Label.Split('(')[0];
+                        var function = f;
+                        var row = Row($"{space.Label}.{name}({string.Join(", ", names)})", gives, engine, () => TakeCall(new List<GraphFrame.Part> { part }, function));
+                        if (gives == null) row.Detail = GraphSchema.Word("value.call");
+                        row.Searched = true;
+                        row.Keywords = name + " " + space.Label;
+                        row.Help = f.Detail;
+                        options.Add(row);
+                    }
                 }
             }
             options.Add(new GraphOption
@@ -433,17 +473,21 @@ namespace Tide.Editor
         protected override void Typed(string text)
         {
             typed.Clear();
+            // What the engine's namespaces and types have, asked once something's typed: their functions are found
+            // by their own names
+            if (parts.Count == 0 && text.Length > 0 && !Changing && scope != null)
+                foreach (var space in scope.Where(IsSpace)) AskType("name:" + space.Label, true);
             if (parts.Count == 0 && text.Length > 0 && !Changing)
             {
-                var control = GraphSchema.ValueControl(wanted);
-                var known = Simple(wanted) ? wanted : null;
+                var control = GraphSchema.ValueControl(Single);
+                var known = Simple(Single) ? Single : null;
                 if (GraphValues.TryLiteral(text, known, out var k, out var literal))
                     typed.Add(new GraphOption
                     {
                         Title = k == "string" ? "\"" + literal + "\"" : literal, Detail = GraphSchema.Spec(k)?.Help, Section = "A value", Keywords = text, Priority = 5, Data = "typed",
                         Pick = () => Literal(k, literal),
                     });
-                else if (control == null && wanted == null && !text.Contains("\""))
+                else if (control == null && Single == null && !text.Contains("\""))
                     typed.Add(new GraphOption
                     {
                         Title = "\"" + text + "\"", Detail = GraphSchema.Word("value.text"), Section = "A value", Keywords = text, Priority = -1, Data = "typed",
@@ -481,8 +525,8 @@ namespace Tide.Editor
             {
                 frame.Classify();
                 var reader = owner != null ? frame.ReaderOf(owner.Wire("id")) ?? frame.ViewOf(owner.Wire("id")) : null;
-                // Below and left of what reads it, where nothing is
-                var at = reader != null && reader.Node != null ? frame.PlaceOfShown(frame.FreePlace(reader.Shown + new Vector2(-240, reader.SizeNow.y + 30), new Vector2(220, 90))) : Vector2.zero;
+                // Left of the input, at its height, where nothing is
+                var at = reader != null && reader.Node != null ? frame.PlaceOfShown(frame.BesideInput(owner, path, new Vector2(220, 90))) : Vector2.zero;
                 var k = of != null ? "method" : "call";
                 var order = GraphSchema.NodeOrder(k);
                 var call = Doc.AddNode(g, k, at.x, at.y);
