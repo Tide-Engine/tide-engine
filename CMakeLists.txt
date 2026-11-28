@@ -166,6 +166,7 @@ if(TIDE_NODE)
         add_test(NAME tide_graph_editor COMMAND "${TIDE_NODE}" --test --test-force-exit
             "${CMAKE_CURRENT_SOURCE_DIR}/tools/tide-graph/test/model.test.mjs"
             "${CMAKE_CURRENT_SOURCE_DIR}/tools/tide-graph/test/browser.test.mjs"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tools/tide-graph/test/rebuild.test.mjs"
             "${CMAKE_CURRENT_SOURCE_DIR}/tools/tide-vscode/test/graph.test.mjs")
         set_tests_properties(tide_graph_editor PROPERTIES
             ENVIRONMENT "TIDE_TIDEC=$<TARGET_FILE:tidec>;$<$<TARGET_EXISTS:tidels>:TIDE_TIDELS=$<TARGET_FILE:tidels>;>TIDE_HIDDEN=1"

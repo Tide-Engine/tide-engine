@@ -379,6 +379,10 @@ ${other || ''}`;
         });
     }
 
+    // The engine's types made by a call of their name (the spec's constructors), and the kinds written as a literal
+    const CONSTRUCTED = /^(?:bool|byte|char|int|long|float|double|(?:int|float|double)[234](?:x[234])?|quaternion|Color|Rect|PlayerID)$/;
+    const LITERAL = ['struct', 'component', 'event'];
+
     // A completion item as what the search adds: a node kind and its fields, or null for one it doesn't offer.
     // `member` for items of a value's members (wired to it); `flow` where a statement is wanted.
     function entryOf(item, { member = false, flow = false } = {}) {
@@ -403,20 +407,33 @@ ${other || ''}`;
             case KIND.Event:
                 if (member) return { title: name, detail, group: G.w('search.members'), node: { k: 'member', fields: { member: name } } };
                 if (item.kind === KIND.EnumMember) return { title: '.' + name, detail, group: G.w('search.values'), node: { k: 'member', fields: { shorthand: true, member: name } } };
+                // An event is sent as a value of it: Hit { who = e }
+                if (item.kind === KIND.Event) return flow ? null : { title: name + ' { }', detail: detail || G.w('search.literal'), group: G.w('search.types'), node: { k: 'literal', fields: { type: name, inits: [] } } };
                 return { title: name, detail, group: G.w('search.names'), node: { k: 'name', fields: { name } } };
             case KIND.Struct:
             case KIND.Class:
                 if (member) return { title: name, detail, group: G.w('search.members'), node: { k: 'member', fields: { member: name } } };
-                // The engine's value types are made by calling them: float3(0, 0, 0), Color(1, 1, 1), float(...)
+                // The engine's value types are made by calling them: float3(0, 0, 0), Color(1, 1, 1), float(...); the
+                // others (string, List, Skeleton...) are made otherwise, and a value made is no step
                 if (detail === 'built-in type') {
+                    if (flow || !CONSTRUCTED.test(name)) return null;
                     const size = Number(/^(?:float|int|double)([234])$/.exec(name)?.[1]) || 0;
                     const fill = size ? Array(size).fill('0') : name === 'Color' ? ['1.0', '1.0', '1.0'] : null;
                     return { title: name + '(…)', detail, group: G.w('search.types'), node: { k: 'call', fields: { name, args: fill ? [] : [null] } }, fill };
                 }
+                // The game's structs, components and events are written as values of them; nothing else is
+                if (flow || (detail && !LITERAL.includes(String(detail).replace(/^local /, '')))) return null;
                 return { title: name + ' { }', detail: detail || G.w('search.literal'), group: G.w('search.types'), node: { k: 'literal', fields: { type: name, inits: [] } } };
-            case KIND.Enum:
-            case KIND.Interface:
             case KIND.Module:
+                // A namespace alone is no value: its functions are offered by their own names (pickers.js,
+                // namespaceCalls)
+                if (!member) return null;
+                return { title: name, detail, group: G.w('search.members'), node: { k: 'member', fields: { member: name } } };
+            case KIND.Enum:
+                // An enum alone is no value: its choices are offered by their own names (pickers.js, namespaceCalls)
+                if (!member) return null;
+            // fall through
+            case KIND.Interface:
             case KIND.TypeParameter:
                 return { title: name, detail, group: member ? G.w('search.members') : G.w('search.names'), node: member ? { k: 'member', fields: { member: name } } : { k: 'name', fields: { name } } };
             default:

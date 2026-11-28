@@ -304,6 +304,34 @@
             : { title: m.name, key: 'm:' + m.name, detail: m.type, group: w('search.of', { type }), color: G.ui.typeColor(m.type) || s.color('member'), node: { k: 'member', fields: { member: m.name } }, first: true }));
     }
 
+    // The functions of the namespaces offered at a place (Draw.Circle, Debug.Log, Math.Clamp), as calls the search
+    // finds by their own names: a namespace alone is no step and no value. Where a step goes, every one; where a
+    // value goes, those that give one.
+    async function namespaceCalls(lang, items, flow) {
+        const spaces = items.filter(i => (i.kind === G.lang.KIND.Module || (!flow && i.kind === G.lang.KIND.Enum)) && typeof i.label === 'string');
+        const lists = await Promise.all(spaces.map(i => lang.membersOfName(i.label).then(m => [i.label, m])));
+        const out = [];
+        for (const [space, members] of lists) {
+            for (const m of members) {
+                // An enum's choice: Phase.Running, a member of the enum's name
+                if (m.kind === G.lang.KIND.EnumMember && !flow) {
+                    const choice = String(m.label || '');
+                    if (/^[A-Za-z_]\w*$/.test(choice)) out.push({ title: `${space}.${choice}`, detail: space, group: space, keywords: `${choice} ${space}`, key: 'c:' + space + '.' + choice, node: { k: 'member', fields: { member: choice } }, object: space, documentation: m.documentation });
+                    continue;
+                }
+                if (m.kind !== G.lang.KIND.Function && m.kind !== G.lang.KIND.Method) continue;
+                const fn = String(m.label || '').replace(/\(.*$/, '');
+                // (Math's functions all give a value, though those of any number or vector don't say which)
+                if (!fn || (!flow && space !== 'Math' && resultIn(m.detail) === '')) continue;
+                const params = G.lang.paramNames(m);
+                const name = `${space}.${fn}`;
+                out.push({ title: `${name}(${params.join(', ')})`, detail: m.detail, group: space, keywords: `${fn} ${space}`, key: 'c:' + name,
+                    node: { k: 'call', fields: { name, args: params.map(() => null) } }, statement: flow, params, documentation: m.documentation });
+            }
+        }
+        return out;
+    }
+
     function nodeSearch(app, frame, clientX, clientY, context) {
         const ed = app.editor;
         const g = frame.graph;
@@ -326,10 +354,11 @@
             } else if (!valueOut && !context?.member) {
                 const flow = !!from?.exec;
                 const place = () => lang.placeFor(from?.exec ? (from.input ? { before: from.node } : { after: from.node > 0 ? from.node : 0 }) : from?.input && from.node > 0 ? { valueFor: frame.statementOf(from.node) } : null, frame.slot.owner);
-                asked = app.checked().then(() => lang.completion(place())).then(items => {
+                asked = app.checked().then(() => lang.completion(place())).then(async items => {
                     const have = new Set(entries.map(e => e.title));
-                    return items.map(i => G.lang.entryOf(i, { flow })).filter(e => e && !have.has(e.title) && (!flow || e.node.k === 'call'))
+                    const own = items.map(i => G.lang.entryOf(i, { flow })).filter(e => e && !have.has(e.title) && (!flow || e.node.k === 'call'))
                         .map(e => ({ ...e, key: 'c:' + e.title, summary: undefined }));
+                    return [...own, ...await namespaceCalls(lang, items, flow)];
                 });
             }
         }
@@ -540,8 +569,8 @@
         const gameEntries = async () => {
             if (lang.status === 'unavailable') return [];
             await app.checked();
-            const place = lang.placeFor(reader ? { valueFor: frame.statementOf(reader) } : null, frame.slot.owner);
-            const items = await lang.completion(place);
+            const at = lang.placeFor(reader ? { valueFor: frame.statementOf(reader) } : null, frame.slot.owner);
+            const items = await lang.completion(at);
             const known = Object.keys(lang.names.game).length + Object.keys(lang.names.packages).length > 0;
             const mine = [], rest = [];
             const taken = new Set([...frame.pins.map(pin => pin.name), ...doc.locals(g).map(d => s.declaredLocal(d))]);
@@ -571,6 +600,24 @@
                 } else if ((item.kind === KIND.Struct || item.kind === KIND.Class) && own && ['struct', 'component', 'event'].includes(item.detail)) {
                     if (!fit(name) && skip()) continue;
                     to.push({ title: `${name} { … }`, key: 't:' + name, detail: w('value.new', { kind: item.detail }), group, color: colour(name), help, keywords: name, make: nodeOf('literal', { type: name, inits: [] }) });
+                }
+            }
+            // Found by what's typed: the namespaces' functions that give what fits (Abs finds Math.Abs), and the
+            // wanted type's own constants (red finds Color.red, zero float3.zero)
+            if (!place) {
+                for (const e of await namespaceCalls(lang, items, false)) {
+                    if (e.node.k !== 'call') continue; // An enum's choices are offered where one goes, above
+                    const gives = resultIn(e.detail);
+                    if (gives && !fit(gives) && skip()) continue;
+                    rest.push({ title: e.title, key: 'f:' + e.node.fields.name, detail: gives || w('value.call'), group: REST, color: colour(gives) || s.color('call'), help: docOf(e), keywords: e.keywords, typed: true, make: nodeOf('call', e.node.fields) });
+                }
+                if (want && !doc.enumMembers(want)) {
+                    for (const item of await lang.membersOfName(want)) {
+                        if (![KIND.Constant, KIND.Field, KIND.Property, KIND.Value, KIND.EnumMember].includes(item.kind)) continue;
+                        const c = String(item.label || '');
+                        if (!/^[A-Za-z_]\w*$/.test(c) || (typeIn(item.detail) && !fit(typeIn(item.detail)))) continue;
+                        rest.push({ title: `${want}.${c}`, key: 'k:' + c, detail: typeIn(item.detail) || want, group: want, color: colour(want), help: docOf(item), keywords: c, typed: true, make: pathOf({ start: { name: want }, members: [c] }) });
+                    }
                 }
             }
             return [...mine, ...rest];
@@ -716,6 +763,8 @@
             lang.operators(opType).then(r => {
                 if (!r || !G.ui.popupOpen()) return;
                 validOps = { binary: new Set(r.binary || []), unary: new Set(r.unary || []) };
+                // An empty input that takes a bool is worked out from anything compared, not only from bools
+                if (!current && want === 'bool') for (const op of ['==', '!=', '<', '<=', '>', '>=']) validOps.binary.add(op);
                 if (base?.work) p.refill([...workEntries().map(e => ({ ...e, group: undefined })), BACK]);
                 else if (!base) p.refill(top(lastGame));
             });

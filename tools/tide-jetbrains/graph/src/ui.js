@@ -56,7 +56,7 @@
     // A text input edited where it's drawn: it looks like text until it's hovered or has the focus, commits on Enter,
     // Tab and on leaving it, and goes back on Escape. `check(value)` gives why a value can't be (it's then shown red
     // with the reason, and not committed); `fk` names it, so the focus comes back to it after the page draws again.
-    function field(value, commit, { placeholder, className = 'tg-input', multiline = false, rows = 3, title, check, fk, onEnter, size, grow = false, mono = false, clean = check && check === G.cards?.checkName ? G.cards.cleanName : null } = {}) {
+    function field(value, commit, { placeholder, className = 'tg-input', multiline = false, rows = 3, title, check, fk, onEnter, onEscape, size, grow = false, mono = false, clean = check && check === G.cards?.checkName ? G.cards.cleanName : null } = {}) {
         const input = multiline ? el('textarea.' + className, { rows, placeholder, title, spellcheck: 'false' })
             : el('input.' + className, { type: 'text', placeholder, title, spellcheck: 'false', autocomplete: 'off' });
         if (mono) input.classList.add('tg-mono');
@@ -119,6 +119,7 @@
                 input.classList.remove('tg-invalid');
                 fit();
                 input.blur();
+                if (onEscape) onEscape();
             }
         });
         // A drag that starts in a field selects its text, and moves nothing
@@ -129,7 +130,7 @@
     // A name that reads as text and is part of what it's on (a press on it selects and drags its card, frame or
     // node), renamed by a double click, F2 or Rename in its menu: it then becomes a field() until Enter, Tab, Escape
     // or a click elsewhere. `rename(select)` starts it (the board's focusSoon does, for a new thing's name).
-    function nameText(value, commit, { className = 'tg-name', placeholder = G.w('placeholder.name'), check, fk, onEnter, title, grow = 4 } = {}) {
+    function nameText(value, commit, { className = 'tg-name', placeholder = G.w('placeholder.name'), check, fk, onEnter, onEscape, title, grow = 4 } = {}) {
         const span = el('span.' + className + '.tg-renamable', { title: title ?? G.w('name.tip') });
         span.dataset.rename = '1';
         if (fk) span.dataset.fk = fk;
@@ -138,18 +139,25 @@
             span.classList.toggle('tg-placeholder', !v);
         };
         show(value);
+        // Taking the field out blurs it, and its blur would take it out again: once
+        let leaving = null;
+        const back = input => {
+            if (leaving === input || !input.isConnected) return;
+            leaving = input;
+            input.replaceWith(span);
+        };
         span.rename = (select = true) => {
             if (!span.isConnected) return null;
             const input = field(value ?? '', v => { value = v; show(v); commit(v); }, {
                 className: className.split('.')[0] === 'tg-name' ? 'tg-input.tg-name.tg-renaming' : `tg-input.${className}.tg-renaming`,
-                placeholder, check, fk, grow,
+                placeholder, check, fk, grow, onEscape,
                 onEnter: i => {
-                    if (i.isConnected) i.replaceWith(span);
+                    back(i);
                     if (onEnter) onEnter(i); else G.app?.board?.el.focus({ preventScroll: true });
                 },
             });
             // Back to text once it's left (what was typed is committed first, by field())
-            input.addEventListener('blur', () => { if (input.isConnected) input.replaceWith(span); });
+            input.addEventListener('blur', () => back(input));
             span.replaceWith(input);
             input.focus({ preventScroll: true });
             if (select) input.select(); else input.setSelectionRange(input.value.length, input.value.length);

@@ -1153,11 +1153,13 @@
                     key: item.key, word, label: W(named ? 'add.oneMore' : 'add.one', { what: an(word) }), title: named ? W('add.field.tip') : W('add.another', { what: item.label }),
                     run: anchor => {
                         if (!named) { make(); return; }
-                        // A field of its type, by name: those the file knows, or a name
-                        const known = this.doc.membersOf(n.type).filter(m => !m.method && !(n.inits || []).some(i => i.name === m.name));
+                        // A field of its type, by name: those the file knows; a name typed only for a type it doesn't
+                        // declare (what's typed would come before the field it starts, and Enter would take it)
+                        const all = this.doc.membersOf(n.type).filter(m => !m.method);
+                        const known = all.filter(m => !(n.inits || []).some(i => i.name === m.name));
                         G.ui.picker({
                             anchor, x: this.board.lastPointer.x, y: this.board.lastPointer.y, placeholder: W('add.field.which'), entries: known.map(m => ({ title: m.name, detail: m.type, color: typeColor(m.type) })),
-                            free: text => (/^[A-Za-z_][A-Za-z0-9_]*$/.test(text) && !known.some(m => m.name === text) ? { title: text, detail: W('add.field.named') } : null),
+                            free: text => (!all.length && /^[A-Za-z_][A-Za-z0-9_]*$/.test(text) ? { title: text, detail: W('add.field.named') } : null),
                             empty: W('add.field.type'), onPick: entry => make(entry.title),
                         });
                     },

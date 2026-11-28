@@ -180,7 +180,7 @@
             };
             for (let i = 0; i < size; i++) {
                 inputs.push(field(spread ? texts[0] : texts[i] ?? '', commit, {
-                    placeholder: '0', className: 'tg-input.tg-value-axis', fk: fk ? `${fk}.${i}` : undefined, title: AXES[i], onEnter: i === size - 1 ? onEnter : undefined,
+                    placeholder: '0', className: 'tg-input.tg-value-axis', fk: fk ? `${fk}.${i}` : undefined, title: AXES[i], onEnter,
                     check: v => (v.trim() === '' || NUMBER.test(v.trim()) ? null : w('check.number', { text: v })),
                 }));
             }

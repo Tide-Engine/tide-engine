@@ -152,6 +152,9 @@
         return null;
     }
 
+    // The row made last, until its name is first left: Escape there takes it away again, as nothing was typed
+    let fresh = 0;
+
     // A new row of a card after `after` (at the end for null): a field, a choice, a setting; its name to type
     function addRowTo(app, item, after) {
         const v = item.value;
@@ -173,6 +176,7 @@
             list.splice(at < 0 ? list.length : at + 1, 0, made);
         });
         if (made) {
+            fresh = made.id;
             app.editor.selectRow(item.id, made.id);
             app.board.focusSoon(`${made.id}:name`, true);
         }
@@ -233,7 +237,15 @@
         };
         const rowOf = (m, ...parts) => el('div.tg-row.tg-colrow', { dataset: { id: m.id }, title: m.comment || undefined }, parts);
         const cell = G.ui.cell;
-        const name = (m, placeholder, extra = {}) => G.ui.nameText(m.name, x => edit(() => { m.name = x; }), { className: 'tg-row-name', placeholder, check: checkName, fk: `${m.id}:name`, ...extra });
+        const name = (m, placeholder, extra = {}) => G.ui.nameText(m.name, x => { fresh = 0; edit(() => { m.name = x; }); }, {
+            className: 'tg-row-name', placeholder, check: checkName, fk: `${m.id}:name`, ...extra,
+            // A row Enter has just made, left with Escape before anything was typed, goes again
+            onEscape: () => {
+                if (fresh !== m.id) return;
+                fresh = 0;
+                edit(() => { const list = rowsOf(); if (list.includes(m)) list.splice(list.indexOf(m), 1); });
+            },
+        });
 
         if (rk?.kind === 'member') {
             // A type's members: a row for each field, and a line for each member with code, which is a frame

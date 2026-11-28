@@ -896,7 +896,7 @@ test('completion items become the nodes the search adds', () => {
     assert.equal(entryOf({ label: 'Twice', kind: 3, detail: 'int Twice(int a)' }).node.k, 'call');
     assert.equal(entryOf({ label: 'Ball', kind: 22 }).node.k, 'literal');
     assert.deepEqual(entryOf({ label: 'Run', kind: 20 }).node.fields, { shorthand: true, member: 'Run' });
-    assert.equal(entryOf({ label: 'Math', kind: 9 }).node.k, 'name');
+    assert.equal(entryOf({ label: 'Math', kind: 9 }), null, 'a namespace alone is no value: its functions are offered');
     assert.equal(entryOf({ label: 'if', kind: 14 }), null);
     // The engine's value types are made by calling them, a vector with its numbers, not as a struct's literal
     assert.deepEqual(entryOf({ label: 'float3', kind: 22, detail: 'built-in type' }).node, { k: 'call', fields: { name: 'float3', args: [] } });
@@ -904,6 +904,13 @@ test('completion items become the nodes the search adds', () => {
     assert.deepEqual(entryOf({ label: 'Color', kind: 22, detail: 'built-in type' }).fill, ['1.0', '1.0', '1.0']);
     assert.deepEqual(entryOf({ label: 'float', kind: 22, detail: 'built-in type' }).node.fields.args, [null]);
     assert.equal(entryOf({ label: 'Ball', kind: 22, detail: 'component' }).node.k, 'literal');
+    // What Tide can't write isn't offered: an engine type with no constructor, a literal of what's no struct, a value
+    // as a step
+    assert.equal(entryOf({ label: 'string', kind: 22, detail: 'built-in type' }), null);
+    assert.equal(entryOf({ label: 'Skeleton', kind: 22, detail: 'built-in type' }), null);
+    assert.equal(entryOf({ label: 'List', kind: 22, detail: 'generic type' }), null);
+    assert.equal(entryOf({ label: 'float3', kind: 22, detail: 'built-in type' }, { flow: true }), null);
+    assert.equal(entryOf({ label: 'Ball', kind: 22, detail: 'component' }, { flow: true }), null);
 });
 
 const tidels = findProgram('tidels', 'TIDE_TIDELS', path.dirname(tidec));
@@ -1034,5 +1041,60 @@ test("tidels: a graph's text, types, members and diagnostics on its nodes", { sk
         assert.ok(types.includes('float') && !types.includes('Ball'), 'a component is no type for a field');
     } finally {
         await server.stop();
+    }
+});
+
+// Everything the search offers where a step goes and where a value goes, added as the search adds it, is Tide the
+// checker takes: its only problems are the inputs left to pick. (A type offered as a name that's no value, or a
+// call of one with no constructor, was found by a person first.)
+test('tidels: what the search offers is something Tide takes', { skip: !tidels && 'no tidels built' }, async () => {
+    const game = path.join(scratch, 'offers');
+    fs.mkdirSync(game, { recursive: true });
+    fs.writeFileSync(path.join(game, 'main.tide'), 'component Ball { float3 velocity; float speed; }\nenum Phase { Waiting, Running }\nconst float GRAVITY = 9.8;\n'
+        + 'float Twice(float x) { return x * 2; }\nevent Hit { Entity who; }\nscene Main { }\n');
+    const doc = Doc.empty(schema);
+    const s = doc.newElement('system', false, 'Probe');
+    s.params.push({ id: doc.newId(), mode: 'mut', type: 'Ball', name: 'ball' });
+    doc.decls.push(s);
+    doc.reindex();
+    const g = s.body;
+    const file = path.join(game, 'probe.tidegraph');
+    fs.writeFileSync(file, doc.text);
+    const server = startServer(tidels, game);
+    try {
+        await server.ready;
+        const uri = fileUri(file);
+        const lang = new G.Lang((method, params) => server.request(method, params));
+        lang.uri = uri;
+        server.notify('textDocument/didOpen', { textDocument: { uri, languageId: 'json', version: 1, text: doc.text } });
+        await lang.check();
+        const steps = (await lang.completion(lang.placeFor({ after: 0 }, s.id))).map(i => G.lang.entryOf(i, { flow: true })).filter(e => e && e.node.k === 'call');
+        const values = (await lang.completion(lang.placeFor(null, s.id))).map(i => G.lang.entryOf(i, {})).filter(Boolean);
+        assert.ok(steps.length >= 3 && values.length > 20, `${steps.length} steps, ${values.length} values`);
+        // Each as a statement of its own: a step as it is, a value as a local's
+        let last = null;
+        const made = [];
+        for (const [i, e] of [...steps.map(e => [e, true]), ...values.map(e => [e, false])].entries()) {
+            const [entry, step] = e;
+            const node = doc.addNode(g, entry.node.k, 0, i * 100, structuredClone(entry.node.fields));
+            if (entry.fill) node.args = entry.fill.map(t => doc.makeLiteral(g, /^-?\d+$/.test(t) ? 'int' : 'float', t, { x: 0, y: i * 100 }));
+            doc.reindex();
+            const statement = step ? doc.addNode(g, 'eval', 200, i * 100) : doc.addNode(g, 'var', 200, i * 100, { name: 'v' + i });
+            doc.connect(g, statement.id, ['value'], node.id);
+            if (last) doc.connect(g, last.id, ['next'], statement.id); else doc.setEntry(g, statement.id);
+            last = statement;
+            made.push({ title: entry.title, ids: [node.id, statement.id, ...(node.args || []).filter(Boolean)] });
+        }
+        const before = server.notifications.length;
+        server.notify('textDocument/didChange', { textDocument: { uri, version: 2 }, contentChanges: [{ text: doc.text }] });
+        const published = await server.until(m => server.notifications.indexOf(m) >= before && m.method === 'textDocument/publishDiagnostics' && m.params.uri.toLowerCase() === uri.toLowerCase());
+        // Problems that aren't an input left to pick, by what was offered. define(NAME, default)'s default is a
+        // constant, so an empty one is said so; a GUITheme or a Sound belongs to this machine, and this is a system.
+        const allowed = new Set(['define(NAME, default)', 'defined(NAME)', 'GUITheme { }', 'Sound { }']);
+        const wrong = made.filter(m => !allowed.has(m.title)).flatMap(m => published.params.diagnostics
+            .filter(d => d.severity === 1 && m.ids.includes(d.data?.node) && d.data?.port === undefined).map(d => `${m.title}: ${d.message}`));
+        assert.deepEqual(wrong, []);
+    } finally {
+        server.child.kill();
     }
 });

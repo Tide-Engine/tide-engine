@@ -836,6 +836,12 @@
                 if (!g) return;
                 const node = doc.newNode(entry.node.k, at.x, at.y, entry.node.fields);
                 Doc.nodes(g).push(node);
+                // A member of a name (an enum's choice): the name, wired in as what it's a member of
+                if (entry.object) {
+                    const object = doc.newNode('name', at.x - 120, at.y, { name: entry.object });
+                    Doc.nodes(g).push(object);
+                    s.setWire(node, ['object'], object.id);
+                }
                 // A vector's or a colour's numbers, in its inputs
                 if (Array.isArray(entry.fill)) node.args = entry.fill.map(t => doc.makeLiteral(g, /^-?\d+$/.test(t) ? 'int' : 'float', t, at));
                 let statement = s.isExec(node.k) ? node : null;

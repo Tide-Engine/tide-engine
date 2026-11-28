@@ -1052,3 +1052,62 @@ Tests: `lsp_graphs` (`Math.Max(1, 2)`'s types are `int`), the page's model test 
 wired, `float3(1, 2, 3)`'s types, `entryOf` of built-in types), `GraphLanguageTests` (the search's `float3(…)`, no
 `float3` name; not run here: it needs a scratch tide and a batch Unity). The JetBrains snapshot of `app.js` and `lang.js`
 is refreshed.
+
+## Rebuilding a game in the editor alone (2026-11-28)
+
+The owner, after the `float3` bug: "this should have been caught WAY earlier... what else is broken?", then "try to
+rebuild a demo in it". The browser tests tried each control on a game made for them; nothing made a whole game from
+an empty file with only what the page offers, or checked that what the search offers is Tide. Both are tests now:
+
+- `test/rebuild.test.mjs` (in `tide_graph_editor`): `docs/examples/first-ball.tide` made from an empty file through
+  the page with real pointer and key events: the cards, a handler with `Spawn` of a literal with a field, `+=` of
+  something multiplied, two `If`s of `Math.Abs(...) > 160` with a negated Set in each, and a view's `Draw.Circle`.
+  What it writes is that game (in equivalent spellings: `event(Spawned spawned)`, braces, `Ball { }`), with no
+  problems, and tidec compiles it. About 50 s.
+- `tidels: what the search offers is something Tide takes` (model test): every entry the search offers where a step
+  goes and where a value goes, added as the search adds it, has no problem but its empty inputs. Allowed:
+  `define(NAME, default)` (an empty default isn't a constant), `defined(NAME)` as a value, `GUITheme { }` and `Sound { }`
+  (this machine's, and the probe is a system). Undoing the constructor rule below makes it fail by name.
+
+What rebuilding found, all fixed (the web page and its JetBrains copy):
+
+- **A page exception**: Enter in a renamed name (`ui.js` `nameText`) took the field out, its blur took it out again,
+  and `replaceWith` threw. Once now (`back`).
+- **Enter in a vector's first box did nothing**; only its last went on to the next row. Every box does now.
+- **A new card's first row stayed**: Enter after a component's or scene's name makes a field `float value` to name;
+  Escape kept it, so a tag component (`Ball`) got a field. A row Enter just made, left with Escape before anything
+  was typed, goes again (`cards.js` `fresh`, `field()`'s and `nameText()`'s `onEscape`).
+- **A literal's "Which field?" took what was typed as a new field**: `velo` came before `velocity`, and Enter made
+  `velo`, which Body hasn't. A name is typed only for a type the file doesn't declare (`frames.js`).
+- **An input that takes a bool offered no comparisons**: the operators were those `tide/graphOperators` takes *for a
+  bool*, so an empty If condition had `&&`, `||` and `!` but no `>`. An empty bool input adds `== != < <= > >=`.
+- **A namespace's functions couldn't be found by their names**: after an arrow the search had no `Draw.Circle` (so a
+  view couldn't draw), and the value picker found `Math.Abs` only by typing `Math.` first. `namespaceCalls`
+  (`pickers.js`) asks `tide/graphMembers` of each namespace offered: the search lists their functions as calls
+  (where a value goes, those that give one; Math's all do, though its functions of any number say no result type),
+  and the value picker has those that fit as `typed` entries. A namespace alone isn't offered as a node any more.
+- **An enum alone was offered as a node** (`Phase`: "'Phase' is a type, not a value"); the search offers its choices
+  (`Phase.Running`, a member of a name node, `entry.object` in `addFromSearch`).
+- **A type's constants weren't offered**: an input of a Color had no `Color.red` by typing `red`; the wanted type's
+  constants (`tide/graphMembers` by name) are `typed` entries.
+- **The search offered what Tide doesn't have**: `string(…)`, `Animation(…)`, `Skeleton(…)`... as calls (my rule of
+  2026-11-27 took every built-in type for a constructor), `List { }`, `Map { }`, `Task { }`, `Func { }` as literals, and
+  values (`float3(…)`, `Body { }`) as steps that do nothing. Calls of the spec's constructors only (`CONSTRUCTED`:
+  numbers, vectors, matrices, `quaternion`, `Color`, `Rect`, `PlayerID`), literals of the game's structs, components
+  and events (an event's too, `Hit { }`, which was a name), and neither as a step.
+
+Found and not fixed (each a decision or bigger work):
+
+- **Worked-out nodes stack downwards**: each node "Work it out…" makes goes below-left of its reader, so
+  `Math.Abs(body.position.x) > 160` is a staircase down the frame, which grows off screen to the left. Left to right
+  in a row would read as the code does; it's the placement in `pickers.js` `nodeOf`/`under`, not tidec's layout.
+- **Some inputs don't say their type**: Negate's (`What goes in 'value'?`, no type) and Spawn's (`'value'`, where
+  Spawn's parameter is `components`), so their pickers can't put what fits first.
+- **Engine calls with no input names at all**: `Scene.Load`, `Scene.Switch`, `Scene.IsPrepared`, `Json.Read`,
+  `Json.Write`, `string.FromBytes`, `HumanoidRig.Auto`, `RetargetMap.Create` (their `tide/graphCalls` entry is
+  missing, so their inputs are "argument 1"); and `Math.Dot`, `Length`, `Mul`... name their inputs by type
+  (`float2`, `float2`), as their signatures have no names.
+- **Unity's window** has its own search and picker (`TideGraphLanguage.cs`, `GraphValuePicker.cs`) and wasn't
+  rebuilt-through; the same gaps (namespace functions by name, bool comparisons, constants, the field picker) are
+  likely there. Its rebuild needs a scratch tide and a batch Unity.
+
